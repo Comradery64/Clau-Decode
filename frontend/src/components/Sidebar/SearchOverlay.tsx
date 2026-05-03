@@ -1,0 +1,279 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+import type { SearchHit } from "../../api/types";
+import { api } from "../../api/client";
+import { useAppStore } from "../../store";
+import { formatRelativeDate } from "./SessionItem";
+
+function useDebounce<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState<T>(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return debounced;
+}
+
+export default function SearchOverlay() {
+  const closeSearch = useAppStore((s) => s.closeSearch);
+  const selectSession = useAppStore((s) => s.selectSession);
+
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchHit[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const debouncedQuery = useDebounce(query, 300);
+
+  // Scroll active result into view when navigating with keyboard
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const active = list.children[activeIndex] as HTMLElement | undefined;
+    active?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
+
+  // Auto-focus on mount
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  // Close on Escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeSearch();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [closeSearch]);
+
+  // Fetch results when debounced query changes
+  useEffect(() => {
+    if (debouncedQuery.length < 2) {
+      setResults([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    api
+      .search(debouncedQuery)
+      .then((data) => {
+        if (!cancelled) {
+          setResults(data);
+          setActiveIndex(0);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setResults([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedQuery]);
+
+  const handleSelect = useCallback(
+    (hit: SearchHit) => {
+      selectSession(hit.session_id);
+      closeSearch();
+    },
+    [selectSession, closeSearch]
+  );
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((i) => Math.min(i + 1, results.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter" && results[activeIndex]) {
+      handleSelect(results[activeIndex]);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Search conversations"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "var(--bg-modal-overlay)",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        paddingTop: "80px",
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) closeSearch();
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "600px",
+          background: "var(--bg-modal)",
+          borderRadius: "var(--radius-lg)",
+          boxShadow: "var(--shadow-lg)",
+          overflow: "hidden",
+          margin: "0 16px",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Input */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            padding: "16px",
+            borderBottom:
+              results.length > 0 || loading
+                ? "1px solid var(--border-subtle)"
+                : "none",
+            gap: "12px",
+          }}
+        >
+          <span style={{ fontSize: "16px", color: "var(--text-tertiary)" }}>⌕</span>
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Search conversations..."
+            style={{
+              flex: 1,
+              border: "none",
+              outline: "none",
+              background: "transparent",
+              fontSize: "15px",
+              color: "var(--text-primary)",
+              fontFamily: "var(--font-ui)",
+            }}
+          />
+          {loading && (
+            <span style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>
+              Searching…
+            </span>
+          )}
+          <kbd
+            onClick={closeSearch}
+            style={{
+              fontSize: "11px",
+              color: "var(--text-tertiary)",
+              background: "var(--bg-tool-block)",
+              border: "1px solid var(--border-default)",
+              borderRadius: "4px",
+              padding: "2px 6px",
+              cursor: "pointer",
+              fontFamily: "var(--font-ui)",
+            }}
+          >
+            Esc
+          </kbd>
+        </div>
+
+        {/* Results */}
+        {results.length > 0 && (
+          <ul
+            ref={listRef}
+            role="listbox"
+            style={{
+              listStyle: "none",
+              margin: 0,
+              padding: "8px 0",
+              maxHeight: "400px",
+              overflowY: "auto",
+            }}
+          >
+            {results.map((hit, i) => (
+              <li
+                key={hit.message_id}
+                role="option"
+                aria-selected={i === activeIndex}
+                onClick={() => handleSelect(hit)}
+                onMouseEnter={() => setActiveIndex(i)}
+                style={{
+                  padding: "10px 16px",
+                  cursor: "pointer",
+                  background: i === activeIndex ? "var(--bg-sidebar-hover)" : "transparent",
+                  transition: "background var(--transition-fast)",
+                }}
+              >
+                {/* Title row */}
+                <div
+                  style={{
+                    fontSize: "13px",
+                    fontWeight: 500,
+                    color: "var(--text-primary)",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    marginBottom: "3px",
+                  }}
+                >
+                  {hit.session_title ?? "Untitled"}
+                </div>
+                {/* Snippet */}
+                <div
+                  style={{
+                    fontSize: "12px",
+                    color: "var(--text-secondary)",
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                    lineHeight: 1.4,
+                    marginBottom: "4px",
+                  }}
+                >
+                  {hit.snippet}
+                </div>
+                {/* Date */}
+                {hit.timestamp && (
+                  <div style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>
+                    {formatRelativeDate(hit.timestamp)}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {/* Empty state when query typed but no results */}
+        {!loading && query.length >= 2 && results.length === 0 && (
+          <div
+            style={{
+              padding: "24px 16px",
+              textAlign: "center",
+              fontSize: "13px",
+              color: "var(--text-tertiary)",
+            }}
+          >
+            No results for "{query}"
+          </div>
+        )}
+
+        {/* Hint when query is too short */}
+        {query.length > 0 && query.length < 2 && (
+          <div
+            style={{
+              padding: "16px",
+              textAlign: "center",
+              fontSize: "12px",
+              color: "var(--text-tertiary)",
+            }}
+          >
+            Type at least 2 characters…
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
