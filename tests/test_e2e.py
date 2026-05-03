@@ -425,7 +425,7 @@ class TestAnalyticsDaily:
         b = buckets[0]
         for key in ("day", "input_tokens", "output_tokens",
                     "cache_creation_tokens", "cache_read_tokens",
-                    "total", "prompt_count"):
+                    "total", "prompt_count", "session_count"):
             assert key in b
 
     async def test_daily_day_is_iso_format(self, client_seeded):
@@ -444,6 +444,118 @@ class TestAnalyticsDaily:
         r = await client_empty.get("/api/analytics/daily")
         assert r.status_code == 200
         assert r.json() == []
+
+
+# ---------------------------------------------------------------------------
+# Sessions — flat endpoint
+# ---------------------------------------------------------------------------
+
+class TestAllSessions:
+    async def test_get_all_sessions_returns_both(self, client_seeded):
+        r = await client_seeded.get("/api/sessions")
+        assert r.status_code == 200
+        sessions = r.json()
+        assert len(sessions) == 2
+        ids = {s["id"] for s in sessions}
+        assert SIMPLE_SESSION_ID in ids
+        assert USAGE_SESSION_ID in ids
+
+    async def test_get_all_sessions_empty_db(self, client_empty):
+        r = await client_empty.get("/api/sessions")
+        assert r.status_code == 200
+        assert r.json() == []
+
+
+# ---------------------------------------------------------------------------
+# Analytics — cost
+# ---------------------------------------------------------------------------
+
+class TestAnalyticsCost:
+    async def test_cost_for_usage_session(self, client_seeded):
+        r = await client_seeded.get(
+            f"/api/analytics/sessions/{USAGE_SESSION_ID}/cost"
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["session_id"] == USAGE_SESSION_ID
+        assert data["model"] == "claude-sonnet-4-6"
+        assert data["total_usd"] > 0
+        assert data["pricing_known"] is True
+        assert data["pricing_source"] in ("live", "hardcoded")
+
+    async def test_cost_response_shape(self, client_seeded):
+        r = await client_seeded.get(
+            f"/api/analytics/sessions/{USAGE_SESSION_ID}/cost"
+        )
+        data = r.json()
+        for key in ("session_id", "model", "input_usd", "output_usd",
+                    "cache_write_usd", "cache_read_usd", "total_usd",
+                    "pricing_known", "pricing_source"):
+            assert key in data, f"missing key: {key}"
+
+    async def test_cost_total_equals_sum_of_parts(self, client_seeded):
+        r = await client_seeded.get(
+            f"/api/analytics/sessions/{USAGE_SESSION_ID}/cost"
+        )
+        data = r.json()
+        expected = (
+            data["input_usd"] + data["output_usd"]
+            + data["cache_write_usd"] + data["cache_read_usd"]
+        )
+        assert abs(data["total_usd"] - expected) < 1e-9
+
+    async def test_cost_unknown_session_returns_404(self, client_seeded):
+        r = await client_seeded.get(
+            "/api/analytics/sessions/nonexistent/cost"
+        )
+        assert r.status_code == 404
+        assert r.json()["detail"] == "Session not found"
+
+    async def test_cost_simple_session_has_sonnet_pricing(self, client_seeded):
+        r = await client_seeded.get(
+            f"/api/analytics/sessions/{SIMPLE_SESSION_ID}/cost"
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["model"] == "claude-sonnet-4-6"
+        assert data["pricing_known"] is True
+        assert data["total_usd"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Pricing table
+# ---------------------------------------------------------------------------
+
+class TestPricingTable:
+    async def test_pricing_returns_200(self, client_empty):
+        r = await client_empty.get("/api/pricing")
+        assert r.status_code == 200
+
+    async def test_pricing_response_shape(self, client_empty):
+        r = await client_empty.get("/api/pricing")
+        data = r.json()
+        assert "source" in data
+        assert "models" in data
+        assert data["source"] in ("live", "hardcoded")
+        assert isinstance(data["models"], list)
+
+    async def test_pricing_contains_sonnet(self, client_empty):
+        r = await client_empty.get("/api/pricing")
+        models = [m["model"] for m in r.json()["models"]]
+        assert any("sonnet" in m for m in models)
+
+    async def test_pricing_model_entry_shape(self, client_empty):
+        r = await client_empty.get("/api/pricing")
+        entry = r.json()["models"][0]
+        for key in ("model", "input_per_mtok", "output_per_mtok",
+                    "cache_write_per_mtok", "cache_read_per_mtok"):
+            assert key in entry, f"missing key: {key}"
+
+    async def test_pricing_rates_are_positive(self, client_empty):
+        r = await client_empty.get("/api/pricing")
+        for entry in r.json()["models"]:
+            assert entry["input_per_mtok"] > 0
+            assert entry["output_per_mtok"] > 0
 
 
 # ---------------------------------------------------------------------------
