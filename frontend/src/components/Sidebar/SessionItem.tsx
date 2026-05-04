@@ -412,9 +412,11 @@ interface SessionItemProps {
   session: Session;
   isActive: boolean;
   onClick: () => void;
+  /** When true, clicking does not clear the bell — used when selecting for analytics without viewing chat. */
+  suppressBell?: boolean;
 }
 
-export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
+export function SessionItem({ session, isActive, onClick, suppressBell = false }: SessionItemProps) {
   const [hovered, setHovered] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null);
@@ -566,7 +568,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
   };
 
   const handleClick = () => {
-    if (bellState === "visible") {
+    if (!suppressBell && bellState === "visible") {
       // Persist immediately — don't rely on the fade timeout, which can be
       // cancelled if the component unmounts (e.g. user collapses sidebar).
       const s = lsGetSet(LS_READ_SESSIONS);

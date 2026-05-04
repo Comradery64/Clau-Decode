@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import type { Project, Session } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
+import { useRoute, navigateTo } from "../../router";
 import { SessionItem } from "./SessionItem";
 
 interface ProjectGroupProps {
@@ -20,6 +21,7 @@ export function ProjectGroup({ project, isExpanded, onToggle, archivedIds }: Pro
   const selectSession = useAppStore((s) => s.selectSession);
   const selectProject = useAppStore((s) => s.selectProject);
   const sessionSortOrder = useAppStore((s) => s.sessionSortOrder);
+  const route = useRoute();
 
   const sortedSessions = useMemo(() => {
     const copy = sessions.filter((s) => !archivedIds.has(s.id));
@@ -56,8 +58,13 @@ export function ProjectGroup({ project, isExpanded, onToggle, archivedIds }: Pro
   }, [isExpanded, project.id]);
 
   const handleSessionClick = (sessionId: string) => {
-    selectProject(project.id);
-    selectSession(sessionId);
+    if (route === "/analytics") {
+      selectSession(sessionId);
+    } else {
+      selectProject(project.id);
+      selectSession(sessionId);
+      navigateTo("/");
+    }
   };
 
   return (
@@ -149,6 +156,7 @@ export function ProjectGroup({ project, isExpanded, onToggle, archivedIds }: Pro
                 key={session.id}
                 session={session}
                 isActive={selectedSessionId === session.id}
+                suppressBell={route === "/analytics"}
                 onClick={() => handleSessionClick(session.id)}
               />
             ))}

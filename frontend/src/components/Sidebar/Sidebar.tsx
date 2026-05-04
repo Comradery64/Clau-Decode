@@ -177,10 +177,17 @@ export default function Sidebar() {
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const route = useRoute();
 
+  // Open in chat: navigate to /, clear bell (user is actively reading).
   const openSession = (projectId: string, sessionId: string) => {
     selectProject(projectId);
     selectSession(sessionId);
     navigateTo("/");
+  };
+
+  // Select for analytics only: highlight session for cost display without
+  // navigating to chat or clearing the unread bell.
+  const selectForAnalytics = (sessionId: string) => {
+    selectSession(sessionId);
   };
 
   const showFlat = sessionSortOrder !== "alpha";
@@ -336,7 +343,10 @@ export default function Sidebar() {
                 key={session.id}
                 session={session}
                 isActive={selectedSessionId === session.id}
-                onClick={() => openSession(session.project_id, session.id)}
+                suppressBell={route === "/analytics"}
+                onClick={route === "/analytics"
+                  ? () => selectForAnalytics(session.id)
+                  : () => openSession(session.project_id, session.id)}
               />
             ))}
           </div>
@@ -408,7 +418,10 @@ export default function Sidebar() {
                 key={session.id}
                 session={session}
                 isActive={selectedSessionId === session.id}
-                onClick={() => openSession(session.project_id, session.id)}
+                suppressBell={route === "/analytics"}
+                onClick={route === "/analytics"
+                  ? () => selectForAnalytics(session.id)
+                  : () => openSession(session.project_id, session.id)}
               />
             ))}
             {!recentsCollapsed && !flatLoading && sortedFlatSessions.length === 0 && (
