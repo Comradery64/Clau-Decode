@@ -203,10 +203,11 @@ export default function Sidebar() {
     return () => { cancelled = true; };
   }, [projects]);
 
-  // SSE refresh — update projects (which triggers session reload above) without showing spinners
+  // SSE refresh — update both projects and sessions directly without showing spinners
   useEffect(() => {
     const onRefresh = () => {
       api.getProjects().then(setProjects).catch(() => {});
+      api.getAllSessions().then(setFlatSessions).catch(() => {});
     };
     window.addEventListener("clau-decode:refresh", onRefresh);
     return () => window.removeEventListener("clau-decode:refresh", onRefresh);

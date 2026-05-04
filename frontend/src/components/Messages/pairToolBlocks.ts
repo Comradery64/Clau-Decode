@@ -4,6 +4,7 @@ import type {
   ThinkingBlock,
   ToolUseBlock,
   ToolResultBlock,
+  ImageBlock,
 } from "../../api/types";
 
 export type ToolUsePair = {
@@ -12,7 +13,7 @@ export type ToolUsePair = {
   toolResult: ToolResultBlock | null;
 };
 
-export type PairedBlock = TextBlock | ThinkingBlock | ToolUsePair;
+export type PairedBlock = TextBlock | ThinkingBlock | ToolUsePair | ImageBlock;
 
 /**
  * Takes a flat ContentBlock[] and pairs each tool_use with its matching
@@ -31,7 +32,7 @@ export function pairToolBlocks(blocks: ContentBlock[]): PairedBlock[] {
   // Second pass: emit paired items, skip standalone tool_result blocks
   const result: PairedBlock[] = [];
   for (const block of blocks) {
-    if (block.type === "text" || block.type === "thinking") {
+    if (block.type === "text" || block.type === "thinking" || block.type === "image") {
       result.push(block);
     } else if (block.type === "tool_use") {
       result.push({
@@ -40,8 +41,7 @@ export function pairToolBlocks(blocks: ContentBlock[]): PairedBlock[] {
         toolResult: resultMap.get(block.id) ?? null,
       });
     }
-    // tool_result and image blocks are skipped at the top level
-    // (tool_result consumed above; image not yet rendered)
+    // tool_result consumed above; emitted via its paired tool_use
   }
 
   return result;

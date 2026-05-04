@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import type { Session } from "../../api/types";
 import { api } from "../../api/client";
+import { prefetch } from "../../api/sessionCache";
 import { lsGetSet, lsPutSet, lsGetMap, lsPutMap } from "../../utils/localStorage";
 
 // ---------------------------------------------------------------------------
@@ -419,6 +420,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
   const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [isStarred, setIsStarred] = useState(() => lsGetSet(LS_STARRED).has(session.id));
+  const [isArchived, setIsArchived] = useState(() => lsGetSet(LS_ARCHIVED).has(session.id));
   const [customTitle, setCustomTitle] = useState<string | null>(
     () => lsGetMap(LS_RENAMED)[session.id] ?? null
   );
@@ -459,6 +461,22 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
     return () => clearTimeout(t);
   }, [bellState]);
 
+  // Dismiss bell when the browser window regains focus while this session is active.
+  useEffect(() => {
+    if (!isActive) return;
+    const onFocus = () => {
+      setBellState((prev) => {
+        if (prev !== "visible") return prev;
+        const s = lsGetSet(LS_READ_SESSIONS);
+        s.add(bellKey);
+        lsPutSet(LS_READ_SESSIONS, s);
+        return "fading";
+      });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [isActive, bellKey]);
+
   const toggleStar = useCallback(() => {
     const s = lsGetSet(LS_STARRED);
     if (s.has(session.id)) s.delete(session.id);
@@ -484,11 +502,12 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
     setIsRenaming(false);
   }, []);
 
-  const archiveSession = useCallback(() => {
+  const toggleArchive = useCallback(() => {
     const s = lsGetSet(LS_ARCHIVED);
-    s.add(session.id);
+    if (s.has(session.id)) s.delete(session.id);
+    else s.add(session.id);
     lsPutSet(LS_ARCHIVED, s);
-    // Dispatch event so Sidebar can react
+    setIsArchived(s.has(session.id));
     window.dispatchEvent(new CustomEvent("clau-decode:archive", { detail: session.id }));
   }, [session.id]);
 
@@ -504,9 +523,9 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
       action: startRename,
     },
     {
-      label: "Archive",
+      label: isArchived ? "Unarchive" : "Archive",
       icon: <IconArchive />,
-      action: archiveSession,
+      action: toggleArchive,
     },
     { kind: "separator" },
     {
@@ -565,7 +584,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
         tabIndex={0}
         onClick={isRenaming ? undefined : handleClick}
         onKeyDown={(e) => { if (!isRenaming && (e.key === "Enter" || e.key === " ")) handleClick(); }}
-        onMouseEnter={() => setHovered(true)}
+        onMouseEnter={() => { setHovered(true); prefetch(session.id, api.getSession); }}
         onMouseLeave={() => setHovered(false)}
         style={{
           display: "flex",

@@ -18,6 +18,17 @@
   --bg-input: #faf9f5;
   --bg-modal-overlay: rgba(0, 0, 0, 0.22);
   --bg-modal: #faf9f5;
+  /* Code block — light mode uses warm beige matching Claude.ai */
+  --bg-code-block: #f0efe9;
+  --bg-code-block-header: #eceae4;
+  --border-code-block: rgba(31, 30, 29, 0.10);
+  --text-code-lang: #9c9a92;
+  /* Syntax highlighting vars — light mode (dark text on warm bg) */
+  --hljs-base: #141413;
+  --hljs-comment: #9c9a92;
+  --hljs-string: #d97706;
+  --hljs-number: #d97706;
+  --hljs-keyword: #141413;
 
   /* --- Borders — translucent, matching Claude.ai's actual approach --- */
   --border-subtle: rgba(31, 30, 29, 0.12);
@@ -90,6 +101,17 @@
   --bg-input: #252523;
   --bg-modal-overlay: rgba(0, 0, 0, 0.55);
   --bg-modal: #1f1f1d;
+  /* Code block — dark mode stays terminal-dark */
+  --bg-code-block: #1a1917;
+  --bg-code-block-header: #1f1e1c;
+  --border-code-block: rgba(255, 255, 255, 0.08);
+  --text-code-lang: #73726c;
+  /* Syntax highlighting vars — dark mode (light text on dark bg) */
+  --hljs-base: #c9c7bf;
+  --hljs-comment: #6b6b6b;
+  --hljs-string: #d97706;
+  --hljs-number: #e09a2a;
+  --hljs-keyword: #e8e6df;
 
   /* --- Borders --- */
   --border-subtle: rgba(222, 220, 209, 0.10);
@@ -229,3 +251,38 @@ body {
 
 .prose-content a { color: var(--accent-orange); text-decoration: none; }
 .prose-content a:hover { text-decoration: underline; }
+
+/* Remove default prose pre styling — CodeBlockWrapper handles it */
+.prose-content pre {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  border-radius: 0;
+}
+
+/* ============================================================
+   SYNTAX HIGHLIGHTING — CSS-variable-driven, adapts to theme.
+   Light mode: dark text on warm beige. Dark mode: light text on dark bg.
+   ============================================================ */
+.hljs { color: var(--hljs-base); background: transparent; }
+.hljs-comment,
+.hljs-quote { color: var(--hljs-comment); font-style: italic; }
+.hljs-string,
+.hljs-template-literal,
+.hljs-template-tag { color: var(--hljs-string); }
+.hljs-number,
+.hljs-literal { color: var(--hljs-number); }
+.hljs-keyword,
+.hljs-selector-tag { color: var(--hljs-keyword); font-weight: 500; }
+.hljs-built_in,
+.hljs-type,
+.hljs-variable,
+.hljs-name,
+.hljs-attr { color: var(--hljs-base); }
+.hljs-title,
+.hljs-section { color: var(--hljs-keyword); font-weight: 600; }
+.hljs-addition { color: #4ade80; }
+.hljs-deletion { color: #f87171; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }

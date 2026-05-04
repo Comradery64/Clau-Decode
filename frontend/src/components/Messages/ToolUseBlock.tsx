@@ -1,11 +1,43 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import type { ToolUseBlock as ToolUseBlockType, ToolResultBlock } from "../../api/types";
 import { TextBlock } from "./TextBlock";
 import { useAppStore } from "../../store";
+import hljs from "highlight.js/lib/core";
+import langJson from "highlight.js/lib/languages/json";
+hljs.registerLanguage("json", langJson);
 
 interface ToolUseBlockProps {
   toolUse: ToolUseBlockType;
   toolResult?: ToolResultBlock | null;
+}
+
+// ---------------------------------------------------------------------------
+// JSON syntax highlighter — uses hljs directly, no CodeBlockWrapper overhead
+// ---------------------------------------------------------------------------
+
+function HighlightedJson({ value }: { value: string }) {
+  const html = useMemo(
+    () => hljs.highlight(value, { language: "json" }).value,
+    [value]
+  );
+  return (
+    <pre
+      // highlight.js HTML-encodes special chars, so this is XSS-safe
+      dangerouslySetInnerHTML={{ __html: html }}
+      style={{
+        background: "var(--bg-code)",
+        border: "1px solid var(--border-subtle)",
+        borderRadius: "var(--radius-sm)",
+        fontFamily: "var(--font-mono)",
+        fontSize: "12px",
+        padding: "10px 12px",
+        overflowX: "auto",
+        maxWidth: "100%",
+        margin: 0,
+        lineHeight: 1.5,
+      }}
+    />
+  );
 }
 
 function getFirstParamHint(input: Record<string, unknown>): string {
@@ -156,23 +188,7 @@ export function ToolUseBlock({ toolUse, toolResult }: ToolUseBlockProps) {
           >
             Input
           </div>
-          <pre
-            style={{
-              background: "var(--bg-code)",
-              border: "1px solid var(--border-subtle)",
-              borderRadius: "var(--radius-sm)",
-              fontFamily: "var(--font-mono)",
-              fontSize: "12px",
-              padding: "10px 12px",
-              overflowX: "auto",
-              maxWidth: "100%",
-              margin: 0,
-              color: "var(--text-code)",
-              lineHeight: 1.5,
-            }}
-          >
-            {JSON.stringify(toolUse.input, null, 2)}
-          </pre>
+          <HighlightedJson value={JSON.stringify(toolUse.input, null, 2)} />
         </div>
       )}
 

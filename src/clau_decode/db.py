@@ -316,11 +316,18 @@ class Database:
         assert self._conn is not None
         _lmr = ("(SELECT role FROM messages WHERE session_id = s.id "
                 "ORDER BY timestamp DESC LIMIT 1) AS last_message_role")
+        # Exclude sessions with no real user-typed content.  title IS NULL means
+        # title inference found nothing (e.g. /exit sessions, /model-only sessions,
+        # last-prompt stubs, history.jsonl artifacts) — these are never useful to show.
         if project_id is not None:
-            query = f"SELECT s.*, {_lmr} FROM sessions s WHERE s.project_id = ? ORDER BY s.updated_at DESC"
+            query = (f"SELECT s.*, {_lmr} FROM sessions s "
+                     "WHERE s.project_id = ? AND s.title IS NOT NULL "
+                     "ORDER BY s.updated_at DESC")
             params: tuple = (project_id,)
         else:
-            query = f"SELECT s.*, {_lmr} FROM sessions s ORDER BY s.updated_at DESC"
+            query = (f"SELECT s.*, {_lmr} FROM sessions s "
+                     "WHERE s.title IS NOT NULL "
+                     "ORDER BY s.updated_at DESC")
             params = ()
         async with self._conn.execute(query, params) as cursor:
             rows = await cursor.fetchall()
@@ -336,6 +343,17 @@ class Database:
         if row is None:
             return None
         return row["file_mtime"]
+
+    async def get_session_file_path(self, session_id: str) -> Optional[str]:
+        """Return the JSONL file path for a session, or None if not indexed."""
+        assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT file_path FROM sessions WHERE id = ?", (session_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        return row["file_path"]
 
     # -----------------------------------------------------------------------
     # Messages

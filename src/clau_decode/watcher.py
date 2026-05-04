@@ -55,7 +55,7 @@ async def watch_paths(root_paths: list[Path], queue: asyncio.Queue) -> None:
         Change.deleted: "deleted",
     }
 
-    async for changes in awatch(*existing):
+    async for changes in awatch(*existing, debounce=50):
         for change_type, path_str in changes:
             if not path_str.endswith(".jsonl"):
                 continue

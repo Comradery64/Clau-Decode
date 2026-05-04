@@ -112,6 +112,54 @@ def parse_session(path: Path) -> tuple[Session, list[Message]]:
                 session.is_worktree = True
                 continue
 
+            # --- mid-stream queued commands ---
+            # When the user types a message while Claude is working, Claude Code
+            # stores it as an "attachment" record with type "queued_command".
+            # We surface it as a regular user message so it appears in the thread.
+            if record_type == "attachment":
+                attachment = record.get("attachment", {})
+                if attachment.get("type") == "queued_command":
+                    prompt = attachment.get("prompt", "")
+                    # prompt is either a plain string or a list of content blocks
+                    if isinstance(prompt, str):
+                        blocks_qa = [TextBlock(text=prompt)] if prompt else []
+                    elif isinstance(prompt, list):
+                        blocks_qa = _parse_content_blocks(prompt)
+                    else:
+                        blocks_qa = []
+                    if blocks_qa:
+                        uuid = record.get("uuid", "")
+                        parent_uuid = record.get("parentUuid")
+                        timestamp_str = record.get("timestamp")
+                        timestamp_qa: datetime | None = None
+                        if timestamp_str:
+                            try:
+                                ts = timestamp_str
+                                if ts.endswith("Z"):
+                                    ts = ts[:-1] + "+00:00"
+                                timestamp_qa = datetime.fromisoformat(ts)
+                            except ValueError:
+                                pass
+                        msg = Message(
+                            id=uuid,
+                            session_id=session_id,
+                            parent_id=parent_uuid,
+                            role="user",
+                            content_blocks=blocks_qa,
+                            timestamp=timestamp_qa,
+                            is_sidechain=bool(record.get("isSidechain", False)),
+                            is_meta=False,
+                            cwd=record.get("cwd"),
+                            git_branch=record.get("gitBranch"),
+                        )
+                        messages.append(msg)
+                        if timestamp_qa:
+                            if session.started_at is None or timestamp_qa < session.started_at:
+                                session.started_at = timestamp_qa
+                            if session.updated_at is None or timestamp_qa > session.updated_at:
+                                session.updated_at = timestamp_qa
+                continue
+
             # --- message records ---
             if record_type not in ("user", "assistant"):
                 continue

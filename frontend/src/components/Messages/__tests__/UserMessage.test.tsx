@@ -36,8 +36,9 @@ describe("UserMessage", () => {
 
   it("renders right-aligned layout", () => {
     const { container } = render(<UserMessage message={makeMessage()} />);
-    const wrapper = container.firstChild as HTMLElement;
-    expect(wrapper).toHaveStyle({ justifyContent: "flex-end" });
+    // The outer element is the hover wrapper; the inner flex row holds the bubble
+    const flexRow = container.firstChild?.firstChild as HTMLElement;
+    expect(flexRow).toHaveStyle({ justifyContent: "flex-end" });
   });
 
   it("skips tool_result blocks in content", () => {

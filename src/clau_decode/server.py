@@ -193,6 +193,13 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     @app.get("/api/sessions/{session_id}")
     async def get_session(session_id: str):
         async with Database(db_path) as db:
+            # On-demand re-parse: if the JSONL file changed since last index
+            # (e.g. server restarted before background scan reached this file),
+            # re-parse now so the caller always sees fresh content.
+            file_path_str = await db.get_session_file_path(session_id)
+            if file_path_str:
+                session_path = Path(file_path_str)
+                await _scan_one(db, session_path)
             detail = await db.get_session_detail(session_id)
         if detail is None:
             raise HTTPException(status_code=404, detail="Session not found")

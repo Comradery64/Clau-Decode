@@ -3,6 +3,9 @@ import type { SearchHit } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
 import { formatRelativeDate } from "./SessionItem";
+import { lsGetSet, lsPutSet } from "../../utils/localStorage";
+
+const LS_ARCHIVED = "clau-decode:archived";
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState<T>(value);
@@ -21,6 +24,7 @@ export default function SearchOverlay() {
   const [results, setResults] = useState<SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [archivedIds, setArchivedIds] = useState(() => lsGetSet(LS_ARCHIVED));
 
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -77,6 +81,14 @@ export default function SearchOverlay() {
 
   const handleSelect = useCallback(
     (hit: SearchHit) => {
+      // If the session is archived, unarchive it so it surfaces in the sidebar
+      const archived = lsGetSet(LS_ARCHIVED);
+      if (archived.has(hit.session_id)) {
+        archived.delete(hit.session_id);
+        lsPutSet(LS_ARCHIVED, archived);
+        setArchivedIds(new Set(archived));
+        window.dispatchEvent(new CustomEvent("clau-decode:archive", { detail: hit.session_id }));
+      }
       selectSession(hit.session_id);
       closeSearch();
     },
@@ -209,16 +221,42 @@ export default function SearchOverlay() {
                 {/* Title row */}
                 <div
                   style={{
-                    fontSize: "13px",
-                    fontWeight: 500,
-                    color: "var(--text-primary)",
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
                     marginBottom: "3px",
+                    minWidth: 0,
                   }}
                 >
-                  {hit.session_title ?? "Untitled"}
+                  <span
+                    style={{
+                      fontSize: "13px",
+                      fontWeight: 500,
+                      color: "var(--text-primary)",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      flex: 1,
+                    }}
+                  >
+                    {hit.session_title ?? "Untitled"}
+                  </span>
+                  {archivedIds.has(hit.session_id) && (
+                    <span
+                      style={{
+                        fontSize: "10px",
+                        color: "var(--text-tertiary)",
+                        background: "var(--bg-tool-block)",
+                        border: "1px solid var(--border-subtle)",
+                        borderRadius: "var(--radius-pill)",
+                        padding: "1px 6px",
+                        flexShrink: 0,
+                        fontFamily: "var(--font-ui)",
+                      }}
+                    >
+                      archived
+                    </span>
+                  )}
                 </div>
                 {/* Snippet */}
                 <div

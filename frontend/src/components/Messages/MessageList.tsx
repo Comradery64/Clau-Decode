@@ -2,9 +2,21 @@ import { useEffect, useRef, useState } from "react";
 
 import type { SessionDetail } from "../../api/types";
 import { api } from "../../api/client";
+import { getCached, setCached, invalidateCached } from "../../api/sessionCache";
 import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
-import { groupMessages } from "./groupMessages";
+import { groupMessages, type Turn } from "./groupMessages";
+import { StreamingIndicator } from "./StreamingIndicator";
+
+// Claude is still working if the last turn is a user turn (no response yet),
+// or if the last assistant turn's final message has no text blocks (mid-tool-loop).
+function isSessionActive(turns: Turn[]): boolean {
+  if (turns.length === 0) return false;
+  const last = turns[turns.length - 1];
+  if (last.kind === "user") return true;
+  const lastMsg = last.messages[last.messages.length - 1];
+  return !lastMsg.content_blocks.some((b) => b.type === "text");
+}
 
 // ---------------------------------------------------------------------------
 // LoadingSpinner — inline because it's only used here
@@ -36,22 +48,29 @@ interface MessageListProps {
 }
 
 export default function MessageList({ sessionId }: MessageListProps) {
-  const [detail, setDetail] = useState<SessionDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const cached = getCached(sessionId);
+  const [detail, setDetail] = useState<SessionDetail | null>(cached ?? null);
+  const [loading, setLoading] = useState(!cached);
   const scrolledSessionRef = useRef<string | null>(null);
   // True when the user is at or near the bottom — streaming snaps only when true
   const nearBottomRef = useRef(true);
 
-  // Fetch session when sessionId changes
+  // Fetch session when sessionId changes. If we have a cached copy, render it
+  // immediately and background-refresh to pick up any server-side changes.
   useEffect(() => {
-    setLoading(true);
-    setDetail(null);
+    const hit = getCached(sessionId);
+    if (!hit) {
+      setLoading(true);
+      setDetail(null);
+    } else {
+      setDetail(hit);
+      setLoading(false);
+    }
     nearBottomRef.current = true;
     api
       .getSession(sessionId)
-      .then(setDetail)
-      .catch(console.error)
-      .finally(() => setLoading(false));
+      .then((d) => { setCached(sessionId, d); setDetail(d); setLoading(false); })
+      .catch(console.error);
   }, [sessionId]);
 
   // Track whether the user is reading history (scrolled up) vs at the bottom.
@@ -139,16 +158,52 @@ export default function MessageList({ sessionId }: MessageListProps) {
   // Listen for live-reload refresh events dispatched by App.tsx
   useEffect(() => {
     const handler = () => {
-      api.getSession(sessionId).then(setDetail).catch(console.error);
+      invalidateCached(sessionId);
+      api.getSession(sessionId).then((d) => { setCached(sessionId, d); setDetail(d); }).catch(console.error);
     };
     window.addEventListener("clau-decode:refresh", handler);
     return () => window.removeEventListener("clau-decode:refresh", handler);
   }, [sessionId]);
 
+  // Streaming indicator timeout: hide the "Focusing…" indicator if no new
+  // messages arrive within 2 minutes. Handles cancelled/exited sessions where
+  // Claude Code stopped writing to the JSONL without producing a response.
+  // Resets on every detail update (SSE-triggered re-fetch), so long-running
+  // sessions with active tool use keep the indicator alive.
+  const [sseTimedOut, setSseTimedOut] = useState(false);
+  useEffect(() => {
+    if (!detail) { setSseTimedOut(false); return; }
+    const active = isSessionActive(groupMessages(detail.messages));
+    if (!active) { setSseTimedOut(false); return; }
+    setSseTimedOut(false);
+    const id = setTimeout(() => setSseTimedOut(true), 2 * 60_000);
+    return () => clearTimeout(id);
+  }, [detail]);
+
   if (loading) return <LoadingSpinner />;
   if (!detail) return null;
 
   const turns = groupMessages(detail.messages);
+
+  // Determine if Claude is currently working on this session.
+  const isActive = isSessionActive(turns);
+  let lastUserTimestamp: string | null = null;
+  if (isActive) {
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const t = turns[i];
+      if (t.kind === "user") { lastUserTimestamp = t.message.timestamp; break; }
+    }
+  }
+
+  // Accumulated input tokens from all assistant messages (proxy for context size).
+  const totalInputTokens = detail.messages
+    .filter((m) => m.role === "assistant")
+    .reduce((sum, m) => sum + (m.usage?.input_tokens ?? 0), 0);
+
+  // True if any assistant message in this session included extended thinking.
+  const hasThinking = detail.messages.some((m) =>
+    m.content_blocks.some((b) => b.type === "thinking")
+  );
 
   return (
     <div
@@ -172,6 +227,13 @@ export default function MessageList({ sessionId }: MessageListProps) {
           />
         );
       })}
+      {isActive && !sseTimedOut && (
+        <StreamingIndicator
+          lastUserTimestamp={lastUserTimestamp}
+          totalInputTokens={totalInputTokens}
+          hasThinking={hasThinking}
+        />
+      )}
     </div>
   );
 }
