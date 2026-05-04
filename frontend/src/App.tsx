@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { useAppStore } from "./store";
 import { createEventSource, api } from "./api/client";
+import { useRoute } from "./router";
 
 function applyTheme(theme: string) {
   if (theme === "dark") {
@@ -18,6 +19,7 @@ function applyTheme(theme: string) {
 
 const Sidebar = React.lazy(() => import("./components/Sidebar/Sidebar"));
 const ChatView = React.lazy(() => import("./components/ChatView/ChatView"));
+const AnalyticsPanel = React.lazy(() => import("./components/Analytics/AnalyticsPanel"));
 const SettingsModal = React.lazy(() => import("./components/Settings/SettingsModal"));
 const SearchOverlay = React.lazy(() => import("./components/Sidebar/SearchOverlay"));
 
@@ -34,6 +36,7 @@ function IconSidebarExpand() {
 export default function App() {
   const { isSettingsOpen, isSearchOpen, sidebarCollapsed } = useAppStore();
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
+  const route = useRoute();
 
   useEffect(() => {
     api.getConfig().then((cfg) => applyTheme(cfg.theme)).catch(() => {});
@@ -108,7 +111,7 @@ export default function App() {
             and session each time the user toggles. The Sidebar reads
             sidebarCollapsed itself and hides via display:none. */}
         <Sidebar />
-        <ChatView />
+        {route === "/analytics" ? <AnalyticsPanel /> : <ChatView />}
         {isSettingsOpen && <SettingsModal />}
         {isSearchOpen && <SearchOverlay />}
       </React.Suspense>
