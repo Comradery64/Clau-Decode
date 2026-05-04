@@ -3,9 +3,10 @@ import { useEffect, useState } from "react";
 export type AppRoute = "/" | "/analytics";
 
 function parseHash(): AppRoute {
-  const h = window.location.hash.replace(/^#/, "") || "/";
-  if (h === "/analytics") return "/analytics";
-  return "/";
+  const h = window.location.hash.replace(/^#/, "");
+  if (h === "/") return "/";
+  // Default (no hash or unrecognised) → dashboard
+  return "/analytics";
 }
 
 export function navigateTo(route: AppRoute): void {

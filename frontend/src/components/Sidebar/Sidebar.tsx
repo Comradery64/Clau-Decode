@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import type { Project, Session } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
+import { useRoute, navigateTo } from "../../router";
 import { lsGetSet } from "../../utils/localStorage";
 import { SidebarHeader } from "./SidebarHeader";
 import { ProjectGroup } from "./ProjectGroup";
@@ -19,6 +20,16 @@ function IconChats() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+    </svg>
+  );
+}
+
+function IconDashboard() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="12" width="4" height="9"/>
+      <rect x="10" y="7" width="4" height="14"/>
+      <rect x="17" y="3" width="4" height="18"/>
     </svg>
   );
 }
@@ -164,6 +175,13 @@ export default function Sidebar() {
   const selectSession = useAppStore((s) => s.selectSession);
   const selectProject = useAppStore((s) => s.selectProject);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const route = useRoute();
+
+  const openSession = (projectId: string, sessionId: string) => {
+    selectProject(projectId);
+    selectSession(sessionId);
+    navigateTo("/");
+  };
 
   const showFlat = sessionSortOrder !== "alpha";
 
@@ -274,6 +292,12 @@ export default function Sidebar() {
 
       {/* Nav items */}
       <div style={{ padding: "6px 0 4px", flexShrink: 0 }}>
+        <NavItem
+          icon={<IconDashboard />}
+          label="Dashboard"
+          active={route === "/analytics"}
+          onClick={() => navigateTo("/analytics")}
+        />
         <NavItem icon={<IconSearch />} label="Search" shortcut="⌘K" onClick={openSearch} />
 
         {/* Starred section — only shown when there are starred sessions */}
@@ -312,10 +336,7 @@ export default function Sidebar() {
                 key={session.id}
                 session={session}
                 isActive={selectedSessionId === session.id}
-                onClick={() => {
-                  selectProject(session.project_id);
-                  selectSession(session.id);
-                }}
+                onClick={() => openSession(session.project_id, session.id)}
               />
             ))}
           </div>
@@ -387,10 +408,7 @@ export default function Sidebar() {
                 key={session.id}
                 session={session}
                 isActive={selectedSessionId === session.id}
-                onClick={() => {
-                  selectProject(session.project_id);
-                  selectSession(session.id);
-                }}
+                onClick={() => openSession(session.project_id, session.id)}
               />
             ))}
             {!recentsCollapsed && !flatLoading && sortedFlatSessions.length === 0 && (
