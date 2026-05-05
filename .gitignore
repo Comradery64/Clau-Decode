@@ -15,5 +15,7 @@ htmlcov/
 frontend/node_modules/
 frontend/dist/
 
+.worktrees/
+
 # Keep the built static assets — they ship with the package
 !src/ccview/static/
