@@ -41,6 +41,12 @@ from fastapi.staticfiles import StaticFiles
 from .analytics.cost import CostEngine
 from .analytics.pricing import CachedPricingStrategy, _HARDCODED_RATES
 from .analytics.service import TokenAnalyticsService as _AnalyticsSvc
+from .analytics.stats import (
+    FileTouchScanner,
+    ModelUsageScanner,
+    PromptStatsScanner,
+    ToolUsageScanner,
+)
 from .config import save_config
 from .db import Database
 from .models import AppConfig
@@ -297,6 +303,30 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             "pricing_known": cost.pricing is not None,
             "pricing_source": pricing_source,
         }
+
+    @app.get("/api/analytics/stats")
+    async def get_prompt_stats():
+        async with Database(db_path) as db:
+            all_messages = await db.get_all_messages()
+        return PromptStatsScanner().scan(all_messages)
+
+    @app.get("/api/analytics/models")
+    async def get_model_usage():
+        async with Database(db_path) as db:
+            all_messages = await db.get_all_messages()
+        return ModelUsageScanner().scan(all_messages)
+
+    @app.get("/api/analytics/tools")
+    async def get_tool_usage():
+        async with Database(db_path) as db:
+            all_messages = await db.get_all_messages()
+        return ToolUsageScanner().scan(all_messages)
+
+    @app.get("/api/analytics/files")
+    async def get_file_touches():
+        async with Database(db_path) as db:
+            all_messages = await db.get_all_messages()
+        return FileTouchScanner().scan(all_messages)
 
     @app.get("/api/pricing")
     async def get_pricing_table():

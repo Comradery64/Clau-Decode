@@ -214,3 +214,41 @@ export interface PricingTableResponse {
   source: "live" | "hardcoded";
   models: ModelPricingEntry[];
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4 stats
+// ---------------------------------------------------------------------------
+
+export interface TokenDistribution {
+  count: number;
+  mean: number;
+  median: number;
+  p95: number;
+  min: number;
+  max: number;
+}
+
+export interface PromptStatsResponse {
+  prompt_count: number;
+  input_tokens: TokenDistribution | null;
+  output_tokens: TokenDistribution | null;
+  total_tokens: TokenDistribution | null;
+}
+
+export interface ModelUsageEntry {
+  model: string;
+  message_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+export interface ToolUsageEntry {
+  tool: string;
+  count: number;
+}
+
+export interface FileTouchEntry {
+  file: string;
+  count: number;
+}

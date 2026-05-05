@@ -5,8 +5,9 @@ import { useAppStore } from "../../store";
 import { OverviewTab } from "./OverviewTab";
 import { DailyTab } from "./DailyTab";
 import { PricingTab } from "./PricingTab";
+import { StatsTab } from "./StatsTab";
 
-const TABS = ["Overview", "Daily", "Pricing"] as const;
+const TABS = ["Overview", "Daily", "Pricing", "Stats"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function AnalyticsPanel() {
@@ -78,6 +79,7 @@ export default function AnalyticsPanel() {
         )}
         {activeTab === "Daily" && <DailyTab daily={daily} />}
         {activeTab === "Pricing" && <PricingTab pricing={pricing} />}
+        {activeTab === "Stats" && <StatsTab />}
       </div>
     </div>
   );

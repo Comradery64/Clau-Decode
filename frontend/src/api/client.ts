@@ -6,15 +6,19 @@
 import type {
   AppConfig,
   DailyBucket,
+  FileTouchEntry,
+  ModelUsageEntry,
   PricingTableResponse,
   Project,
   PromptCostEntry,
+  PromptStatsResponse,
   SearchHit,
   Session,
   SessionCostResponse,
   SessionDetail,
   StatsResponse,
   TokenBreakdown,
+  ToolUsageEntry,
 } from "./types";
 
 async function get<T>(path: string): Promise<T> {
@@ -67,6 +71,14 @@ export const api = {
       `/api/analytics/sessions/${encodeURIComponent(sessionId)}/cost`
     ),
   getPricingTable: () => get<PricingTableResponse>("/api/pricing"),
+  getPromptStats: (): Promise<PromptStatsResponse> =>
+    get("/api/analytics/stats"),
+  getModelUsage: (): Promise<ModelUsageEntry[]> =>
+    get("/api/analytics/models"),
+  getToolUsage: (): Promise<ToolUsageEntry[]> =>
+    get("/api/analytics/tools"),
+  getFileTouches: (): Promise<FileTouchEntry[]> =>
+    get("/api/analytics/files"),
 };
 
 /** SSE event source — call onRefresh when a JSONL file changes. */
