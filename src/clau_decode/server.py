@@ -47,6 +47,12 @@ from .analytics.stats import (
     PromptStatsScanner,
     ToolUsageScanner,
 )
+from .analytics.tips import (
+    LowCacheHitRule,
+    OversizedToolResultRule,
+    RepeatedFileReadRule,
+    TipRegistry,
+)
 from .config import save_config
 from .db import Database
 from .models import AppConfig
@@ -327,6 +333,26 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         async with Database(db_path) as db:
             all_messages = await db.get_all_messages()
         return FileTouchScanner().scan(all_messages)
+
+    @app.get("/api/analytics/tips")
+    async def get_tips():
+        async with Database(db_path) as db:
+            all_messages = await db.get_all_messages()
+        registry = TipRegistry()
+        registry.register(RepeatedFileReadRule())
+        registry.register(OversizedToolResultRule())
+        registry.register(LowCacheHitRule())
+        tips = registry.run(all_messages)
+        return [
+            {
+                "rule_id": t.rule_id,
+                "severity": t.severity,
+                "title": t.title,
+                "detail": t.detail,
+                "evidence": t.evidence,
+            }
+            for t in tips
+        ]
 
     @app.get("/api/pricing")
     async def get_pricing_table():
