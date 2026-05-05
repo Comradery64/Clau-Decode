@@ -21,7 +21,7 @@ export function ConfirmDialog({
     >
       <div
         style={{
-          background: "var(--bg-panel)", borderRadius: "8px", padding: "24px",
+          background: "var(--bg-modal)", borderRadius: "var(--radius-lg)", padding: "24px",
           maxWidth: "380px", width: "100%", boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
         }}
         onClick={(e) => e.stopPropagation()}

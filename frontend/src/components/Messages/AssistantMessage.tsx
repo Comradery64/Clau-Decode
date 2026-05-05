@@ -3,6 +3,8 @@ import type { Message } from "../../api/types";
 import { TextBlock } from "./TextBlock";
 import { ThoughtChain } from "./ThoughtChain";
 import { pairToolBlocks, type PairedBlock } from "./pairToolBlocks";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { api } from "../../api/client";
 
 type ThoughtGroup = { kind: "thought_group"; blocks: PairedBlock[] };
 type Segment = ThoughtGroup | PairedBlock;
@@ -74,13 +76,31 @@ function CheckIcon() {
   );
 }
 
+function EditIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <path d="M9.5 2.5l2 2L4 12H2v-2L9.5 2.5z" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <path d="M2 4h10M5 4V2.5h4V4M5.5 6v5M8.5 6v5M3 4l.8 7.5A1 1 0 0 0 4.8 12.5h4.4a1 1 0 0 0 1-.9L11 4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function ActionIconBtn({
   onClick,
   title,
+  danger,
   children,
 }: {
   onClick?: () => void;
   title: string;
+  danger?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -96,11 +116,11 @@ function ActionIconBtn({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        borderRadius: "4px",
+        borderRadius: "var(--radius-sm)",
         transition: "color var(--transition-fast)",
       }}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.color = "var(--text-primary)";
+        (e.currentTarget as HTMLElement).style.color = danger ? "#ef4444" : "var(--text-primary)";
       }}
       onMouseLeave={(e) => {
         (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)";
@@ -112,23 +132,113 @@ function ActionIconBtn({
 }
 
 // ---------------------------------------------------------------------------
+// Inline edit form for assistant text
+// ---------------------------------------------------------------------------
+
+function AssistantEditForm({
+  initialText,
+  onSave,
+  onCancel,
+}: {
+  initialText: string;
+  onSave: (text: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [text, setText] = useState(initialText);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(text);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "4px 0" }}>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={Math.max(4, text.split("\n").length + 1)}
+        autoFocus
+        style={{
+          width: "100%",
+          fontFamily: "var(--font-content)",
+          fontSize: "15px",
+          lineHeight: 1.7,
+          padding: "10px 12px",
+          borderRadius: "var(--radius-md)",
+          background: "var(--bg-input)",
+          color: "var(--text-primary)",
+          border: "1px solid var(--border-default)",
+          resize: "vertical",
+          boxSizing: "border-box",
+          outline: "none",
+        }}
+        onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-orange)"; }}
+        onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-default)"; }}
+      />
+      <div style={{ display: "flex", gap: "6px" }}>
+        <button
+          onClick={onCancel}
+          style={{
+            fontSize: "13px",
+            padding: "5px 12px",
+            borderRadius: "var(--radius-sm)",
+            background: "none",
+            color: "var(--text-secondary)",
+            border: "1px solid var(--border-default)",
+            cursor: "pointer",
+            fontFamily: "var(--font-ui)",
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            fontSize: "13px",
+            padding: "5px 12px",
+            borderRadius: "var(--radius-sm)",
+            background: "var(--accent-orange)",
+            color: "var(--text-on-accent)",
+            border: "none",
+            cursor: saving ? "default" : "pointer",
+            opacity: saving ? 0.7 : 1,
+            fontFamily: "var(--font-ui)",
+            fontWeight: 500,
+          }}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // AssistantMessage
 // ---------------------------------------------------------------------------
 
 interface AssistantMessageProps {
   messages: Message[];
   model: string | null;
+  sessionId?: string;
 }
 
-export function AssistantMessage({ messages, model }: AssistantMessageProps) {
+export function AssistantMessage({ messages, model, sessionId: _sessionIdProp }: AssistantMessageProps) {
+  const sessionId = _sessionIdProp ?? messages[0]?.session_id ?? "";
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const allBlocks = messages.flatMap((m) => m.content_blocks);
   const pairedBlocks = pairToolBlocks(allBlocks);
 
-  // Build interleaved segments: groups of consecutive thought/tool blocks
-  // separated by text/image blocks, preserving document order.
   const segments: Segment[] = [];
   let pendingThoughts: PairedBlock[] = [];
 
@@ -157,6 +267,19 @@ export function AssistantMessage({ messages, model }: AssistantMessageProps) {
   if (!hasVisible) return null;
 
   const timestamp = messages[0]?.timestamp ?? null;
+  const primaryId = messages[0]?.id ?? "";
+
+  // Edit is available when the turn is a single message with text content
+  const editableText = messages.length === 1
+    ? allBlocks
+        .filter((b) => b.type === "text")
+        .map((b) => (b as { type: "text"; text: string }).text)
+        .join("\n")
+    : null;
+  const canEdit = editableText !== null && editableText.trim().length > 0;
+
+  const dispatchMutated = () =>
+    window.dispatchEvent(new CustomEvent("clau-decode:session-mutated", { detail: sessionId }));
 
   const handleCopy = async () => {
     const text = allBlocks
@@ -170,97 +293,137 @@ export function AssistantMessage({ messages, model }: AssistantMessageProps) {
     } catch {}
   };
 
+  async function saveEdit(text: string) {
+    await api.patchMessage(primaryId, [{ type: "text", text }]);
+    setEditing(false);
+    dispatchMutated();
+  }
+
+  async function doDelete() {
+    await api.deleteMessage(primaryId);
+    setConfirmDelete(false);
+    dispatchMutated();
+  }
+
   return (
     <div
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{ padding: "4px 24px 4px" }}
     >
-      {/* Interleaved thought chains and text/image blocks in document order */}
-      {segments.map((seg, i) => {
-        if (isThoughtGroup(seg)) {
-          return <ThoughtChain key={i} blocks={seg.blocks} />;
-        }
-        if (seg.type === "text") {
-          return <TextBlock key={i} text={seg.text} />;
-        }
-        if (seg.type === "image") {
-          const src = seg.source as Record<string, string>;
-          const imgSrc =
-            src.type === "base64"
-              ? `data:${src.media_type};base64,${src.data}`
-              : src.type === "url"
-              ? src.url
-              : null;
-          if (!imgSrc) return null;
-          return (
-            <img
-              key={i}
-              src={imgSrc}
-              alt="Image from conversation"
-              style={{
-                maxWidth: "100%",
-                borderRadius: "var(--radius-md)",
-                margin: "4px 0 14px",
-                display: "block",
-              }}
-            />
-          );
-        }
-        return null;
-      })}
+      {editing ? (
+        <AssistantEditForm
+          initialText={editableText ?? ""}
+          onSave={saveEdit}
+          onCancel={() => setEditing(false)}
+        />
+      ) : (
+        <>
+          {segments.map((seg, i) => {
+            if (isThoughtGroup(seg)) {
+              return <ThoughtChain key={i} blocks={seg.blocks} />;
+            }
+            if (seg.type === "text") {
+              return <TextBlock key={i} text={seg.text} />;
+            }
+            if (seg.type === "image") {
+              const src = seg.source as Record<string, string>;
+              const imgSrc =
+                src.type === "base64"
+                  ? `data:${src.media_type};base64,${src.data}`
+                  : src.type === "url"
+                  ? src.url
+                  : null;
+              if (!imgSrc) return null;
+              return (
+                <img
+                  key={i}
+                  src={imgSrc}
+                  alt="Image from conversation"
+                  style={{
+                    maxWidth: "100%",
+                    borderRadius: "var(--radius-md)",
+                    margin: "4px 0 14px",
+                    display: "block",
+                  }}
+                />
+              );
+            }
+            return null;
+          })}
+        </>
+      )}
 
       {/* Footer: model name + hover actions */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginTop: "4px",
-          minHeight: "22px",
-        }}
-      >
-        {model && (
-          <div
-            style={{
-              fontSize: "11px",
-              color: "var(--text-tertiary)",
-              fontFamily: "var(--font-ui)",
-            }}
-          >
-            {formatModelName(model)}
-          </div>
-        )}
+      {!editing && (
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "2px",
-            opacity: hovered ? 1 : 0,
-            transition: "opacity var(--transition-fast)",
-            pointerEvents: hovered ? "auto" : "none",
-            marginLeft: "auto",
+            justifyContent: "space-between",
+            marginTop: "4px",
+            minHeight: "22px",
           }}
         >
-          {timestamp && (
-            <span
+          {model && (
+            <div
               style={{
                 fontSize: "11px",
                 color: "var(--text-tertiary)",
-                marginRight: "4px",
                 fontFamily: "var(--font-ui)",
               }}
             >
-              {formatMsgDate(timestamp)}
-            </span>
+              {formatModelName(model)}
+            </div>
           )}
-          <ActionIconBtn title={copied ? "Copied!" : "Copy response"} onClick={handleCopy}>
-            {copied ? <CheckIcon /> : <CopyIcon />}
-          </ActionIconBtn>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "2px",
+              opacity: hovered ? 1 : 0,
+              transition: "opacity var(--transition-fast)",
+              pointerEvents: hovered ? "auto" : "none",
+              marginLeft: "auto",
+            }}
+          >
+            {timestamp && (
+              <span
+                style={{
+                  fontSize: "11px",
+                  color: "var(--text-tertiary)",
+                  marginRight: "4px",
+                  fontFamily: "var(--font-ui)",
+                }}
+              >
+                {formatMsgDate(timestamp)}
+              </span>
+            )}
+            {canEdit && (
+              <ActionIconBtn title="Edit response" onClick={() => setEditing(true)}>
+                <EditIcon />
+              </ActionIconBtn>
+            )}
+            <ActionIconBtn title={copied ? "Copied!" : "Copy response"} onClick={handleCopy}>
+              {copied ? <CheckIcon /> : <CopyIcon />}
+            </ActionIconBtn>
+            <ActionIconBtn title="Delete response" danger onClick={() => setConfirmDelete(true)}>
+              <TrashIcon />
+            </ActionIconBtn>
+          </div>
         </div>
-      </div>
+      )}
 
       <div style={{ height: "12px" }} />
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete response?"
+          body="This removes the assistant response from the session file. A backup is created automatically before the write."
+          onConfirm={doDelete}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
     </div>
   );
 }

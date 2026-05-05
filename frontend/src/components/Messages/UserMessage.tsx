@@ -166,11 +166,13 @@ function ActionIconBtn({
   onClick,
   title,
   disabled,
+  danger,
   children,
 }: {
   onClick?: () => void;
   title: string;
   disabled?: boolean;
+  danger?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -187,12 +189,13 @@ function ActionIconBtn({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        borderRadius: "4px",
+        borderRadius: "var(--radius-sm)",
         opacity: disabled ? 0.4 : 1,
         transition: "color var(--transition-fast)",
       }}
       onMouseEnter={(e) => {
-        if (!disabled) (e.currentTarget as HTMLElement).style.color = "var(--text-primary)";
+        if (!disabled)
+          (e.currentTarget as HTMLElement).style.color = danger ? "#ef4444" : "var(--text-primary)";
       }}
       onMouseLeave={(e) => {
         if (!disabled) (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)";
@@ -200,6 +203,94 @@ function ActionIconBtn({
     >
       {children}
     </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Inline edit form — rendered outside the bubble when editing
+// ---------------------------------------------------------------------------
+
+function EditForm({
+  initialText,
+  onSave,
+  onCancel,
+}: {
+  initialText: string;
+  onSave: (text: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [text, setText] = useState(initialText);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(text);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "2px 0" }}>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={Math.max(3, text.split("\n").length + 1)}
+        autoFocus
+        style={{
+          width: "100%",
+          fontFamily: "var(--font-content)",
+          fontSize: "14px",
+          lineHeight: 1.6,
+          padding: "10px 12px",
+          borderRadius: "var(--radius-md)",
+          background: "var(--bg-input)",
+          color: "var(--text-primary)",
+          border: "1px solid var(--border-default)",
+          resize: "vertical",
+          boxSizing: "border-box",
+          outline: "none",
+        }}
+        onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent-orange)"; }}
+        onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-default)"; }}
+      />
+      <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
+        <button
+          onClick={onCancel}
+          style={{
+            fontSize: "13px",
+            padding: "5px 12px",
+            borderRadius: "var(--radius-sm)",
+            background: "none",
+            color: "var(--text-secondary)",
+            border: "1px solid var(--border-default)",
+            cursor: "pointer",
+            fontFamily: "var(--font-ui)",
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            fontSize: "13px",
+            padding: "5px 12px",
+            borderRadius: "var(--radius-sm)",
+            background: "var(--accent-orange)",
+            color: "var(--text-on-accent)",
+            border: "none",
+            cursor: saving ? "default" : "pointer",
+            opacity: saving ? 0.7 : 1,
+            fontFamily: "var(--font-ui)",
+            fontWeight: 500,
+          }}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -215,13 +306,10 @@ export function UserMessage({ message }: UserMessageProps) {
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [editText, setEditText] = useState("");
-  const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (message.is_meta) return null;
 
-  // Split content blocks into images and text
   const imageBlocks = message.content_blocks.filter(
     (b): b is ImageBlock => b.type === "image"
   );
@@ -238,8 +326,10 @@ export function UserMessage({ message }: UserMessageProps) {
   const hasImages = imageBlocks.length > 0;
   const hasTextBlocks = message.content_blocks.some((b) => b.type === "text");
 
-  // Nothing visible at all
   if (allSegments.length === 0 && !hasImages) return null;
+
+  const dispatchMutated = () =>
+    window.dispatchEvent(new CustomEvent("clau-decode:session-mutated", { detail: message.session_id }));
 
   const handleCopy = async () => {
     const text = message.content_blocks
@@ -253,30 +343,21 @@ export function UserMessage({ message }: UserMessageProps) {
     } catch {}
   };
 
-  function startEdit() {
-    const text = message.content_blocks
-      .filter((b): b is TextBlockType => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-    setEditText(text);
-    setEditing(true);
-  }
+  const initialEditText = message.content_blocks
+    .filter((b): b is TextBlockType => b.type === "text")
+    .map((b) => b.text)
+    .join("\n");
 
-  async function saveEdit() {
-    setSaving(true);
-    try {
-      await api.patchMessage(message.id, [{ type: "text", text: editText }]);
-      setEditing(false);
-      window.dispatchEvent(new CustomEvent("clau-decode:refresh"));
-    } finally {
-      setSaving(false);
-    }
+  async function saveEdit(text: string) {
+    await api.patchMessage(message.id, [{ type: "text", text }]);
+    setEditing(false);
+    dispatchMutated();
   }
 
   async function doDelete() {
     await api.deleteMessage(message.id);
     setConfirmDelete(false);
-    window.dispatchEvent(new CustomEvent("clau-decode:refresh"));
+    dispatchMutated();
   }
 
   // Output-only (no user text, no images) — render without bubble
@@ -298,114 +379,78 @@ export function UserMessage({ message }: UserMessageProps) {
       onMouseLeave={() => setHovered(false)}
       style={{ padding: "6px 24px" }}
     >
-      {/* Message bubble */}
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <div
-          style={{
-            background: "var(--bg-user-msg)",
-            borderRadius: "18px 18px 4px 18px",
-            padding: "10px 16px",
-            maxWidth: "88%",
-            width: editing ? "88%" : undefined,
-          }}
-        >
-          {editing ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              <textarea
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                rows={Math.max(3, editText.split("\n").length)}
-                style={{
-                  width: "100%",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "13px",
-                  padding: "8px",
-                  borderRadius: "4px",
-                  background: "var(--bg-input, var(--bg-tool-block))",
-                  color: "var(--text-primary)",
-                  border: "1px solid var(--border)",
-                  resize: "vertical",
-                  boxSizing: "border-box",
-                }}
-              />
-              <div style={{ display: "flex", gap: "8px" }}>
-                <button
-                  onClick={saveEdit}
-                  disabled={saving}
-                  style={{ fontSize: "12px", padding: "4px 10px", borderRadius: "4px",
-                           background: "#3b82f6", color: "#fff", border: "none", cursor: "pointer" }}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-                <button
-                  onClick={() => setEditing(false)}
-                  style={{ fontSize: "12px", padding: "4px 10px", borderRadius: "4px",
-                           background: "none", color: "var(--text-tertiary)",
-                           border: "1px solid var(--border)", cursor: "pointer" }}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* Images first (Claude.ai shows attachments above message text) */}
-              {imageBlocks.map((block, i) => (
-                <InlineImage key={`img-${i}`} block={block} />
-              ))}
-              {/* Text and command output */}
-              {allSegments.map((seg, i) => {
-                if (seg.kind === "text") return <TextBlock key={i} text={seg.content} isUser />;
-                if (seg.kind === "stdout") return <CommandOutput key={i} content={seg.content} />;
-                if (seg.kind === "stderr") return <CommandOutput key={i} content={seg.content} isError />;
-                return null;
-              })}
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Hover actions row */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          alignItems: "center",
-          gap: "2px",
-          marginTop: "4px",
-          height: "22px",
-          opacity: hovered ? 1 : 0,
-          transition: "opacity var(--transition-fast)",
-          pointerEvents: hovered ? "auto" : "none",
-        }}
-      >
-        {message.timestamp && (
-          <span
+      {editing ? (
+        <EditForm
+          initialText={initialEditText}
+          onSave={saveEdit}
+          onCancel={() => setEditing(false)}
+        />
+      ) : (
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <div
             style={{
-              fontSize: "11px",
-              color: "var(--text-tertiary)",
-              marginRight: "4px",
-              fontFamily: "var(--font-ui)",
+              background: "var(--bg-user-msg)",
+              borderRadius: "18px 18px 4px 18px",
+              padding: "10px 16px",
+              maxWidth: "88%",
             }}
           >
-            {formatMsgDate(message.timestamp)}
-          </span>
-        )}
-        <ActionIconBtn title="Regenerate (coming soon)" disabled>
-          <RefreshIcon />
-        </ActionIconBtn>
-        {message.role === "user" && hasTextBlocks && (
-          <ActionIconBtn title="Edit message" onClick={startEdit}>
-            <EditIcon />
+            {imageBlocks.map((block, i) => (
+              <InlineImage key={`img-${i}`} block={block} />
+            ))}
+            {allSegments.map((seg, i) => {
+              if (seg.kind === "text") return <TextBlock key={i} text={seg.content} isUser />;
+              if (seg.kind === "stdout") return <CommandOutput key={i} content={seg.content} />;
+              if (seg.kind === "stderr") return <CommandOutput key={i} content={seg.content} isError />;
+              return null;
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Hover actions row */}
+      {!editing && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            alignItems: "center",
+            gap: "2px",
+            marginTop: "4px",
+            height: "22px",
+            opacity: hovered ? 1 : 0,
+            transition: "opacity var(--transition-fast)",
+            pointerEvents: hovered ? "auto" : "none",
+          }}
+        >
+          {message.timestamp && (
+            <span
+              style={{
+                fontSize: "11px",
+                color: "var(--text-tertiary)",
+                marginRight: "4px",
+                fontFamily: "var(--font-ui)",
+              }}
+            >
+              {formatMsgDate(message.timestamp)}
+            </span>
+          )}
+          <ActionIconBtn title="Regenerate (coming soon)" disabled>
+            <RefreshIcon />
           </ActionIconBtn>
-        )}
-        <ActionIconBtn title={copied ? "Copied!" : "Copy message"} onClick={handleCopy}>
-          {copied ? <CheckIcon /> : <CopyIcon />}
-        </ActionIconBtn>
-        <ActionIconBtn title="Delete message" onClick={() => setConfirmDelete(true)}>
-          <TrashIcon />
-        </ActionIconBtn>
-      </div>
+          {message.role === "user" && hasTextBlocks && (
+            <ActionIconBtn title="Edit message" onClick={() => setEditing(true)}>
+              <EditIcon />
+            </ActionIconBtn>
+          )}
+          <ActionIconBtn title={copied ? "Copied!" : "Copy message"} onClick={handleCopy}>
+            {copied ? <CheckIcon /> : <CopyIcon />}
+          </ActionIconBtn>
+          <ActionIconBtn title="Delete message" danger onClick={() => setConfirmDelete(true)}>
+            <TrashIcon />
+          </ActionIconBtn>
+        </div>
+      )}
 
       {confirmDelete && (
         <ConfirmDialog

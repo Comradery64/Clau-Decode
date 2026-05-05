@@ -8,14 +8,109 @@ import { AssistantMessage } from "./AssistantMessage";
 import { groupMessages, type Turn } from "./groupMessages";
 import { StreamingIndicator } from "./StreamingIndicator";
 
-// Claude is still working if the last turn is a user turn (no response yet),
-// or if the last assistant turn's final message has no text blocks (mid-tool-loop).
+const XML_TAG_RE = /<[a-z][a-z0-9-]*>[\s\S]*?<\/[a-z][a-z0-9-]*>/g;
+
+function hasPlainText(blocks: import("../../api/types").ContentBlock[]): boolean {
+  return blocks.some((b) => {
+    if (b.type !== "text") return false;
+    const stripped = (b as { type: "text"; text: string }).text
+      .replace(XML_TAG_RE, "")
+      .trim();
+    return stripped.length > 0;
+  });
+}
+
+// Claude is still working if the last visible user turn has actual user text
+// (not just stdout/stderr output), or if the last assistant turn ended with no
+// text blocks (mid-tool-loop). Command turns (/exit etc.) are never active.
 function isSessionActive(turns: Turn[]): boolean {
   if (turns.length === 0) return false;
   const last = turns[turns.length - 1];
-  if (last.kind === "user") return true;
+  if (last.kind === "command") return false;
+  if (last.kind === "aside") return false;
+  if (last.kind === "user") return hasPlainText(last.message.content_blocks);
   const lastMsg = last.messages[last.messages.length - 1];
   return !lastMsg.content_blocks.some((b) => b.type === "text");
+}
+
+// ---------------------------------------------------------------------------
+// AsideResponse — collapsible /btw response panel
+// ---------------------------------------------------------------------------
+
+function AsideResponse({ message }: { message: import("../../api/types").Message }) {
+  return (
+    <details
+      style={{
+        margin: "0 24px 4px",
+        background: "var(--bg-tool-result)",
+        border: "1px solid var(--border-subtle)",
+        borderRadius: "var(--radius-md)",
+      }}
+    >
+      <summary
+        style={{
+          padding: "6px 12px",
+          fontSize: "12px",
+          color: "var(--text-tertiary)",
+          cursor: "pointer",
+          userSelect: "none",
+          listStyle: "none",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        ↩ /btw response
+      </summary>
+      <div style={{ borderTop: "1px solid var(--border-subtle)", padding: "4px 0" }}>
+        <AssistantMessage messages={[message]} model={message.model} />
+      </div>
+    </details>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CommandBadge — shown for slash command records (/exit, /compact, etc.)
+// ---------------------------------------------------------------------------
+
+function CommandBadge({ command, timestamp }: { command: string; timestamp: string | null }) {
+  const time = timestamp
+    ? new Date(timestamp).toLocaleString("en-US", {
+        month: "short", day: "numeric",
+        hour: "numeric", minute: "2-digit", hour12: true,
+      })
+    : null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "8px 24px",
+        gap: "8px",
+      }}
+    >
+      <div style={{ flex: 1, height: "1px", background: "var(--border-subtle)" }} />
+      <span
+        style={{
+          fontSize: "11px",
+          fontFamily: "var(--font-mono)",
+          color: "var(--text-tertiary)",
+          background: "var(--bg-sidebar)",
+          border: "1px solid var(--border-subtle)",
+          borderRadius: "var(--radius-sm)",
+          padding: "2px 8px",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {command}
+        {time && (
+          <span style={{ opacity: 0.6, marginLeft: "6px", fontFamily: "var(--font-ui)" }}>
+            {time}
+          </span>
+        )}
+      </span>
+      <div style={{ flex: 1, height: "1px", background: "var(--border-subtle)" }} />
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -155,26 +250,54 @@ export default function MessageList({ sessionId }: MessageListProps) {
     };
   }, [detail, sessionId]);
 
-  // Listen for live-reload refresh events dispatched by App.tsx
+  // Listen for live-reload refresh events dispatched by App.tsx (SSE / file-watcher)
   useEffect(() => {
     const handler = () => {
       invalidateCached(sessionId);
-      api.getSession(sessionId).then((d) => { setCached(sessionId, d); setDetail(d); }).catch(console.error);
+      api.getSession(sessionId).then((d) => {
+        setCached(sessionId, d);
+        // Only update state when messages actually changed — avoids resetting the
+        // sseTimedOut timer when an unrelated session triggers a global refresh.
+        setDetail((prev) =>
+          prev?.id === d.id && prev.messages.length === d.messages.length ? prev : d
+        );
+      }).catch(console.error);
     };
     window.addEventListener("clau-decode:refresh", handler);
     return () => window.removeEventListener("clau-decode:refresh", handler);
   }, [sessionId]);
 
-  // Streaming indicator timeout: hide the "Focusing…" indicator if no new
-  // messages arrive within 2 minutes. Handles cancelled/exited sessions where
-  // Claude Code stopped writing to the JSONL without producing a response.
-  // Resets on every detail update (SSE-triggered re-fetch), so long-running
-  // sessions with active tool use keep the indicator alive.
+  // Listen for explicit mutations (edit/delete) — always re-render, bypasses
+  // the SSE length-guard which would swallow content-only edits.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const mutatedId = (e as CustomEvent<string>).detail;
+      if (mutatedId !== sessionId) return;
+      invalidateCached(sessionId);
+      api.getSession(sessionId).then((d) => {
+        setCached(sessionId, d);
+        setDetail(d);
+      }).catch(console.error);
+    };
+    window.addEventListener("clau-decode:session-mutated", handler);
+    return () => window.removeEventListener("clau-decode:session-mutated", handler);
+  }, [sessionId]);
+
+  // Streaming indicator timeout: hide the indicator for stale/killed sessions.
+  // - If the session's last activity was >5 minutes ago, hide immediately —
+  //   the process was killed or abandoned long before the user opened this view.
+  // - Otherwise start a 2-minute watchdog; if no new messages arrive (SSE goes
+  //   quiet) within that window, the session is considered dead.
   const [sseTimedOut, setSseTimedOut] = useState(false);
   useEffect(() => {
     if (!detail) { setSseTimedOut(false); return; }
     const active = isSessionActive(groupMessages(detail.messages));
     if (!active) { setSseTimedOut(false); return; }
+    const updatedMs = detail.updated_at ? Date.parse(detail.updated_at) : 0;
+    if (Date.now() - updatedMs > 5 * 60_000) {
+      setSseTimedOut(true);
+      return;
+    }
     setSseTimedOut(false);
     const id = setTimeout(() => setSseTimedOut(true), 2 * 60_000);
     return () => clearTimeout(id);
@@ -219,11 +342,24 @@ export default function MessageList({ sessionId }: MessageListProps) {
         if (turn.kind === "user") {
           return <UserMessage key={turn.message.id} message={turn.message} />;
         }
+        if (turn.kind === "command") {
+          return (
+            <CommandBadge
+              key={turn.message.id}
+              command={turn.command}
+              timestamp={turn.message.timestamp}
+            />
+          );
+        }
+        if (turn.kind === "aside") {
+          return <AsideResponse key={turn.message.id} message={turn.message} />;
+        }
         return (
           <AssistantMessage
             key={`assistant-turn-${i}`}
             messages={turn.messages}
             model={turn.model}
+            sessionId={sessionId}
           />
         );
       })}

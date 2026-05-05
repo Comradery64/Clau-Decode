@@ -1,6 +1,14 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { vi } from "vitest";
 import { UserMessage } from "../UserMessage";
 import type { Message } from "../../../api/types";
+
+vi.mock("../../../api/client", () => ({
+  api: {
+    patchMessage: vi.fn().mockResolvedValue({ ok: true }),
+    deleteMessage: vi.fn().mockResolvedValue({ ok: true }),
+  },
+}));
 
 function makeMessage(overrides: Partial<Message> = {}): Message {
   return {
@@ -69,5 +77,88 @@ describe("UserMessage", () => {
     render(<UserMessage message={message} />);
     expect(screen.getByText("First block")).toBeInTheDocument();
     expect(screen.getByText("Second block")).toBeInTheDocument();
+  });
+});
+
+describe("UserMessage — edit", () => {
+  it("shows edit button for user messages with text", () => {
+    render(<UserMessage message={makeMessage()} />);
+    expect(screen.getByTitle("Edit message")).toBeInTheDocument();
+  });
+
+  it("does not show edit button for assistant messages", () => {
+    render(<UserMessage message={makeMessage({ role: "assistant" })} />);
+    expect(screen.queryByTitle("Edit message")).not.toBeInTheDocument();
+  });
+
+  it("clicking edit shows a textarea with the message text", () => {
+    render(<UserMessage message={makeMessage()} />);
+    fireEvent.click(screen.getByTitle("Edit message"));
+    const textarea = screen.getByRole("textbox");
+    expect(textarea).toBeInTheDocument();
+    expect((textarea as HTMLTextAreaElement).value).toBe("Hello, Claude!");
+  });
+
+  it("clicking cancel hides the textarea", () => {
+    render(<UserMessage message={makeMessage()} />);
+    fireEvent.click(screen.getByTitle("Edit message"));
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("clicking save calls api.patchMessage and dispatches session-mutated", async () => {
+    const { api } = await import("../../../api/client");
+    const dispatched: string[] = [];
+    window.addEventListener("clau-decode:session-mutated", (e) => {
+      dispatched.push((e as CustomEvent<string>).detail);
+    });
+
+    render(<UserMessage message={makeMessage({ session_id: "sess_x" })} />);
+    fireEvent.click(screen.getByTitle("Edit message"));
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() => {
+      expect(api.patchMessage).toHaveBeenCalledWith("msg_001", [
+        { type: "text", text: "Hello, Claude!" },
+      ]);
+      expect(dispatched).toContain("sess_x");
+    });
+  });
+});
+
+describe("UserMessage — delete", () => {
+  it("shows delete button", () => {
+    render(<UserMessage message={makeMessage()} />);
+    expect(screen.getByTitle("Delete message")).toBeInTheDocument();
+  });
+
+  it("clicking delete shows confirm dialog", () => {
+    render(<UserMessage message={makeMessage()} />);
+    fireEvent.click(screen.getByTitle("Delete message"));
+    expect(screen.getByText("Delete message?")).toBeInTheDocument();
+  });
+
+  it("clicking Cancel in dialog hides it", () => {
+    render(<UserMessage message={makeMessage()} />);
+    fireEvent.click(screen.getByTitle("Delete message"));
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(screen.queryByText("Delete message?")).not.toBeInTheDocument();
+  });
+
+  it("confirming delete calls api.deleteMessage and dispatches session-mutated", async () => {
+    const { api } = await import("../../../api/client");
+    const dispatched: string[] = [];
+    window.addEventListener("clau-decode:session-mutated", (e) => {
+      dispatched.push((e as CustomEvent<string>).detail);
+    });
+
+    render(<UserMessage message={makeMessage({ session_id: "sess_y" })} />);
+    fireEvent.click(screen.getByTitle("Delete message"));
+    fireEvent.click(screen.getByText("Delete"));
+
+    await waitFor(() => {
+      expect(api.deleteMessage).toHaveBeenCalledWith("msg_001");
+      expect(dispatched).toContain("sess_y");
+    });
   });
 });
