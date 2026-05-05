@@ -133,7 +133,9 @@ class LowCacheHitRule:
         for msg in messages:
             if msg.role != "assistant" or not msg.usage:
                 continue
-            total_input += msg.usage.input_tokens + msg.usage.cache_read_input_tokens
+            total_input += (msg.usage.input_tokens
+                            + msg.usage.cache_read_input_tokens
+                            + msg.usage.cache_creation_input_tokens)
             total_cache_read += msg.usage.cache_read_input_tokens
 
         if total_input < self._min_input:

@@ -163,7 +163,7 @@ class TestOversizedToolResultRule:
 
 
 class TestLowCacheHitRule:
-    def test_no_tip_when_cache_hit_high(self):
+    def test_no_tip_below_min_tokens(self):
         from clau_decode.analytics.tips import LowCacheHitRule
         # 50% cache hit (1k cache-read vs 1k regular input = 50%)
         msgs = [_asst_tokens("m1", input=1_000, cache_read=1_000)]
@@ -200,3 +200,15 @@ class TestLowCacheHitRule:
         msgs = [_asst_tokens("m1", input=10_000, cache_read=200)]
         tip = LowCacheHitRule().check(msgs)[0]
         assert "%" in tip.evidence[0]
+
+    def test_no_tip_when_ratio_at_threshold(self):
+        from clau_decode.analytics.tips import LowCacheHitRule
+        # exactly 10% — at threshold, no tip
+        msgs = [_asst_tokens("m1", input=9_000, cache_read=1_000)]  # 1000/(9000+1000)=10%
+        assert LowCacheHitRule().check(msgs) == []
+
+    def test_tip_just_below_threshold(self):
+        from clau_decode.analytics.tips import LowCacheHitRule
+        # 9.9% — just below threshold → tip fires
+        msgs = [_asst_tokens("m1", input=9_090, cache_read=1_000)]  # ~9.9%
+        assert len(LowCacheHitRule().check(msgs)) == 1
