@@ -109,6 +109,9 @@ function getToolSummary(toolUse: ToolUseBlockType): { description: string; badge
   const filePath = (input.file_path as string) || (input.path as string) || "";
   const fileName = filePath ? (filePath.split("/").pop() ?? filePath) : "";
 
+  if (name === "todowrite") {
+    return { description: "Update Todos", badge: null };
+  }
   if (name.includes("write") || name.includes("create")) {
     return { description: fileName ? `Created ${fileName}` : toolUse.name, badge: fileName || null };
   }
@@ -282,6 +285,125 @@ function renderToolInput(toolUse: ToolUseBlockType): ReactNode {
 }
 
 // ============================================================
+// Specialized inline tool renderers
+// ============================================================
+
+function TodoListView({ todos }: { todos: Array<{ content: string; status: string }> }) {
+  return (
+    <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "4px" }}>
+      {todos.map((todo, i) => {
+        const done = todo.status === "completed";
+        const active = todo.status === "in_progress";
+        return (
+          <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+            <span
+              style={{
+                flexShrink: 0,
+                fontSize: "12px",
+                lineHeight: "1.6",
+                color: done ? "#22c55e" : active ? "var(--accent-orange)" : "var(--border-strong)",
+              }}
+            >
+              {done ? "✓" : active ? "▸" : "○"}
+            </span>
+            <span
+              style={{
+                fontSize: "13px",
+                color: done ? "var(--text-tertiary)" : "var(--text-secondary)",
+                lineHeight: 1.6,
+                textDecoration: done ? "line-through" : "none",
+                opacity: done ? 0.7 : 1,
+                wordBreak: "break-word",
+              }}
+            >
+              {todo.content}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const BASH_OUT_LIMIT = 500;
+
+function BashInOutView({ command, result, isError }: { command: string; result: string; isError?: boolean }) {
+  const rowStyle: CSSProperties = { display: "flex", alignItems: "stretch" };
+  const labelStyle: CSSProperties = {
+    padding: "5px 8px",
+    fontWeight: 700,
+    fontSize: "10px",
+    letterSpacing: "0.06em",
+    borderRight: "1px solid var(--border-subtle)",
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    background: "var(--bg-code-block-header)",
+    color: "var(--text-tertiary)",
+    width: "34px",
+    justifyContent: "center",
+  };
+  const preStyle = (err?: boolean): CSSProperties => ({
+    margin: 0,
+    padding: "10px 10px",
+    fontFamily: "var(--font-mono)",
+    fontSize: "12px",
+    background: err ? "var(--tool-error-bg)" : "var(--bg-code)",
+    color: err ? "var(--tool-error-text)" : "var(--text-code)",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-all",
+    flex: 1,
+    lineHeight: 1.5,
+    maxHeight: "140px",
+    overflowY: "auto",
+  });
+  const truncated = result.length > BASH_OUT_LIMIT ? result.slice(0, BASH_OUT_LIMIT) + "\n…" : result;
+  return (
+    <div
+      style={{
+        marginTop: "8px",
+        border: "1px solid var(--border-subtle)",
+        borderRadius: "var(--radius-sm)",
+        overflow: "hidden",
+        fontFamily: "var(--font-mono)",
+        fontSize: "12px",
+      }}
+    >
+      {command && (
+        <div style={{ ...rowStyle, borderBottom: result ? "1px solid var(--border-subtle)" : "none" }}>
+          <span style={labelStyle}>IN</span>
+          <pre style={preStyle()}>{command}</pre>
+        </div>
+      )}
+      {result && (
+        <div style={rowStyle}>
+          <span style={{ ...labelStyle, color: isError ? "var(--tool-error-text)" : "var(--text-tertiary)" }}>OUT</span>
+          <pre style={preStyle(isError)}>{truncated}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function renderInlineContent(toolUse: ToolUseBlockType, toolResult: ToolResultBlock | null): ReactNode {
+  const name = toolUse.name.toLowerCase();
+  const input = toolUse.input as Record<string, unknown>;
+
+  if (name === "todowrite") {
+    const todos = input.todos as Array<{ content: string; status: string }> | undefined;
+    if (Array.isArray(todos) && todos.length > 0) return <TodoListView todos={todos} />;
+  }
+
+  if (name.includes("bash") || name === "execute") {
+    const command = (input.command as string) || (input.cmd as string) || "";
+    const result = toolResult ? renderResultText(toolResult.content) : "";
+    if (command || result) return <BashInOutView command={command} result={result} isError={toolResult?.is_error} />;
+  }
+
+  return null;
+}
+
+// ============================================================
 // Show more / less button
 // ============================================================
 
@@ -401,6 +523,7 @@ function ToolItem({
   const { description, badge } = getToolSummary(toolUse);
   const resultText = toolResult ? renderResultText(toolResult.content) : "";
   const RESULT_LIMIT = 600;
+  const inlineContent = renderInlineContent(toolUse, toolResult);
 
   return (
     <div
@@ -426,7 +549,7 @@ function ToolItem({
         >
           {description}
         </span>
-        {badge && (
+        {!inlineContent && badge && (
           <div style={{ marginTop: "4px" }}>
             <span
               style={{
@@ -444,70 +567,74 @@ function ToolItem({
           </div>
         )}
 
-        {/* Hover-reveal "Show more" */}
-        <ShowMoreBtn
-          expanded={expanded}
-          visible={hovered || expanded}
-          onClick={() => setLocalExpanded(!expanded)}
-        />
+        {/* Specialized inline view — replaces show-more JSON for known tools */}
+        {inlineContent}
 
-        {/* Expanded detail: JSON input + result */}
-        {expanded && (
-          <div style={{ marginTop: "4px" }}>
-            <div
-              style={{
-                fontSize: "10px",
-                fontWeight: 600,
-                color: "var(--text-tertiary)",
-                textTransform: "uppercase",
-                letterSpacing: "0.06em",
-                marginBottom: "2px",
-              }}
-            >
-              Input
-            </div>
-            {renderToolInput(toolUse)}
-
-            {resultText && (
-              <>
+        {/* Hover-reveal "Show more" + expanded JSON (non-specialized tools only) */}
+        {!inlineContent && (
+          <>
+            <ShowMoreBtn
+              expanded={expanded}
+              visible={hovered || expanded}
+              onClick={() => setLocalExpanded(!expanded)}
+            />
+            {expanded && (
+              <div style={{ marginTop: "4px" }}>
                 <div
                   style={{
                     fontSize: "10px",
                     fontWeight: 600,
-                    color: toolResult?.is_error ? "var(--tool-error-text)" : "var(--text-tertiary)",
+                    color: "var(--text-tertiary)",
                     textTransform: "uppercase",
                     letterSpacing: "0.06em",
-                    marginTop: "8px",
                     marginBottom: "2px",
                   }}
                 >
-                  Result
+                  Input
                 </div>
-                <pre
-                  style={{
-                    background: toolResult?.is_error ? "var(--tool-error-bg)" : "var(--bg-code)",
-                    border: `1px solid ${toolResult?.is_error ? "var(--tool-error-border)" : "var(--border-subtle)"}`,
-                    borderRadius: "var(--radius-sm)",
-                    fontFamily: "var(--font-mono)",
-                    fontSize: "12px",
-                    padding: "8px 10px",
-                    overflowX: "auto",
-                    margin: 0,
-                    lineHeight: 1.5,
-                    color: toolResult?.is_error ? "var(--tool-error-text)" : "var(--text-code)",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-all",
-                    maxHeight: "300px",
-                    overflowY: "auto",
-                  }}
-                >
-                  {resultText.length > RESULT_LIMIT
-                    ? resultText.slice(0, RESULT_LIMIT) + "\n…"
-                    : resultText}
-                </pre>
-              </>
+                {renderToolInput(toolUse)}
+                {resultText && (
+                  <>
+                    <div
+                      style={{
+                        fontSize: "10px",
+                        fontWeight: 600,
+                        color: toolResult?.is_error ? "var(--tool-error-text)" : "var(--text-tertiary)",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                        marginTop: "8px",
+                        marginBottom: "2px",
+                      }}
+                    >
+                      Result
+                    </div>
+                    <pre
+                      style={{
+                        background: toolResult?.is_error ? "var(--tool-error-bg)" : "var(--bg-code)",
+                        border: `1px solid ${toolResult?.is_error ? "var(--tool-error-border)" : "var(--border-subtle)"}`,
+                        borderRadius: "var(--radius-sm)",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: "12px",
+                        padding: "8px 10px",
+                        overflowX: "auto",
+                        margin: 0,
+                        lineHeight: 1.5,
+                        color: toolResult?.is_error ? "var(--tool-error-text)" : "var(--text-code)",
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-all",
+                        maxHeight: "300px",
+                        overflowY: "auto",
+                      }}
+                    >
+                      {resultText.length > RESULT_LIMIT
+                        ? resultText.slice(0, RESULT_LIMIT) + "\n…"
+                        : resultText}
+                    </pre>
+                  </>
+                )}
+              </div>
             )}
-          </div>
+          </>
         )}
       </div>
     </div>

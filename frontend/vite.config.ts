@@ -7,6 +7,18 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, "../src/clau_decode/static"),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          echarts: [
+            "echarts/core",
+            "echarts/charts",
+            "echarts/components",
+            "echarts/renderers",
+          ],
+        },
+      },
+    },
   },
   server: {
     port: 5173,

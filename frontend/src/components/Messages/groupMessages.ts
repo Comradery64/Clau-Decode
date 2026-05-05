@@ -75,6 +75,15 @@ export function groupMessages(messages: Message[]): Turn[] {
       if (!currentAssistant) currentAssistant = [];
       currentAssistant.push(msg);
     } else if (msg.role === "user") {
+      // Tool-result messages must stay with the preceding assistant turn so
+      // pairToolBlocks can match tool_use → tool_result by id.
+      const isToolResult =
+        msg.content_blocks.length > 0 &&
+        msg.content_blocks.every((b) => b.type === "tool_result");
+      if (isToolResult && currentAssistant) {
+        currentAssistant.push(msg);
+        continue;
+      }
       if (isInvisibleUser(msg)) continue;
       flushAssistant();
       turns.push({ kind: "user", message: msg });
