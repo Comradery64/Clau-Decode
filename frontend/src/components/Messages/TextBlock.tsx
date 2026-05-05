@@ -165,6 +165,9 @@ function CodeBlockWrapper({ children }: { children: ReactNode }) {
 // ---------------------------------------------------------------------------
 
 const components: Components = {
+  table({ children }) {
+    return <div className="table-scroll"><table>{children}</table></div>;
+  },
   pre({ children }) {
     return <CodeBlockWrapper>{children}</CodeBlockWrapper>;
   },

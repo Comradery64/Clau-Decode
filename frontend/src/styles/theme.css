@@ -212,8 +212,11 @@ body {
   border-left: 3px solid var(--border-strong);
   color: var(--text-secondary);
 }
-.prose-content table { width: 100%; border-collapse: collapse; margin: 0 0 14px 0; font-size: 14px; }
-.prose-content th, .prose-content td { padding: 8px 12px; border: 1px solid var(--border-default); text-align: left; }
+.prose-content table { width: max-content; min-width: 100%; border-collapse: collapse; margin: 0 0 14px 0; font-size: 14px; }
+.prose-content .table-scroll { overflow-x: auto; margin: 0 0 14px 0; }
+.prose-content .table-scroll table { margin: 0; }
+.prose-content th, .prose-content td { padding: 8px 12px; border: 1px solid var(--border-default); text-align: left; white-space: nowrap; }
+.prose-content td:last-child { white-space: normal; }
 .prose-content th { background: var(--bg-code); font-weight: 600; }
 .prose-content hr { border: none; border-top: 1px solid var(--border-subtle); margin: 20px 0; }
 
