@@ -68,9 +68,17 @@ def main() -> None:
         action="version",
         version=f"clau-decode {__version__}",
     )
+    parser.add_argument(
+        "--enable-edit",
+        action="store_true",
+        default=False,
+        help="Enable message editing and deletion. A backup is created before every write.",
+    )
     args = parser.parse_args()
 
     config = load_config(extra_paths=args.paths, port=args.port)
+    if args.enable_edit:
+        config = config.model_copy(update={"edit_enabled": True})
     db_path = get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
 

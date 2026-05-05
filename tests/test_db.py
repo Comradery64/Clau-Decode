@@ -259,3 +259,60 @@ class TestPhase0Integration:
         assert total_input == 32  # 12 + 20
         total_cache_read = sum(m.usage.cache_read_input_tokens for m in assistant_msgs if m.usage)
         assert total_cache_read == 50
+
+
+class TestDeleteMessage:
+    async def test_delete_removes_message(self, db, sample_messages):
+        project = Project(id="p1", display_name="p", raw_path="/", resolved_path="/", data_source="local")
+        session = Session(id=sample_messages[0].session_id, project_id="p1", file_path="/f.jsonl")
+        await db.upsert_project(project)
+        await db.upsert_session(session)
+        await db.upsert_messages(sample_messages[:2])
+        target_id = sample_messages[0].id
+        await db.delete_message(target_id)
+        detail = await db.get_session_detail(session.id)
+        assert all(m.id != target_id for m in detail.messages)
+
+    async def test_delete_updates_session_message_count(self, db, sample_messages):
+        project = Project(id="p1", display_name="p", raw_path="/", resolved_path="/", data_source="local")
+        session = Session(id=sample_messages[0].session_id, project_id="p1", file_path="/f.jsonl", title="Test")
+        await db.upsert_project(project)
+        await db.upsert_session(session)
+        await db.upsert_messages(sample_messages[:2])
+        await db.delete_message(sample_messages[0].id)
+        sessions = await db.get_sessions(project_id="p1")
+        assert sessions[0].message_count == 1
+
+    async def test_delete_nonexistent_is_noop(self, db):
+        await db.delete_message("nonexistent-uuid-0000-0000-000000000000")
+
+
+class TestUpdateMessageContent:
+    async def test_update_changes_content(self, db, sample_messages):
+        project = Project(id="p1", display_name="p", raw_path="/", resolved_path="/", data_source="local")
+        session = Session(id=sample_messages[0].session_id, project_id="p1", file_path="/f.jsonl")
+        await db.upsert_project(project)
+        await db.upsert_session(session)
+        await db.upsert_messages([sample_messages[0]])
+        new_blocks = [TextBlock(text="updated content")]
+        await db.update_message_content(sample_messages[0].id, new_blocks)
+        detail = await db.get_session_detail(session.id)
+        assert detail.messages[0].content_blocks[0].text == "updated content"
+
+    async def test_update_nonexistent_is_noop(self, db):
+        await db.update_message_content("nonexistent-0000-0000-0000-000000000000", [TextBlock(text="x")])
+
+
+class TestGetSessionFilePathForMessage:
+    async def test_returns_file_path(self, db, sample_messages):
+        project = Project(id="p1", display_name="p", raw_path="/", resolved_path="/", data_source="local")
+        session = Session(id=sample_messages[0].session_id, project_id="p1", file_path="/sessions/test.jsonl")
+        await db.upsert_project(project)
+        await db.upsert_session(session)
+        await db.upsert_messages([sample_messages[0]])
+        path = await db.get_session_file_path_for_message(sample_messages[0].id)
+        assert path == "/sessions/test.jsonl"
+
+    async def test_returns_none_for_unknown_message(self, db):
+        path = await db.get_session_file_path_for_message("unknown-0000-0000-0000-000000000000")
+        assert path is None

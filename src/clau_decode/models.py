@@ -150,6 +150,7 @@ class AppConfig(BaseModel):
     theme: Literal["light", "dark", "system"] = "system"
     auto_open_browser: bool = True
     port: int = 4242
+    edit_enabled: bool = False
 
 
 # ---------------------------------------------------------------------------

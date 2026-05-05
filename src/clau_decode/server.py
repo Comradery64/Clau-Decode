@@ -38,6 +38,8 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from pydantic import BaseModel
+
 from .analytics.cost import CostEngine
 from .analytics.pricing import CachedPricingStrategy, _HARDCODED_RATES
 from .analytics.service import TokenAnalyticsService as _AnalyticsSvc
@@ -54,7 +56,8 @@ from .analytics.tips import (
     TipRegistry,
 )
 from .config import save_config
-from .db import Database
+from .db import Database, _deserialize_content_block
+from .editor import backup_session, delete_from_session, edit_content_in_session
 from .models import AppConfig
 from .parser import parse_session
 from .scanner import build_project_from_dir, scan_paths
@@ -371,6 +374,51 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 for model, p in sorted(data.items())
             ],
         }
+
+    # -----------------------------------------------------------------------
+    # Mutation guard (Phase 6)
+    # -----------------------------------------------------------------------
+
+    def _require_edit() -> None:
+        if not _state["config"].edit_enabled:
+            raise HTTPException(
+                status_code=403,
+                detail="Editing is disabled. Restart with --enable-edit to enable mutations.",
+            )
+
+    # -----------------------------------------------------------------------
+    # Message mutation routes (Phase 6)
+    # -----------------------------------------------------------------------
+
+    class MessageContentUpdate(BaseModel):
+        content_blocks: list[dict]
+
+    @app.delete("/api/messages/{message_id}")
+    async def delete_message_route(message_id: str):
+        _require_edit()
+        async with Database(db_path) as db:
+            file_path = await db.get_session_file_path_for_message(message_id)
+            if file_path:
+                path = Path(file_path)
+                if path.exists():
+                    backup_session(path)
+                    delete_from_session(path, message_id)
+            await db.delete_message(message_id)
+        return {"ok": True}
+
+    @app.patch("/api/messages/{message_id}")
+    async def patch_message_route(message_id: str, body: MessageContentUpdate):
+        _require_edit()
+        blocks = [_deserialize_content_block(b) for b in body.content_blocks]
+        async with Database(db_path) as db:
+            file_path = await db.get_session_file_path_for_message(message_id)
+            if file_path:
+                path = Path(file_path)
+                if path.exists():
+                    backup_session(path)
+                    edit_content_in_session(path, message_id, body.content_blocks)
+            await db.update_message_content(message_id, blocks)
+        return {"ok": True}
 
     @app.post("/api/sessions/{session_id}/reveal")
     async def reveal_session(session_id: str):

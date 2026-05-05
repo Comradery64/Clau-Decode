@@ -1,6 +1,8 @@
 import { useState } from "react";
-import type { Message, ImageBlock } from "../../api/types";
+import type { Message, ImageBlock, TextBlock as TextBlockType } from "../../api/types";
 import { TextBlock } from "./TextBlock";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { api } from "../../api/client";
 
 // ---------------------------------------------------------------------------
 // XML tag parsing — Claude Code injects various system tags into user messages
@@ -144,6 +146,22 @@ function CheckIcon() {
   );
 }
 
+function EditIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <path d="M9.5 2.5l2 2L4 12H2v-2L9.5 2.5z" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <path d="M2 4h10M5 4V2.5h4V4M5.5 6v5M8.5 6v5M3 4l.8 7.5A1 1 0 0 0 4.8 12.5h4.4a1 1 0 0 0 1-.9L11 4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function ActionIconBtn({
   onClick,
   title,
@@ -196,6 +214,10 @@ interface UserMessageProps {
 export function UserMessage({ message }: UserMessageProps) {
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (message.is_meta) return null;
 
@@ -214,21 +236,48 @@ export function UserMessage({ message }: UserMessageProps) {
   const hasUserText = allSegments.some((s) => s.kind === "text");
   const hasOutput = allSegments.some((s) => s.kind === "stdout" || s.kind === "stderr");
   const hasImages = imageBlocks.length > 0;
+  const hasTextBlocks = message.content_blocks.some((b) => b.type === "text");
 
   // Nothing visible at all
   if (allSegments.length === 0 && !hasImages) return null;
 
   const handleCopy = async () => {
-    const text = allSegments
-      .filter((s) => s.kind === "text")
-      .map((s) => s.content)
-      .join("\n\n");
+    const text = message.content_blocks
+      .filter((b): b is TextBlockType => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {}
   };
+
+  function startEdit() {
+    const text = message.content_blocks
+      .filter((b): b is TextBlockType => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+    setEditText(text);
+    setEditing(true);
+  }
+
+  async function saveEdit() {
+    setSaving(true);
+    try {
+      await api.patchMessage(message.id, [{ type: "text", text: editText }]);
+      setEditing(false);
+      window.dispatchEvent(new CustomEvent("clau-decode:refresh"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function doDelete() {
+    await api.deleteMessage(message.id);
+    setConfirmDelete(false);
+    window.dispatchEvent(new CustomEvent("clau-decode:refresh"));
+  }
 
   // Output-only (no user text, no images) — render without bubble
   if (!hasUserText && !hasImages && hasOutput) {
@@ -257,19 +306,62 @@ export function UserMessage({ message }: UserMessageProps) {
             borderRadius: "18px 18px 4px 18px",
             padding: "10px 16px",
             maxWidth: "88%",
+            width: editing ? "88%" : undefined,
           }}
         >
-          {/* Images first (Claude.ai shows attachments above message text) */}
-          {imageBlocks.map((block, i) => (
-            <InlineImage key={`img-${i}`} block={block} />
-          ))}
-          {/* Text and command output */}
-          {allSegments.map((seg, i) => {
-            if (seg.kind === "text") return <TextBlock key={i} text={seg.content} isUser />;
-            if (seg.kind === "stdout") return <CommandOutput key={i} content={seg.content} />;
-            if (seg.kind === "stderr") return <CommandOutput key={i} content={seg.content} isError />;
-            return null;
-          })}
+          {editing ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                rows={Math.max(3, editText.split("\n").length)}
+                style={{
+                  width: "100%",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "13px",
+                  padding: "8px",
+                  borderRadius: "4px",
+                  background: "var(--bg-input, var(--bg-tool-block))",
+                  color: "var(--text-primary)",
+                  border: "1px solid var(--border)",
+                  resize: "vertical",
+                  boxSizing: "border-box",
+                }}
+              />
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  onClick={saveEdit}
+                  disabled={saving}
+                  style={{ fontSize: "12px", padding: "4px 10px", borderRadius: "4px",
+                           background: "#3b82f6", color: "#fff", border: "none", cursor: "pointer" }}
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+                <button
+                  onClick={() => setEditing(false)}
+                  style={{ fontSize: "12px", padding: "4px 10px", borderRadius: "4px",
+                           background: "none", color: "var(--text-tertiary)",
+                           border: "1px solid var(--border)", cursor: "pointer" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Images first (Claude.ai shows attachments above message text) */}
+              {imageBlocks.map((block, i) => (
+                <InlineImage key={`img-${i}`} block={block} />
+              ))}
+              {/* Text and command output */}
+              {allSegments.map((seg, i) => {
+                if (seg.kind === "text") return <TextBlock key={i} text={seg.content} isUser />;
+                if (seg.kind === "stdout") return <CommandOutput key={i} content={seg.content} />;
+                if (seg.kind === "stderr") return <CommandOutput key={i} content={seg.content} isError />;
+                return null;
+              })}
+            </>
+          )}
         </div>
       </div>
 
@@ -302,10 +394,27 @@ export function UserMessage({ message }: UserMessageProps) {
         <ActionIconBtn title="Regenerate (coming soon)" disabled>
           <RefreshIcon />
         </ActionIconBtn>
+        {message.role === "user" && hasTextBlocks && (
+          <ActionIconBtn title="Edit message" onClick={startEdit}>
+            <EditIcon />
+          </ActionIconBtn>
+        )}
         <ActionIconBtn title={copied ? "Copied!" : "Copy message"} onClick={handleCopy}>
           {copied ? <CheckIcon /> : <CopyIcon />}
         </ActionIconBtn>
+        <ActionIconBtn title="Delete message" onClick={() => setConfirmDelete(true)}>
+          <TrashIcon />
+        </ActionIconBtn>
       </div>
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete message?"
+          body="This removes the message from the session file. A backup is created automatically before the write."
+          onConfirm={doDelete}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
     </div>
   );
 }

@@ -264,3 +264,15 @@ export interface TipEntry {
   detail: string;
   evidence: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6 editing
+// ---------------------------------------------------------------------------
+
+export interface MessageContentPatch {
+  content_blocks: ContentBlock[];
+}
+
+export interface MutationResult {
+  ok: boolean;
+}

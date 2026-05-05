@@ -447,6 +447,82 @@ class Database:
             messages=messages,
         )
 
+    async def delete_message(self, message_id: str) -> None:
+        """Delete a message, its FTS entry, and update the parent session's message counts."""
+        assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT session_id FROM messages WHERE id = ?", (message_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        async with self._conn.execute(
+            "SELECT rowid FROM messages_fts WHERE message_id = ?", (message_id,)
+        ) as cursor:
+            fts_rows = await cursor.fetchall()
+        for fts_row in fts_rows:
+            await self._conn.execute(
+                "DELETE FROM messages_fts WHERE rowid = ?", (fts_row[0],)
+            )
+        await self._conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+        if row:
+            session_id = row["session_id"]
+            await self._conn.execute(
+                """UPDATE sessions SET
+                   message_count = (SELECT COUNT(*) FROM messages WHERE session_id = ?),
+                   user_message_count = (
+                       SELECT COUNT(*) FROM messages
+                       WHERE session_id = ? AND role = 'user' AND is_meta = 0
+                   )
+                   WHERE id = ?""",
+                (session_id, session_id, session_id),
+            )
+        await self._conn.commit()
+
+    async def update_message_content(
+        self, message_id: str, new_blocks: list[ContentBlock]
+    ) -> None:
+        """Replace a message's content_blocks in DB and rebuild its FTS entry."""
+        assert self._conn is not None
+        content_json = _serialize_content_blocks(new_blocks)
+        await self._conn.execute(
+            "UPDATE messages SET content_json = ? WHERE id = ?",
+            (content_json, message_id),
+        )
+        async with self._conn.execute(
+            "SELECT rowid FROM messages_fts WHERE message_id = ?", (message_id,)
+        ) as cursor:
+            fts_rows = await cursor.fetchall()
+        for fts_row in fts_rows:
+            await self._conn.execute(
+                "DELETE FROM messages_fts WHERE rowid = ?", (fts_row[0],)
+            )
+        fts_text = _extract_text_for_fts(new_blocks)
+        async with self._conn.execute(
+            "SELECT session_id, role FROM messages WHERE id = ?", (message_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row and fts_text.strip():
+            await self._conn.execute(
+                "INSERT INTO messages_fts (content, session_id, message_id, role) VALUES (?,?,?,?)",
+                (fts_text, row["session_id"], message_id, row["role"]),
+            )
+        await self._conn.commit()
+
+    async def get_session_file_path_for_message(self, message_id: str) -> str | None:
+        """Return the file_path of the session that owns the given message.
+
+        Used by mutation routes to find the correct JSONL file regardless of how
+        many data paths are configured (feature 37).
+        """
+        assert self._conn is not None
+        async with self._conn.execute(
+            """SELECT s.file_path FROM sessions s
+               JOIN messages m ON m.session_id = s.id
+               WHERE m.id = ?""",
+            (message_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row["file_path"] if row else None
+
     async def get_all_messages(self) -> list[Message]:
         """Fetch all messages from all sessions ordered by timestamp."""
         assert self._conn is not None

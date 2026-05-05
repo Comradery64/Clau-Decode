@@ -5,9 +5,11 @@
 
 import type {
   AppConfig,
+  ContentBlock,
   DailyBucket,
   FileTouchEntry,
   ModelUsageEntry,
+  MutationResult,
   PricingTableResponse,
   Project,
   PromptCostEntry,
@@ -42,6 +44,24 @@ async function post<T>(path: string): Promise<T> {
   const res = await fetch(path, { method: "POST" });
   if (!res.ok) throw new Error(`POST ${path} → ${res.status}`);
   return res.json() as Promise<T>;
+}
+
+function del<T>(path: string): Promise<T> {
+  return fetch(path, { method: "DELETE" }).then((r) => {
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<T>;
+  });
+}
+
+function patch<T>(path: string, body: unknown): Promise<T> {
+  return fetch(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then((r) => {
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<T>;
+  });
 }
 
 export const api = {
@@ -82,6 +102,10 @@ export const api = {
     get("/api/analytics/files"),
   getTips: (): Promise<TipEntry[]> =>
     get("/api/analytics/tips"),
+  deleteMessage: (messageId: string): Promise<MutationResult> =>
+    del(`/api/messages/${messageId}`),
+  patchMessage: (messageId: string, content_blocks: ContentBlock[]): Promise<MutationResult> =>
+    patch(`/api/messages/${messageId}`, { content_blocks }),
 };
 
 /** SSE event source — call onRefresh when a JSONL file changes. */
