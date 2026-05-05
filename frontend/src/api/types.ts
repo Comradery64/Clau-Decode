@@ -252,3 +252,15 @@ export interface FileTouchEntry {
   file: string;
   count: number;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5 tips
+// ---------------------------------------------------------------------------
+
+export interface TipEntry {
+  rule_id: string;
+  severity: "info" | "warning" | "error";
+  title: string;
+  detail: string;
+  evidence: string[];
+}

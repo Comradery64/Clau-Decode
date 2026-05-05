@@ -17,6 +17,7 @@ import type {
   SessionCostResponse,
   SessionDetail,
   StatsResponse,
+  TipEntry,
   TokenBreakdown,
   ToolUsageEntry,
 } from "./types";
@@ -79,6 +80,8 @@ export const api = {
     get("/api/analytics/tools"),
   getFileTouches: (): Promise<FileTouchEntry[]> =>
     get("/api/analytics/files"),
+  getTips: (): Promise<TipEntry[]> =>
+    get("/api/analytics/tips"),
 };
 
 /** SSE event source — call onRefresh when a JSONL file changes. */
