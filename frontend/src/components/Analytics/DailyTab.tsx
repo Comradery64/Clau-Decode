@@ -1,6 +1,18 @@
 import { useEffect, useRef } from "react";
-import * as echarts from "echarts";
+import * as echarts from "echarts/core";
+import type { ComposeOption } from "echarts/core";
+import { BarChart } from "echarts/charts";
+import type { BarSeriesOption } from "echarts/charts";
+import { TooltipComponent, GridComponent, LegendComponent } from "echarts/components";
+import type { TooltipComponentOption, GridComponentOption, LegendComponentOption } from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
 import type { DailyBucket } from "../../api/types";
+
+echarts.use([BarChart, TooltipComponent, GridComponent, LegendComponent, CanvasRenderer]);
+
+type EChartsOption = ComposeOption<
+  BarSeriesOption | TooltipComponentOption | GridComponentOption | LegendComponentOption
+>;
 
 interface DailyTabProps {
   daily: DailyBucket[];
@@ -50,7 +62,7 @@ export function DailyTab({ daily }: DailyTabProps) {
     const textColor = dark ? "#c9c7bf" : "#73726c";
     const gridLine = dark ? "rgba(255,255,255,0.06)" : "rgba(31,30,29,0.08)";
 
-    chart.setOption({
+    const option: EChartsOption = {
       backgroundColor: "transparent",
       tooltip: {
         trigger: "axis",
@@ -112,7 +124,8 @@ export function DailyTab({ daily }: DailyTabProps) {
           itemStyle: { color: PALETTE.cacheRead },
         },
       ],
-    });
+    };
+    chart.setOption(option);
   }, [daily]);
 
   if (daily.length === 0) {

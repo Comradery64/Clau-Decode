@@ -146,12 +146,13 @@ class LowCacheHitRule:
             return []
 
         pct = round(ratio * 100, 1)
+        threshold_pct = round(self._ratio * 100, 1)
         return [Tip(
             rule_id="low_cache_hit",
             severity="info",
             title=f"Low cache hit ratio ({pct}%)",
             detail=(
-                "Less than 10% of input tokens came from cache reads. "
+                f"Less than {threshold_pct:g}% of input tokens came from cache reads. "
                 "Pinning large, stable content (system prompts, file context) with "
                 "cache_control can substantially reduce cost and latency on long sessions."
             ),

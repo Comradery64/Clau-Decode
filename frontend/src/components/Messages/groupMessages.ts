@@ -25,7 +25,43 @@ export interface AssistantTurn {
   model: string | null;
 }
 
-export type Turn = UserTurn | AssistantTurn;
+export interface CommandTurn {
+  kind: "command";
+  message: Message;
+  /** Slash command name, e.g. "/exit", "/compact" */
+  command: string;
+}
+
+export interface AsideTurn {
+  kind: "aside";
+  message: Message;  // the sidechain assistant message
+}
+
+export type Turn = UserTurn | AssistantTurn | CommandTurn | AsideTurn;
+
+function extractSlashCommand(text: string): string | null {
+  const nameMatch = text.match(/<command-name>([^<]+)<\/command-name>/);
+  if (nameMatch) {
+    const n = nameMatch[1].trim();
+    return n.startsWith("/") ? n : `/${n}`;
+  }
+  const msgMatch = text.match(/<command-message>([^<]+)<\/command-message>/);
+  if (msgMatch) {
+    const n = msgMatch[1].trim();
+    return n.startsWith("/") ? n : `/${n}`;
+  }
+  return null;
+}
+
+/** Returns the slash command name if this message is a slash command record, else null. */
+function getSlashCommand(msg: Message): string | null {
+  if (msg.content_blocks.length !== 1) return null;
+  const block = msg.content_blocks[0];
+  if (block.type !== "text") return null;
+  const text = (block as { type: "text"; text: string }).text;
+  if (!text.includes("<command-name>") && !text.includes("<command-message>")) return null;
+  return extractSlashCommand(text);
+}
 
 /** Returns true for user messages that carry no visible content. */
 function isInvisibleUser(msg: Message): boolean {
@@ -34,15 +70,6 @@ function isInvisibleUser(msg: Message): boolean {
   const allToolResult = msg.content_blocks.length > 0
     && msg.content_blocks.every((b) => b.type === "tool_result");
   if (allToolResult) return true;
-  // Slash-command XML messages
-  const firstText = msg.content_blocks.find((b) => b.type === "text") as
-    | { type: "text"; text: string }
-    | undefined;
-  if (
-    msg.content_blocks.length === 1
-    && firstText
-    && firstText.text.trimStart().startsWith("<command-name>")
-  ) return true;
   // Empty
   if (msg.content_blocks.length === 0) return true;
   return false;
@@ -68,7 +95,19 @@ export function groupMessages(messages: Message[]): Turn[] {
   };
 
   for (const msg of messages) {
-    if (msg.is_sidechain) continue; // handled separately (SidechainBranch)
+    if (msg.is_sidechain) {
+      // Aside response: sidechain assistant message with visible text
+      if (msg.role === "assistant") {
+        const hasText = msg.content_blocks.some(
+          (b) => b.type === "text" && (b as { type: "text"; text: string }).text.trim()
+        );
+        if (hasText) {
+          flushAssistant();
+          turns.push({ kind: "aside", message: msg });
+        }
+      }
+      continue;
+    }
 
     if (msg.role === "assistant") {
       if (isInvisibleAssistant(msg)) continue;
@@ -82,6 +121,12 @@ export function groupMessages(messages: Message[]): Turn[] {
         msg.content_blocks.every((b) => b.type === "tool_result");
       if (isToolResult && currentAssistant) {
         currentAssistant.push(msg);
+        continue;
+      }
+      const slashCommand = getSlashCommand(msg);
+      if (slashCommand !== null) {
+        flushAssistant();
+        turns.push({ kind: "command", message: msg, command: slashCommand });
         continue;
       }
       if (isInvisibleUser(msg)) continue;

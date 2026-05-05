@@ -369,13 +369,6 @@ export default function Sidebar() {
               <span style={{ flex: 1, textAlign: "left" }}>
                 {showArchive ? "Archived" : "Recents"}
               </span>
-              <span style={{
-                fontSize: "9px",
-                transition: "transform var(--transition-fast)",
-                transform: recentsCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
-                display: "inline-block",
-                marginRight: "4px",
-              }}>▾</span>
             </button>
             {!recentsCollapsed && flatLoading && (
               <div style={{ padding: "8px 16px", fontSize: "12px", color: "var(--text-tertiary)" }}>

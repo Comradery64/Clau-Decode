@@ -29,6 +29,10 @@
   --hljs-string: #d97706;
   --hljs-number: #d97706;
   --hljs-keyword: #141413;
+  --hljs-type: #0f6e6e;
+  --hljs-property: #8a5200;
+  --hljs-operator: #73726c;
+  --hljs-meta: #9c9a92;
 
   /* --- Borders — translucent, matching Claude.ai's actual approach --- */
   --border-subtle: rgba(31, 30, 29, 0.12);
@@ -112,6 +116,10 @@
   --hljs-string: #d97706;
   --hljs-number: #e09a2a;
   --hljs-keyword: #e8e6df;
+  --hljs-type: #4dc4c4;
+  --hljs-property: #d4962a;
+  --hljs-operator: #a8a69f;
+  --hljs-meta: #9c8850;
 
   /* --- Borders --- */
   --border-subtle: rgba(222, 220, 209, 0.10);
@@ -269,23 +277,77 @@ body {
    Light mode: dark text on warm beige. Dark mode: light text on dark bg.
    ============================================================ */
 .hljs { color: var(--hljs-base); background: transparent; }
+
+/* Comments */
 .hljs-comment,
 .hljs-quote { color: var(--hljs-comment); font-style: italic; }
+
+/* String values */
 .hljs-string,
 .hljs-template-literal,
-.hljs-template-tag { color: var(--hljs-string); }
+.hljs-template-tag,
+.hljs-regexp,
+.hljs-addition { color: var(--hljs-string); }
+
+/* Numbers & booleans */
 .hljs-number,
 .hljs-literal { color: var(--hljs-number); }
+
+/* Keywords — control flow, reserved words */
 .hljs-keyword,
-.hljs-selector-tag { color: var(--hljs-keyword); font-weight: 500; }
-.hljs-built_in,
+.hljs-operator { color: var(--hljs-keyword); font-weight: 500; }
+
+/* Types & class names */
 .hljs-type,
-.hljs-variable,
-.hljs-name,
-.hljs-attr { color: var(--hljs-base); }
+.hljs-title.class_,
+.hljs-title.class_.inherited__,
+.hljs-symbol { color: var(--hljs-type); }
+
+/* Function & section titles */
 .hljs-title,
+.hljs-title.function_,
 .hljs-section { color: var(--hljs-keyword); font-weight: 600; }
+
+/* Object properties, HTML/XML attributes & tag names */
+.hljs-property,
+.hljs-attr,
+.hljs-name,
+.hljs-tag { color: var(--hljs-property); }
+
+/* Built-ins, variables, params — stay close to base */
+.hljs-built_in,
+.hljs-variable,
+.hljs-variable.language_,
+.hljs-template-variable,
+.hljs-subst,
+.hljs-params,
+.hljs-punctuation { color: var(--hljs-base); }
+
+/* Operators & dim punctuation */
+.hljs-operator { color: var(--hljs-operator); }
+
+/* Meta — decorators, preprocessor directives, shebang */
+.hljs-meta,
+.hljs-meta .hljs-keyword { color: var(--hljs-meta); font-style: italic; }
+.hljs-meta .hljs-string { color: var(--hljs-string); font-style: normal; }
+
+/* CSS selectors */
+.hljs-selector-tag { color: var(--hljs-keyword); font-weight: 500; }
+.hljs-selector-class,
+.hljs-selector-id { color: var(--hljs-type); }
+.hljs-selector-attr,
+.hljs-selector-pseudo { color: var(--hljs-property); }
+
+/* Diff */
 .hljs-addition { color: #4ade80; }
 .hljs-deletion { color: #f87171; }
+
+/* Markdown */
+.hljs-bullet,
+.hljs-code { color: var(--hljs-base); }
+.hljs-link { color: var(--hljs-string); text-decoration: underline; }
+.hljs-formula { color: var(--hljs-type); }
+
+/* Misc */
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: bold; }

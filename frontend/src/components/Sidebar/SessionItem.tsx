@@ -496,6 +496,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
     lsPutMap(LS_RENAMED, m);
     setCustomTitle(value);
     setIsRenaming(false);
+    window.dispatchEvent(new CustomEvent("clau-decode:rename", { detail: { id: session.id, title: value } }));
   }, [session.id]);
 
   const cancelRename = useCallback(() => {

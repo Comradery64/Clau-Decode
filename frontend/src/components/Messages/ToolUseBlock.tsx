@@ -2,9 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import type { ToolUseBlock as ToolUseBlockType, ToolResultBlock } from "../../api/types";
 import { TextBlock } from "./TextBlock";
 import { useAppStore } from "../../store";
-import hljs from "highlight.js/lib/core";
-import langJson from "highlight.js/lib/languages/json";
-hljs.registerLanguage("json", langJson);
+import hljs from "../../utils/hljs";
 
 interface ToolUseBlockProps {
   toolUse: ToolUseBlockType;

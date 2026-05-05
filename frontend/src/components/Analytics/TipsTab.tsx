@@ -90,15 +90,21 @@ function TipCard({ tip }: { tip: TipEntry }) {
 export function TipsTab() {
   const [tips, setTips] = useState<TipEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     api.getTips()
       .then(setTips)
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) {
     return <div style={{ fontSize: "13px", color: "var(--text-tertiary)" }}>Analysing…</div>;
+  }
+
+  if (error) {
+    return <div style={{ fontSize: "13px", color: "var(--text-tertiary)" }}>Failed to load tips.</div>;
   }
 
   return (

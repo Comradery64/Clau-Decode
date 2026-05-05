@@ -211,7 +211,7 @@ export function TextBlock({ text }: TextBlockProps) {
     <div className="prose-content">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={components}
       >
         {text}

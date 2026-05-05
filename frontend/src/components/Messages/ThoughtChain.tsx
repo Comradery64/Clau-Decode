@@ -3,11 +3,7 @@ import type { CSSProperties, ReactNode } from "react";
 import type { PairedBlock, ToolUsePair } from "./pairToolBlocks";
 import type { ToolUseBlock as ToolUseBlockType, ToolResultBlock } from "../../api/types";
 import { getBlocksExpanded, subscribeBlocksExpanded } from "../../store/blocksState";
-import hljs from "highlight.js/lib/core";
-import langJson from "highlight.js/lib/languages/json";
-import langBash from "highlight.js/lib/languages/bash";
-hljs.registerLanguage("json", langJson);
-hljs.registerLanguage("bash", langBash);
+import hljs from "../../utils/hljs";
 
 // ============================================================
 // Icons

@@ -3,9 +3,12 @@ import type { Session } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
 import { toggleBlocksExpanded } from "../../store/blocksState";
+import { lsGetMap } from "../../utils/localStorage";
 import { EmptyState } from "./EmptyState";
 import { ConversationHeader } from "./ConversationHeader";
 import { MessageList } from "./MessageListLoader";
+
+const LS_RENAMED = "clau-decode:renamed";
 
 export default function ChatView() {
   const selectedSessionId = useAppStore((s) => s.selectedSessionId);
@@ -16,9 +19,25 @@ export default function ChatView() {
     let cancelled = false;
     api
       .getSession(selectedSessionId)
-      .then((detail) => { if (!cancelled) setSession(detail); })
+      .then((detail) => {
+        if (!cancelled) {
+          const renamed = lsGetMap(LS_RENAMED)[selectedSessionId];
+          setSession(renamed ? { ...detail, title: renamed } : detail);
+        }
+      })
       .catch(() => {});
     return () => { cancelled = true; };
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    const onRename = (e: Event) => {
+      const { id, title } = (e as CustomEvent<{ id: string; title: string }>).detail;
+      if (id === selectedSessionId) {
+        setSession((prev) => prev ? { ...prev, title } : prev);
+      }
+    };
+    window.addEventListener("clau-decode:rename", onRename);
+    return () => window.removeEventListener("clau-decode:rename", onRename);
   }, [selectedSessionId]);
 
   useEffect(() => {

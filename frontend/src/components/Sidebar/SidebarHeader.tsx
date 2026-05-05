@@ -86,7 +86,7 @@ export function SidebarHeader() {
           userSelect: "none",
         }}
       >
-        Claude
+        Clau-Decode
       </span>
       <div style={{ display: "flex", alignItems: "center", gap: "2px" }}>
         <HeaderButton
