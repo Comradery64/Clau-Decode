@@ -1,1 +1,0 @@
-const t=new Map,a=10;function o(e){const n=t.get(e);return n!==void 0&&(t.delete(e),t.set(e,n)),n}function s(e,n){t.delete(e),t.set(e,n),t.size>a&&t.delete(t.keys().next().value)}function f(e){t.delete(e)}function h(e,n){t.has(e)||n(e).then(c=>s(e,c)).catch(()=>{})}export{o as g,f as i,h as p,s};
