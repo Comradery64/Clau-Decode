@@ -5,6 +5,7 @@ import { ThoughtChain } from "./ThoughtChain";
 import { pairToolBlocks, type PairedBlock } from "./pairToolBlocks";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { api } from "../../api/client";
+import { emit } from "../../utils/events";
 
 type ThoughtGroup = { kind: "thought_group"; blocks: PairedBlock[] };
 type Segment = ThoughtGroup | PairedBlock;
@@ -106,6 +107,7 @@ function ActionIconBtn({
   return (
     <button
       onClick={onClick}
+      aria-label={title}
       title={title}
       style={{
         background: "none",
@@ -279,7 +281,7 @@ export function AssistantMessage({ messages, model, sessionId: _sessionIdProp }:
   const canEdit = editableText !== null && editableText.trim().length > 0;
 
   const dispatchMutated = () =>
-    window.dispatchEvent(new CustomEvent("clau-decode:session-mutated", { detail: sessionId }));
+    emit("session-mutated", sessionId);
 
   const handleCopy = async () => {
     const text = allBlocks
@@ -371,6 +373,8 @@ export function AssistantMessage({ messages, model, sessionId: _sessionIdProp }:
                 fontSize: "11px",
                 color: "var(--text-tertiary)",
                 fontFamily: "var(--font-ui)",
+                opacity: hovered ? 1 : 0,
+                transition: "opacity var(--transition-fast)",
               }}
             >
               {formatModelName(model)}

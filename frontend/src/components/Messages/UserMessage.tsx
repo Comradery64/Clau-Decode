@@ -3,6 +3,7 @@ import type { Message, ImageBlock, TextBlock as TextBlockType } from "../../api/
 import { TextBlock } from "./TextBlock";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { api } from "../../api/client";
+import { emit } from "../../utils/events";
 
 // ---------------------------------------------------------------------------
 // XML tag parsing — Claude Code injects various system tags into user messages
@@ -178,6 +179,7 @@ function ActionIconBtn({
   return (
     <button
       onClick={onClick}
+      aria-label={title}
       title={title}
       disabled={disabled}
       style={{
@@ -329,7 +331,7 @@ export function UserMessage({ message }: UserMessageProps) {
   if (allSegments.length === 0 && !hasImages) return null;
 
   const dispatchMutated = () =>
-    window.dispatchEvent(new CustomEvent("clau-decode:session-mutated", { detail: message.session_id }));
+    emit("session-mutated", message.session_id);
 
   const handleCopy = async () => {
     const text = message.content_blocks

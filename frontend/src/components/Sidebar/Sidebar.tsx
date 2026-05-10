@@ -1,11 +1,17 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import React from "react";
+import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
 import type { Project, Session } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
+import { useRoute, navigateTo } from "../../router";
 import { lsGetSet } from "../../utils/localStorage";
+import { on } from "../../utils/events";
+import { SCROLLBAR_OPTIONS } from "../ScrollContainer";
 import { SidebarHeader } from "./SidebarHeader";
 import { ProjectGroup } from "./ProjectGroup";
 import { SessionItem } from "./SessionItem";
+import { FileExplorer } from "./FileExplorer";
 
 function IconSearch() {
   return (
@@ -32,18 +38,44 @@ function IconSettings() {
   );
 }
 
+function IconAnalytics() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="12" width="4" height="9"/><rect x="10" y="7" width="4" height="14"/><rect x="17" y="3" width="4" height="18"/>
+    </svg>
+  );
+}
+
+function IconHelp() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+  );
+}
+
+function IconKeyboard() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="8" y1="12" x2="8.01" y2="12"/><line x1="12" y1="12" x2="12.01" y2="12"/><line x1="16" y1="12" x2="16.01" y2="12"/><line x1="7" y1="16" x2="17" y2="16"/>
+    </svg>
+  );
+}
+
 function NavItem({
   icon,
   label,
   shortcut,
   active,
   onClick,
+  collapsed,
 }: {
   icon: React.ReactNode;
   label: string;
   shortcut?: string;
   active?: boolean;
   onClick?: () => void;
+  collapsed?: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
   return (
@@ -51,6 +83,7 @@ function NavItem({
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      title={collapsed ? label : undefined}
       style={{
         display: "flex",
         alignItems: "center",
@@ -72,12 +105,26 @@ function NavItem({
         textAlign: "left",
         transition: "background var(--transition-fast), color var(--transition-fast)",
         margin: "1px 6px",
+        overflow: "hidden",
+        whiteSpace: "nowrap",
       }}
     >
       <span style={{ flexShrink: 0, display: "flex" }}>{icon}</span>
-      <span style={{ flex: 1 }}>{label}</span>
+      <span style={{
+        flex: 1,
+        overflow: "hidden",
+        whiteSpace: "nowrap",
+        opacity: collapsed ? 0 : 1,
+        transition: "opacity 200ms ease",
+      }}>{label}</span>
       {shortcut && (
-        <kbd style={{ fontSize: "11px", color: "var(--text-tertiary)", fontFamily: "var(--font-ui)" }}>
+        <kbd style={{
+          fontSize: "11px",
+          color: "var(--text-tertiary)",
+          fontFamily: "var(--font-ui)",
+          opacity: collapsed ? 0 : 1,
+          transition: "opacity 200ms ease",
+        }}>
           {shortcut}
         </kbd>
       )}
@@ -85,54 +132,213 @@ function NavItem({
   );
 }
 
-function SidebarFooter() {
+function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
   const openSettings = useAppStore((s) => s.openSettings);
-  const [hovered, setHovered] = useState(false);
+  const openHelp = useAppStore((s) => s.openHelp);
+  const openShortcuts = useAppStore((s) => s.openShortcuts);
+  const profiles = useAppStore((s) => s.profiles);
+  const activeProfileId = useAppStore((s) => s.activeProfileId);
+  const setActiveProfileId = useAppStore((s) => s.setActiveProfileId);
+  const route = useRoute();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
+  const switchProfile = async (id: string | null) => {
+    try {
+      await api.setActiveProfile(id);
+      setActiveProfileId(id);
+      setMenuOpen(false);
+    } catch { /* ignore */ }
+  };
+
+  const activeProfile = profiles.find((p) => p.id === activeProfileId);
+  const displayName = activeProfile ? activeProfile.name : profiles.length > 0 ? "All Profiles" : "Clau-Decode";
+  const displayColor = activeProfile ? activeProfile.color : "var(--accent-orange)";
+  const initial = activeProfile ? activeProfile.name[0].toUpperCase() : "C";
+
+  const menuItemStyle = (highlight?: boolean): React.CSSProperties => ({
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    width: "100%",
+    padding: "7px 12px",
+    background: highlight ? "var(--bg-sidebar-hover)" : "none",
+    border: "none",
+    cursor: "pointer",
+    fontFamily: "var(--font-ui)",
+    fontSize: "15px",
+    textAlign: "left",
+    color: "var(--text-primary)",
+    transition: "background var(--transition-fast)",
+  });
+
+  const avatar = (
+    <span
+      style={{
+        width: "28px",
+        height: "28px",
+        borderRadius: "50%",
+        background: displayColor,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        color: "var(--text-on-accent)",
+        fontSize: "12px",
+        fontWeight: 700,
+      }}
+    >
+      {initial}
+    </span>
+  );
 
   return (
-    <div style={{ borderTop: "1px solid var(--border-subtle)", padding: "8px 6px", flexShrink: 0 }}>
+    <div style={{ borderTop: "1px solid var(--border-subtle)", padding: "8px 4px", flexShrink: 0, position: "relative" }} ref={menuRef}>
       <button
-        onClick={openSettings}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        aria-label="Open settings"
+        onClick={collapsed ? () => { openSettings(); } : () => setMenuOpen(!menuOpen)}
+        aria-label="Open menu"
+        title={collapsed ? "Settings" : undefined}
         style={{
           display: "flex",
           alignItems: "center",
           gap: "10px",
           width: "100%",
-          padding: "8px 12px",
-          background: hovered ? "var(--bg-sidebar-hover)" : "none",
+          padding: "8px 8px",
+          background: "none",
           border: "none",
           borderRadius: "var(--radius-sm)",
           cursor: "pointer",
-          transition: "background var(--transition-fast)",
+          outline: "none",
           fontFamily: "var(--font-ui)",
+          overflow: "hidden",
         }}
       >
-        <span
-          style={{
-            width: "28px",
-            height: "28px",
-            borderRadius: "50%",
-            background: "var(--accent-orange)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-            color: "var(--text-on-accent)",
-            fontSize: "12px",
-            fontWeight: 700,
-          }}
-        >
-          C
-        </span>
-        <div style={{ flex: 1, textAlign: "left" }}>
-          <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>Clau-Decode</div>
-          <div style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>Settings</div>
+        {avatar}
+        <div style={{
+          flex: 1,
+          textAlign: "left",
+          overflow: "hidden",
+          opacity: collapsed ? 0 : 1,
+          transition: "opacity 200ms ease",
+          whiteSpace: "nowrap",
+        }}>
+          <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{displayName}</div>
+          <div style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>Menu</div>
         </div>
-        <span style={{ color: "var(--text-tertiary)" }}><IconSettings /></span>
       </button>
+
+      {menuOpen && (
+        <div style={{
+          position: "absolute",
+          bottom: "100%",
+          left: "4px",
+          right: "4px",
+          background: "var(--bg-sidebar)",
+          borderRadius: "12px",
+          boxShadow: "0 -2px 12px rgba(0,0,0,0.08)",
+          marginBottom: "-1px",
+          overflow: "hidden",
+        }}>
+          {/* Settings */}
+          <button
+            onClick={() => { openSettings(); setMenuOpen(false); }}
+            style={menuItemStyle()}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-sidebar-hover)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "none"; }}
+          >
+            <span style={{ flexShrink: 0, display: "flex", color: "var(--text-tertiary)" }}><IconSettings /></span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 500 }}>Settings</div>
+            </div>
+          </button>
+
+          {/* Analytics */}
+          <button
+            onClick={() => { navigateTo(route === "/analytics" ? "/" : "/analytics"); setMenuOpen(false); }}
+            style={menuItemStyle()}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-sidebar-hover)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "none"; }}
+          >
+            <span style={{ flexShrink: 0, display: "flex", color: "var(--text-tertiary)" }}><IconAnalytics /></span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 500 }}>Analytics</div>
+            </div>
+          </button>
+
+          {/* Get Help */}
+          <button
+            onClick={() => { openHelp(); setMenuOpen(false); }}
+            style={menuItemStyle()}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-sidebar-hover)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "none"; }}
+          >
+            <span style={{ flexShrink: 0, display: "flex", color: "var(--text-tertiary)" }}><IconHelp /></span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 500 }}>Get Help</div>
+            </div>
+          </button>
+
+          {/* Keyboard Shortcuts */}
+          <button
+            onClick={() => { openShortcuts(); setMenuOpen(false); }}
+            style={menuItemStyle()}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-sidebar-hover)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "none"; }}
+          >
+            <span style={{ flexShrink: 0, display: "flex", color: "var(--text-tertiary)" }}><IconKeyboard /></span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 500 }}>Keyboard Shortcuts</div>
+            </div>
+          </button>
+
+          {/* Profile section */}
+          {profiles.length > 0 && (
+            <>
+              <div style={{ borderTop: "1px solid var(--border-subtle)", margin: "4px 0" }} />
+              {/* All Profiles */}
+              <button
+                onClick={() => { switchProfile(null); }}
+                style={menuItemStyle(!activeProfileId)}
+              >
+                <span style={{ width: 22, height: 22, borderRadius: "50%", background: "var(--accent-orange)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-on-accent)", fontSize: "10px", fontWeight: 700, flexShrink: 0 }}>C</span>
+                <span style={{ fontWeight: !activeProfileId ? 500 : 400 }}>All Profiles</span>
+              </button>
+              {profiles.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => { switchProfile(p.id); }}
+                  style={menuItemStyle(activeProfileId === p.id)}
+                >
+                  <span style={{ width: 22, height: 22, borderRadius: "50%", background: p.color, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-on-accent)", fontSize: "10px", fontWeight: 700, flexShrink: 0 }}>
+                    {p.name[0].toUpperCase()}
+                  </span>
+                  <span style={{ fontWeight: activeProfileId === p.id ? 500 : 400 }}>{p.name}</span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -149,6 +355,8 @@ export default function Sidebar() {
   // True once we've completed the initial session load — refreshes should not show a spinner
   const flatLoadedRef = useRef(false);
 
+  const sessionListRef = useRef<React.ComponentRef<typeof OverlayScrollbarsComponent>>(null);
+
   // Archive view
   const [showArchive, setShowArchive] = useState(false);
   const [archivedIds, setArchivedIds] = useState<Set<string>>(() => lsGetSet("clau-decode:archived"));
@@ -164,8 +372,68 @@ export default function Sidebar() {
   const selectSession = useAppStore((s) => s.selectSession);
   const selectProject = useAppStore((s) => s.selectProject);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const sidebarMode = useAppStore((s) => s.sidebarMode);
+  const setFileExplorerRoot = useAppStore((s) => s.setFileExplorerRoot);
+  const activeProfileId = useAppStore((s) => s.activeProfileId);
+  const setProfiles = useAppStore((s) => s.setProfiles);
+  const setActiveProfileId = useAppStore((s) => s.setActiveProfileId);
+
+  const showParentFolder = useAppStore((s) => s.showParentFolder);
 
   const showFlat = sessionSortOrder !== "alpha";
+
+  const handleSelectSession = (session: Session) => {
+    selectProject(session.project_id);
+    selectSession(session.id);
+    setFileExplorerRoot(session.cwd);
+  };
+
+  // When switching to folder mode with a session already selected, set the root.
+  useEffect(() => {
+    if (sidebarMode !== "folder") return;
+    const root = useAppStore.getState().fileExplorerRoot;
+    if (root) return;
+    const sid = selectedSessionId;
+    if (!sid) return;
+    const session = flatSessions.find((s) => s.id === sid);
+    if (session?.cwd) setFileExplorerRoot(session.cwd);
+  }, [sidebarMode]);
+
+  const displayName = (project: Project) => {
+    if (showParentFolder) return project.display_name;
+    const idx = project.display_name.lastIndexOf("/");
+    return idx >= 0 ? project.display_name.slice(idx + 1) : project.display_name;
+  };
+
+  const sortedProjects = useMemo(() => {
+    if (sessionSortOrder !== "alpha") return projects;
+    return [...projects].sort((a, b) =>
+      displayName(a).localeCompare(displayName(b))
+    );
+  }, [projects, sessionSortOrder, showParentFolder]);
+
+  // Load profiles on mount
+  useEffect(() => {
+    api.getProfiles().then((data) => {
+      setProfiles(data.profiles);
+      setActiveProfileId(data.active_profile_id);
+    }).catch(() => {});
+  }, []);
+
+  // Re-fetch when active profile changes
+  useEffect(() => {
+    if (activeProfileId === undefined) return; // skip initial undefined
+    let cancelled = false;
+    setLoading(true);
+    api.getProjects().then((data) => {
+      if (!cancelled) {
+        setProjects(data);
+        if (data.length > 0) setExpandedProjects(new Set([data[0].id]));
+      }
+    }).catch(() => {}).finally(() => { if (!cancelled) setLoading(false); });
+    api.getAllSessions().then((s) => { if (!cancelled) setFlatSessions(s); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeProfileId]);
 
   // Load projects
   useEffect(() => {
@@ -205,26 +473,20 @@ export default function Sidebar() {
 
   // SSE refresh — update both projects and sessions directly without showing spinners
   useEffect(() => {
-    const onRefresh = () => {
+    return on("refresh", () => {
       api.getProjects().then(setProjects).catch(() => {});
       api.getAllSessions().then(setFlatSessions).catch(() => {});
-    };
-    window.addEventListener("clau-decode:refresh", onRefresh);
-    return () => window.removeEventListener("clau-decode:refresh", onRefresh);
+    });
   }, []);
 
   // Sync archivedIds when a session is archived from the context menu
   useEffect(() => {
-    const onArchive = () => setArchivedIds(lsGetSet("clau-decode:archived"));
-    window.addEventListener("clau-decode:archive", onArchive);
-    return () => window.removeEventListener("clau-decode:archive", onArchive);
+    return on("archive", () => setArchivedIds(lsGetSet("clau-decode:archived")));
   }, []);
 
   // Sync starredIds when a session is starred/unstarred from the context menu
   useEffect(() => {
-    const onStar = () => setStarredIds(lsGetSet("clau-decode:starred"));
-    window.addEventListener("clau-decode:star", onStar);
-    return () => window.removeEventListener("clau-decode:star", onStar);
+    return on("star", () => setStarredIds(lsGetSet("clau-decode:starred")));
   }, []);
 
   const starredSessions = useMemo(() =>
@@ -259,25 +521,27 @@ export default function Sidebar() {
 
   return (
     <aside
+      aria-label="Navigation"
       style={{
-        width: "var(--sidebar-width)",
+        width: sidebarCollapsed ? "52px" : "var(--sidebar-width)",
         height: "100vh",
-        display: sidebarCollapsed ? "none" : "flex",
+        display: "flex",
         flexDirection: "column",
         background: "var(--bg-sidebar)",
         borderRight: "1px solid var(--border-subtle)",
         flexShrink: 0,
         overflow: "hidden",
+        transition: "width 200ms ease",
       }}
     >
-      <SidebarHeader />
+      <SidebarHeader collapsed={sidebarCollapsed} />
 
       {/* Nav items */}
       <div style={{ padding: "6px 0 4px", flexShrink: 0 }}>
-        <NavItem icon={<IconSearch />} label="Search" shortcut="⌘K" onClick={openSearch} />
+        <NavItem collapsed={sidebarCollapsed} icon={<IconSearch />} label="Search" shortcut="⌘K" onClick={openSearch} />
 
         {/* Starred section — only shown when there are starred sessions */}
-        {starredSessions.length > 0 && (
+        {!sidebarCollapsed && starredSessions.length > 0 && (
           <div style={{ margin: "4px 0" }}>
             <button
               onClick={() => setStarredCollapsed((v) => !v)}
@@ -312,16 +576,14 @@ export default function Sidebar() {
                 key={session.id}
                 session={session}
                 isActive={selectedSessionId === session.id}
-                onClick={() => {
-                  selectProject(session.project_id);
-                  selectSession(session.id);
-                }}
+                onClick={() => handleSelectSession(session)}
               />
             ))}
           </div>
         )}
 
         <NavItem
+          collapsed={sidebarCollapsed}
           icon={<IconChats />}
           label="Archive"
           active={showArchive}
@@ -329,93 +591,107 @@ export default function Sidebar() {
         />
       </div>
 
-      <div style={{ borderTop: "1px solid var(--border-subtle)", marginTop: "2px" }} />
+      {!sidebarCollapsed && <div style={{ marginTop: "2px" }} />}
 
-      {/* Sessions list */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-        {loading && (
-          <div style={{ padding: "16px", fontSize: "13px", color: "var(--text-tertiary)", textAlign: "center" }}>
-            Loading…
-          </div>
-        )}
-        {error && (
-          <div style={{ padding: "16px", fontSize: "13px", color: "var(--tool-error-border)" }}>
-            {error}
-          </div>
-        )}
+      {/* Sessions list — hidden via display when collapsed to keep OS instance alive */}
+      <OverlayScrollbarsComponent
+        ref={sessionListRef}
+        options={SCROLLBAR_OPTIONS}
+        style={{
+          flex: 1,
+          padding: sidebarMode === "folder" ? "0" : "8px 0",
+          display: sidebarCollapsed ? "none" : undefined,
+        }}
+      >
+        {sidebarMode === "folder" ? (
+          <FileExplorer />
+        ) : (
+            <>
+              {loading && (
+                <div style={{ padding: "16px", fontSize: "13px", color: "var(--text-tertiary)", textAlign: "center" }}>
+                  Loading…
+                </div>
+              )}
+              {error && (
+                <div style={{ padding: "16px", fontSize: "13px", color: "var(--tool-error-border)" }}>
+                  {error}
+                </div>
+              )}
 
-        {/* Flat sorted list (recent / oldest) — also used for archive view in any sort mode */}
-        {!loading && !error && (showFlat || showArchive) && (
-          <>
-            <button
-              onClick={() => setRecentsCollapsed((v) => !v)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                width: "100%",
-                padding: "6px 16px 4px",
-                fontSize: "11px",
-                fontWeight: 600,
-                textTransform: "uppercase",
-                letterSpacing: "0.06em",
-                color: "var(--text-tertiary)",
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                fontFamily: "var(--font-ui)",
-                gap: "4px",
-              }}
-            >
-              <span style={{ flex: 1, textAlign: "left" }}>
-                {showArchive ? "Archived" : "Recents"}
-              </span>
-            </button>
-            {!recentsCollapsed && flatLoading && (
-              <div style={{ padding: "8px 16px", fontSize: "12px", color: "var(--text-tertiary)" }}>
-                Loading…
-              </div>
-            )}
-            {!recentsCollapsed && !flatLoading && sortedFlatSessions.map((session) => (
-              <SessionItem
-                key={session.id}
-                session={session}
-                isActive={selectedSessionId === session.id}
-                onClick={() => {
-                  selectProject(session.project_id);
-                  selectSession(session.id);
-                }}
-              />
-            ))}
-            {!recentsCollapsed && !flatLoading && sortedFlatSessions.length === 0 && (
-              <div style={{ padding: "24px 16px", fontSize: "13px", color: "var(--text-tertiary)", textAlign: "center", lineHeight: 1.6 }}>
-                {showArchive ? "No archived sessions." : "No sessions found."}
-              </div>
-            )}
-          </>
-        )}
+              {/* Flat sorted list (recent / oldest) — also used for archive view in any sort mode */}
+              {!loading && !error && (showFlat || showArchive) && (
+                <>
+                  <button
+                    onClick={() => setRecentsCollapsed((v) => !v)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      width: "100%",
+                      padding: "6px 18px 4px",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      color: "var(--text-tertiary)",
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      fontFamily: "var(--font-ui)",
+                      gap: "4px",
+                    }}
+                  >
+                    <span style={{ flex: 1, textAlign: "left" }}>
+                      {showArchive ? "Archived" : "Recents"}
+                    </span>
+                  </button>
+                  {!recentsCollapsed && flatLoading && (
+                    <div style={{ padding: "8px 16px", fontSize: "12px", color: "var(--text-tertiary)" }}>
+                      Loading…
+                    </div>
+                  )}
+                  {!recentsCollapsed && !flatLoading && sortedFlatSessions.map((session) => (
+                    <SessionItem
+                      key={session.id}
+                      session={session}
+                      isActive={selectedSessionId === session.id}
+                      onClick={() => handleSelectSession(session)}
+                    />
+                  ))}
+                  {!recentsCollapsed && !flatLoading && sortedFlatSessions.length === 0 && (
+                    <div style={{ padding: "24px 16px", fontSize: "13px", color: "var(--text-tertiary)", textAlign: "center", lineHeight: 1.6 }}>
+                      {showArchive ? "No archived sessions." : "No sessions found."}
+                    </div>
+                  )}
+                </>
+              )}
 
-        {/* Project groups (alpha sort) — hidden when archive view is active */}
-        {!loading && !error && !showFlat && !showArchive && (
-          <>
-            {projects.map((project) => (
-              <ProjectGroup
-                key={project.id}
-                project={project}
-                isExpanded={expandedProjects.has(project.id)}
-                onToggle={() => toggleProject(project.id)}
-                archivedIds={archivedIds}
-              />
-            ))}
-            {projects.length === 0 && (
-              <div style={{ padding: "24px 16px", fontSize: "13px", color: "var(--text-tertiary)", textAlign: "center", lineHeight: 1.6 }}>
-                No projects found.<br />Add a path in Settings.
-              </div>
-            )}
-          </>
-        )}
-      </div>
+              {/* Project groups (alpha sort) — hidden when archive view is active */}
+              {!loading && !error && !showFlat && !showArchive && (
+                <>
+                  {sortedProjects.map((project) => (
+                    <ProjectGroup
+                      key={project.id}
+                      project={project}
+                      displayName={displayName(project)}
+                      isExpanded={expandedProjects.has(project.id)}
+                      onToggle={() => toggleProject(project.id)}
+                      archivedIds={archivedIds}
+                    />
+                  ))}
+                  {sortedProjects.length === 0 && (
+                    <div style={{ padding: "24px 16px", fontSize: "13px", color: "var(--text-tertiary)", textAlign: "center", lineHeight: 1.6 }}>
+                      No projects found.<br />Add a path in Settings.
+                    </div>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </OverlayScrollbarsComponent>
 
-      <SidebarFooter />
+      {sidebarCollapsed && <div style={{ flex: 1 }} />}
+
+      <SidebarFooter collapsed={sidebarCollapsed} />
     </aside>
   );
 }

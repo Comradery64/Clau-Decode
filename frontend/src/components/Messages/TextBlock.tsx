@@ -65,6 +65,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
+      aria-label={copied ? "Copied!" : "Copy code"}
       title={copied ? "Copied!" : "Copy code"}
       style={{
         background: "none",
@@ -166,7 +167,13 @@ function CodeBlockWrapper({ children }: { children: ReactNode }) {
 
 const components: Components = {
   table({ children }) {
-    return <div className="table-scroll"><table>{children}</table></div>;
+    return (
+      <div className="table-wrap">
+        <div className="table-scroll">
+          <table>{children}</table>
+        </div>
+      </div>
+    );
   },
   pre({ children }) {
     return <CodeBlockWrapper>{children}</CodeBlockWrapper>;

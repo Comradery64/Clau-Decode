@@ -34,6 +34,8 @@
   --hljs-operator: #73726c;
   --hljs-meta: #9c9a92;
 
+  --search-highlight-bg: rgba(217, 119, 6, 0.12);
+
   /* --- Borders — translucent, matching Claude.ai's actual approach --- */
   --border-subtle: rgba(31, 30, 29, 0.12);
   --border-default: rgba(31, 30, 29, 0.22);
@@ -120,6 +122,7 @@
   --hljs-property: #d4962a;
   --hljs-operator: #a8a69f;
   --hljs-meta: #9c8850;
+  --search-highlight-bg: rgba(217, 119, 6, 0.18);
 
   /* --- Borders --- */
   --border-subtle: rgba(222, 220, 209, 0.10);
@@ -173,17 +176,47 @@ body {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
-/* --- Scrollbars — Apple-style fade in/out --- */
+@keyframes search-highlight {
+  0%   { background: transparent; }
+  15%  { background: var(--search-highlight-bg); }
+  70%  { background: var(--search-highlight-bg); }
+  100% { background: transparent; }
+}
+
+.turn-anchor[data-highlight="1"] {
+  border-radius: var(--radius-sm);
+  animation: search-highlight 1.8s ease forwards;
+}
+
+/* --- Native scrollbars — transparent by default, visible when scrolling --- */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: transparent;
-  border-radius: var(--radius-pill);
-  transition: background 400ms ease;
+::-webkit-scrollbar-thumb { background: transparent; border-radius: var(--radius-pill); }
+
+/* --- OverlayScrollbars custom theme --- */
+.os-scrollbar {
+  --os-handle-bg: rgba(0, 0, 0, 0.35);
+  --os-handle-bg-hover: rgba(0, 0, 0, 0.55);
+  --os-handle-bg-active: rgba(0, 0, 0, 0.65);
+  --os-size: 8px;
 }
-::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
-.is-scrolling::-webkit-scrollbar-thumb { background: var(--border-default); }
+
+[data-theme="dark"] .os-scrollbar {
+  --os-handle-bg: rgba(255, 255, 255, 0.22);
+  --os-handle-bg-hover: rgba(255, 255, 255, 0.38);
+  --os-handle-bg-active: rgba(255, 255, 255, 0.48);
+}
+
+.os-scrollbar-handle {
+  border-radius: 10px !important;
+}
+
+/* Fade in 30% slower than the library default (0.15s → 0.2s) */
+.os-scrollbar.os-scrollbar-visible {
+  transition: opacity 0.2s, visibility 0.2s, top 0.2s, right 0.2s, bottom 0.2s, left 0.2s !important;
+}
 
 /* --- Focus visible --- */
 :focus-visible {
@@ -220,11 +253,14 @@ body {
   border-left: 3px solid var(--border-strong);
   color: var(--text-secondary);
 }
-.prose-content table { width: max-content; min-width: 100%; border-collapse: collapse; margin: 0 0 14px 0; font-size: 14px; }
-.prose-content .table-scroll { overflow-x: auto; margin: 0 0 14px 0; }
+.prose-content .table-wrap { overflow: hidden; border-radius: var(--radius-md); border: 1px solid var(--border-default); margin: 0 0 14px 0; }
+.prose-content .table-scroll { overflow-x: auto; }
+.prose-content table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 14px; }
 .prose-content .table-scroll table { margin: 0; }
-.prose-content th, .prose-content td { padding: 8px 12px; border: 1px solid var(--border-default); text-align: left; white-space: nowrap; }
-.prose-content td:last-child { white-space: normal; }
+.prose-content th, .prose-content td { padding: 8px 12px; border-right: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); text-align: left; white-space: nowrap; }
+.prose-content th:last-child, .prose-content td:last-child { border-right: none; white-space: normal; }
+.prose-content tbody tr:last-child td { border-bottom: none; }
+.prose-content tbody tr:nth-child(even) td { background: var(--bg-sidebar); }
 .prose-content th { background: var(--bg-code); font-weight: 600; }
 .prose-content hr { border: none; border-top: 1px solid var(--border-subtle); margin: 20px 0; }
 
@@ -351,3 +387,6 @@ body {
 /* Misc */
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: bold; }
+
+/* Kill browser focus rings — we use custom hover/active states instead */
+:focus { outline: none; }
