@@ -1,0 +1,73 @@
+import { useAppStore } from "../../store";
+
+const shortcuts = [
+  { keys: "⌘I", action: "Toggle Claude chat panel" },
+  { keys: "⌘K", action: "Open search" },
+  { keys: "⇧⌘,", action: "Open settings" },
+  { keys: "⌘O", action: "Expand / collapse all tool blocks" },
+  { keys: "⌘E", action: "Toggle full tool results" },
+  { keys: "⌘B", action: "Toggle sidebar" },
+  { keys: "Esc", action: "Close dialog / search / chat" },
+];
+
+export default function ShortcutsPopup() {
+  const closeShortcuts = useAppStore((s) => s.closeShortcuts);
+
+  const onClose = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) closeShortcuts();
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Keyboard Shortcuts"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "var(--bg-modal-overlay)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "16px",
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "400px",
+          background: "var(--bg-modal)",
+          borderRadius: "var(--radius-lg)",
+          boxShadow: "var(--shadow-lg)",
+          overflow: "hidden",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 24px 16px", borderBottom: "1px solid var(--border-subtle)" }}>
+          <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "var(--text-primary)" }}>Keyboard Shortcuts</h2>
+          <button onClick={closeShortcuts} aria-label="Close keyboard shortcuts" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", fontSize: "20px", lineHeight: 1, padding: "4px" }}>×</button>
+        </div>
+        <div style={{ padding: "16px 24px 20px" }}>
+          {shortcuts.map((s) => (
+            <div key={s.keys} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid var(--border-subtle)" }}>
+              <span style={{ fontSize: "13px", color: "var(--text-secondary)" }}>{s.action}</span>
+              <kbd style={{
+                fontSize: "12px",
+                fontFamily: "var(--font-ui)",
+                padding: "2px 8px",
+                background: "var(--bg-tool-block)",
+                border: "1px solid var(--border-subtle)",
+                borderRadius: "var(--radius-sm)",
+                color: "var(--text-primary)",
+              }}>
+                {s.keys}
+              </kbd>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

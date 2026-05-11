@@ -106,11 +106,11 @@ describe("UserMessage — edit", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
-  it("clicking save calls api.patchMessage and dispatches session-mutated", async () => {
+  it("clicking save calls api.patchMessage and emits refresh", async () => {
     const { api } = await import("../../../api/client");
-    const dispatched: string[] = [];
-    window.addEventListener("clau-decode:session-mutated", (e) => {
-      dispatched.push((e as CustomEvent<string>).detail);
+    let refreshed = false;
+    window.addEventListener("clau-decode:refresh", () => {
+      refreshed = true;
     });
 
     render(<UserMessage message={makeMessage({ session_id: "sess_x" })} />);
@@ -121,7 +121,7 @@ describe("UserMessage — edit", () => {
       expect(api.patchMessage).toHaveBeenCalledWith("msg_001", [
         { type: "text", text: "Hello, Claude!" },
       ]);
-      expect(dispatched).toContain("sess_x");
+      expect(refreshed).toBe(true);
     });
   });
 });
@@ -145,11 +145,11 @@ describe("UserMessage — delete", () => {
     expect(screen.queryByText("Delete message?")).not.toBeInTheDocument();
   });
 
-  it("confirming delete calls api.deleteMessage and dispatches session-mutated", async () => {
+  it("confirming delete calls api.deleteMessage and emits refresh", async () => {
     const { api } = await import("../../../api/client");
-    const dispatched: string[] = [];
-    window.addEventListener("clau-decode:session-mutated", (e) => {
-      dispatched.push((e as CustomEvent<string>).detail);
+    let refreshed = false;
+    window.addEventListener("clau-decode:refresh", () => {
+      refreshed = true;
     });
 
     render(<UserMessage message={makeMessage({ session_id: "sess_y" })} />);
@@ -158,7 +158,7 @@ describe("UserMessage — delete", () => {
 
     await waitFor(() => {
       expect(api.deleteMessage).toHaveBeenCalledWith("msg_001");
-      expect(dispatched).toContain("sess_y");
+      expect(refreshed).toBe(true);
     });
   });
 });

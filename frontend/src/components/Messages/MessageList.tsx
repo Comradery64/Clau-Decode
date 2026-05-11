@@ -6,6 +6,7 @@ import { groupMessages } from "./groupMessages";
 import { StreamingIndicator } from "./StreamingIndicator";
 import { useAppStore } from "../../store";
 import { MessageListContainerCtx } from "../ChatView/MessageListContainerContext";
+import { MessageSkeleton } from "../ChatView/EmptyState";
 import { useSessionDetail, isSessionActive } from "./hooks/useSessionDetail";
 import { useSnapToBottom } from "./hooks/useSnapToBottom";
 import { useSearchScroll } from "./hooks/useSearchScroll";
@@ -57,27 +58,6 @@ function CommandBadge({ command, timestamp }: { command: string; timestamp: stri
 }
 
 // ---------------------------------------------------------------------------
-// LoadingSpinner — inline because it's only used here
-// ---------------------------------------------------------------------------
-
-function LoadingSpinner() {
-  return (
-    <div role="status" aria-label="Loading conversation" style={{ display: "flex", justifyContent: "center", padding: "48px" }}>
-      <div
-        style={{
-          width: "32px",
-          height: "32px",
-          border: "3px solid var(--border-default)",
-          borderTopColor: "var(--accent-orange)",
-          borderRadius: "50%",
-          animation: "spin 0.8s linear infinite",
-        }}
-      />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // MessageList
 // ---------------------------------------------------------------------------
 
@@ -95,7 +75,7 @@ export default function MessageList({ sessionId }: MessageListProps) {
   useSnapToBottom(containerRef, detail, sessionId, pendingScrollMessageId);
   useSearchScroll(containerRef, detail, sessionId, msgToAnchorRef, pendingScrollMessageId, setPendingScrollMessageId);
 
-  if (loading) return <LoadingSpinner />;
+  if (loading) return <MessageSkeleton rows={6} />;
   if (!detail) return null;
 
   const turns = groupMessages(detail.messages);

@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { ToolUseBlock } from "../ToolUseBlock";
 import type { ToolUseBlock as ToolUseBlockType, ToolResultBlock } from "../../../api/types";
 
@@ -68,5 +69,25 @@ describe("ToolUseBlock", () => {
     };
     render(<ToolUseBlock toolUse={mockToolUse} toolResult={arrayResult} />);
     expect(screen.getByText(/array output/)).toBeInTheDocument();
+  });
+
+  it("toggle button has aria-expanded=false when collapsed", () => {
+    render(<ToolUseBlock toolUse={mockToolUse} toolResult={null} />);
+    const btn = document.querySelector("button") as HTMLButtonElement;
+    expect(btn).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("toggle button has descriptive aria-label", () => {
+    render(<ToolUseBlock toolUse={mockToolUse} toolResult={null} />);
+    const btn = document.querySelector("button") as HTMLButtonElement;
+    expect(btn).toHaveAttribute("aria-label");
+    expect(btn.getAttribute("aria-label")).toContain("Read");
+  });
+
+  it("toggle button updates aria-expanded when clicked", () => {
+    render(<ToolUseBlock toolUse={mockToolUse} toolResult={null} />);
+    const btn = document.querySelector("button") as HTMLButtonElement;
+    fireEvent.click(btn);
+    expect(btn).toHaveAttribute("aria-expanded", "true");
   });
 });

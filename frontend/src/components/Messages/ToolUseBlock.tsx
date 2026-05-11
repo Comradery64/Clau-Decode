@@ -3,6 +3,7 @@ import type { ToolUseBlock as ToolUseBlockType, ToolResultBlock } from "../../ap
 import { TextBlock } from "./TextBlock";
 import { useAppStore } from "../../store";
 import hljs from "../../utils/hljs";
+import { ScrollContainer } from "../ScrollContainer";
 
 interface ToolUseBlockProps {
   toolUse: ToolUseBlockType;
@@ -100,6 +101,8 @@ export function ToolUseBlock({ toolUse, toolResult }: ToolUseBlockProps) {
       {/* Header — always visible, click to toggle input */}
       <button
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={`${open ? "Collapse" : "Expand"} ${toolUse.name} tool details`}
         style={{
           display: "flex",
           alignItems: "center",
@@ -210,19 +213,18 @@ export function ToolUseBlock({ toolUse, toolResult }: ToolUseBlockProps) {
           >
             Result
           </div>
-          <div
-            style={{
-              color: isError ? "var(--tool-error-text)" : "var(--text-primary)",
-              overflowX: shouldCollapse ? "hidden" : "auto",
-              overflowY: shouldCollapse ? "hidden" : "visible",
-              maxHeight: shouldCollapse ? "200px" : "none",
-              position: "relative",
-              width: "100%",
-              boxSizing: "border-box",
-            }}
-          >
-            {renderResultContent(toolResult.content)}
-            {shouldCollapse && (
+          {shouldCollapse ? (
+            <div
+              style={{
+                color: isError ? "var(--tool-error-text)" : "var(--text-primary)",
+                overflow: "hidden",
+                maxHeight: "200px",
+                position: "relative",
+                width: "100%",
+                boxSizing: "border-box",
+              }}
+            >
+              {renderResultContent(toolResult.content)}
               <div
                 style={{
                   position: "absolute",
@@ -233,8 +235,29 @@ export function ToolUseBlock({ toolUse, toolResult }: ToolUseBlockProps) {
                   background: `linear-gradient(transparent, var(--bg-tool-block))`,
                 }}
               />
-            )}
-          </div>
+            </div>
+          ) : isLongResult ? (
+            <ScrollContainer
+              style={{
+                maxHeight: "600px",
+                color: isError ? "var(--tool-error-text)" : "var(--text-primary)",
+                width: "100%",
+                boxSizing: "border-box",
+              }}
+            >
+              {renderResultContent(toolResult.content)}
+            </ScrollContainer>
+          ) : (
+            <div
+              style={{
+                color: isError ? "var(--tool-error-text)" : "var(--text-primary)",
+                width: "100%",
+                boxSizing: "border-box",
+              }}
+            >
+              {renderResultContent(toolResult.content)}
+            </div>
+          )}
           {isLongResult && (
             <button
               onClick={() => setResultExpanded((v) => !v)}

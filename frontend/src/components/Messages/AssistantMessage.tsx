@@ -232,11 +232,12 @@ interface AssistantMessageProps {
 }
 
 export function AssistantMessage({ messages, model, sessionId: _sessionIdProp }: AssistantMessageProps) {
-  const sessionId = _sessionIdProp ?? messages[0]?.session_id ?? "";
+  void _sessionIdProp; // kept for API compatibility
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const allBlocks = messages.flatMap((m) => m.content_blocks);
   const pairedBlocks = pairToolBlocks(allBlocks);
@@ -280,8 +281,6 @@ export function AssistantMessage({ messages, model, sessionId: _sessionIdProp }:
     : null;
   const canEdit = editableText !== null && editableText.trim().length > 0;
 
-  const dispatchMutated = () =>
-    emit("session-mutated", sessionId);
 
   const handleCopy = async () => {
     const text = allBlocks
@@ -298,20 +297,26 @@ export function AssistantMessage({ messages, model, sessionId: _sessionIdProp }:
   async function saveEdit(text: string) {
     await api.patchMessage(primaryId, [{ type: "text", text }]);
     setEditing(false);
-    dispatchMutated();
+    emit("refresh", undefined);
   }
 
   async function doDelete() {
-    await api.deleteMessage(primaryId);
-    setConfirmDelete(false);
-    dispatchMutated();
+    setDeleteError(null);
+    try {
+      await api.deleteMessage(primaryId);
+      setConfirmDelete(false);
+      emit("refresh", undefined);
+    } catch (e) {
+      const msg = (e as Error).message || "Delete failed";
+      setDeleteError(msg.includes("403") ? "Editing is disabled. Set edit_enabled in Settings." : msg);
+    }
   }
 
   return (
     <div
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      style={{ padding: "4px 24px 4px" }}
+      style={{ padding: "6px 24px" }}
     >
       {editing ? (
         <AssistantEditForm
@@ -423,9 +428,13 @@ export function AssistantMessage({ messages, model, sessionId: _sessionIdProp }:
       {confirmDelete && (
         <ConfirmDialog
           title="Delete response?"
-          body="This removes the assistant response from the session file. A backup is created automatically before the write."
+          body={
+            deleteError
+              ? <span style={{ color: "var(--tool-error-text)" }}>{deleteError}</span>
+              : "This removes the assistant response from the session file. A backup is created automatically before the write."
+          }
           onConfirm={doDelete}
-          onCancel={() => setConfirmDelete(false)}
+          onCancel={() => { setConfirmDelete(false); setDeleteError(null); }}
         />
       )}
     </div>
