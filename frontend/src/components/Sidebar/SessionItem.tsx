@@ -237,6 +237,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
         onMouseEnter={() => { setHovered(true); prefetch(session.id, api.getSession); }}
         onMouseLeave={() => setHovered(false)}
         style={{
+          position: "relative",
           display: "flex",
           alignItems: "center",
           padding: 0,
@@ -280,7 +281,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                 alignItems: "center",
                 flex: 1,
                 minWidth: 0,
-                padding: "5px 0 5px 12px",
+                padding: "5px 12px",
                 gap: "4px",
                 background: "none",
                 border: "none",
@@ -322,8 +323,11 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                     flexShrink: 0,
                     display: "flex",
                     color: "var(--accent-orange)",
-                    opacity: bellState === "fading" ? 0 : 1,
-                    transition: "opacity 450ms ease",
+                    opacity:
+                      bellState === "fading" || hovered || isActive || menuOpen
+                        ? 0
+                        : 1,
+                    transition: "opacity var(--transition-fast)",
                   }}
                 >
                   <IconBell />
@@ -337,8 +341,10 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
               onClick={openMenu}
               className={isActive || menuOpen ? "" : "hover-actions"}
               style={{
-                flexShrink: 0,
-                marginRight: "8px",
+                position: "absolute",
+                right: "8px",
+                top: "50%",
+                transform: "translateY(-50%)",
                 color: menuOpen ? "var(--text-primary)" : "var(--text-tertiary)",
                 fontSize: "14px",
                 lineHeight: 1,
