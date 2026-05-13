@@ -1,0 +1,29 @@
+{
+  "url": "http://localhost:4242",
+  "viewport": { "width": 1280, "height": 720 },
+  "chrome": true,
+  "padding": 40,
+  "background": "#1e1e2e",
+  "rounded": 12,
+  "steps": [
+    { "action": "wait", "ms": 2000 },
+    { "action": "screenshot", "name": "01-dashboard" },
+    { "action": "wait", "ms": 900 },
+
+    { "action": "keyboard", "key": "Meta+k" },
+    { "action": "wait", "ms": 400 },
+    { "action": "type", "selector": "input[placeholder=\"Search conversations...\"]", "text": "hydration" },
+    { "action": "wait", "ms": 1100 },
+    { "action": "screenshot", "name": "02-search-hydration" },
+
+    { "action": "keyboard", "key": "Enter" },
+    { "action": "wait", "ms": 1500 },
+    { "action": "screenshot", "name": "03-conversation-view" },
+
+    { "action": "keyboard", "key": "Meta+o" },
+    { "action": "wait", "ms": 1000 },
+    { "action": "screenshot", "name": "04-blocks-expanded" },
+
+    { "action": "wait", "ms": 800 }
+  ]
+}
