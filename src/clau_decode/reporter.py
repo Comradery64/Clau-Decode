@@ -1,14 +1,11 @@
 """Reporting and export — JSON and Markdown session reports."""
+
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
-from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from .analytics.cost import CostEngine, SessionCost
-from .analytics.models import TokenBreakdown
-from .analytics.pricing import CachedPricingStrategy, ModelPricing
+from .analytics.cost import SessionCost
+from .analytics.pricing import ModelPricing
 from .analytics.service import TokenAnalyticsService
 from .models import Message, SessionDetail, TextBlock
 
@@ -28,7 +25,7 @@ def _text_content(message: Message) -> str:
 def _truncate(text: str, max_len: int = 200) -> str:
     if len(text) <= max_len:
         return text
-    return text[:max_len - 3] + "..."
+    return text[: max_len - 3] + "..."
 
 
 def export_json(
@@ -128,9 +125,13 @@ def export_markdown(
     if detail.model:
         summary_items.append(f"- **Model:** {detail.model}")
     if detail.started_at:
-        summary_items.append(f"- **Started:** {detail.started_at.strftime('%Y-%m-%d %H:%M UTC')}")
+        summary_items.append(
+            f"- **Started:** {detail.started_at.strftime('%Y-%m-%d %H:%M UTC')}"
+        )
     if detail.updated_at:
-        summary_items.append(f"- **Last activity:** {detail.updated_at.strftime('%Y-%m-%d %H:%M UTC')}")
+        summary_items.append(
+            f"- **Last activity:** {detail.updated_at.strftime('%Y-%m-%d %H:%M UTC')}"
+        )
     summary_items.append(f"- **Messages:** {detail.message_count}")
     if detail.cwd:
         summary_items.append(f"- **Working directory:** `{detail.cwd}`")
@@ -173,7 +174,9 @@ def export_markdown(
     if all_models_usage:
         lines.append("## Model Usage")
         lines.append("")
-        lines.append("| Model | Messages | Input tokens | Output tokens | Total tokens |")
+        lines.append(
+            "| Model | Messages | Input tokens | Output tokens | Total tokens |"
+        )
         lines.append("|---|---|---|---|---|")
         for entry in all_models_usage:
             model = entry.get("model", "unknown")

@@ -8,8 +8,9 @@ from .models import PromptCost
 class PromptIterator:
     """Yield PromptCost for each non-meta user→assistant pair in a message list."""
 
-    def __init__(self, messages: list[Message],
-                 extractor: TokenExtractor | None = None) -> None:
+    def __init__(
+        self, messages: list[Message], extractor: TokenExtractor | None = None
+    ) -> None:
         self._messages = messages
         self._extractor = extractor or TokenExtractor()
 

@@ -42,11 +42,13 @@ class DailyAggregator:
                 seen_sessions[day] = set()
             buckets[day].breakdown = buckets[day].breakdown + bd
             seen_sessions[day].add(msg.session_id)
-            if (msg.role == "assistant"
-                    and not msg.is_sidechain
-                    and not msg.is_meta
-                    and msg.parent_id in by_id
-                    and by_id[msg.parent_id].role == "user"):
+            if (
+                msg.role == "assistant"
+                and not msg.is_sidechain
+                and not msg.is_meta
+                and msg.parent_id in by_id
+                and by_id[msg.parent_id].role == "user"
+            ):
                 buckets[day].prompt_count += 1
         for day, bucket in buckets.items():
             bucket.session_count = len(seen_sessions[day])

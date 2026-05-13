@@ -23,11 +23,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
 import threading
 import time
 import webbrowser
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from pathlib import Path
 
 import uvicorn
@@ -65,7 +64,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Bind to 0.0.0.0 (accessible on your local network). "
-             "Use with caution — anyone on the same network can view your data.",
+        "Use with caution — anyone on the same network can view your data.",
     )
     parser.add_argument(
         "--no-open",
@@ -154,6 +153,7 @@ def _run_dashboard(args: argparse.Namespace, config) -> None:
 
         def _open_browser() -> None:
             import urllib.request
+
             for _ in range(30):
                 time.sleep(0.5)
                 try:
@@ -172,6 +172,7 @@ def _run_dashboard(args: argparse.Namespace, config) -> None:
 async def _force_refresh(db_path: Path) -> None:
     """Clear all stored mtimes so the next scan re-parses every file."""
     from .db import Database
+
     async with Database(db_path) as db:
         await db.init_schema()
         await db.execute("UPDATE sessions SET file_mtime = NULL")
@@ -183,7 +184,6 @@ async def _do_scan(db_path: Path, config) -> int:
     from .db import Database
     from .scanner import scan_paths
     from .parser import parse_session
-    from .scanner import build_project_from_dir
 
     count = 0
     scan_paths_list = config.get_all_scan_paths()
@@ -263,7 +263,6 @@ def _run_today(args: argparse.Namespace, config) -> None:
     # Cost estimate
     pricing = CachedPricingStrategy()
     asyncio.run(pricing.refresh())
-    from .analytics.cost import CostEngine
     engine = CostEngine(pricing)
     cost = engine.compute("claude-sonnet-4-6", bd)
     print(f"  Est. cost (Sonnet): ${float(cost.total_usd):.4f}")
@@ -300,8 +299,10 @@ def _run_stats(args: argparse.Namespace, config) -> None:
     models = ModelUsageScanner().scan(messages)
     print("\n=== Model Usage ===")
     for m in models:
-        print(f"  {m['model']}: {m['message_count']} messages, "
-              f"{m['input_tokens']:,} input, {m['output_tokens']:,} output")
+        print(
+            f"  {m['model']}: {m['message_count']} messages, "
+            f"{m['input_tokens']:,} input, {m['output_tokens']:,} output"
+        )
 
     tools = ToolUsageScanner().scan(messages)
     print("\n=== Tool Usage ===")
@@ -312,7 +313,12 @@ def _run_stats(args: argparse.Namespace, config) -> None:
 def _run_tips(args: argparse.Namespace, config) -> None:
     """Print optimization tips."""
     from .db import Database
-    from .analytics.tips import TipRegistry, RepeatedFileReadRule, OversizedToolResultRule, LowCacheHitRule
+    from .analytics.tips import (
+        TipRegistry,
+        RepeatedFileReadRule,
+        OversizedToolResultRule,
+        LowCacheHitRule,
+    )
 
     db_path = get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)

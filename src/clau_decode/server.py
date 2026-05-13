@@ -39,7 +39,6 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import Response, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 
 from pydantic import BaseModel, Field
 
@@ -60,7 +59,7 @@ from .analytics.tips import (
     TipRegistry,
 )
 from .config import save_config
-from .db import Database, _deserialize_content_block
+from .db import Database
 from .editor import swap_session
 from .models import AppConfig, Profile
 from .parser import parse_session
@@ -170,7 +169,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                     # Store just the session metadata so it appears in the list;
                     # messages are loaded on demand via _scan_one when clicked.
                     if stored_mtime is None:
-                        session, _ = await asyncio.to_thread(parse_session, session_path)
+                        session, _ = await asyncio.to_thread(
+                            parse_session, session_path
+                        )
                         session.project_id = project.id
                         session.message_count = 0
                         project.session_count += 1
@@ -223,7 +224,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         async with Database(db_path) as db:
             await do_scan(db)
         # Restart watcher with current paths.
-        _state["watch_task"] = asyncio.create_task(watch_paths(_all_scan_roots(), _watch_queue))
+        _state["watch_task"] = asyncio.create_task(
+            watch_paths(_all_scan_roots(), _watch_queue)
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -241,7 +244,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 await do_scan(db)
 
         asyncio.create_task(_background_scan())
-        _state["watch_task"] = asyncio.create_task(watch_paths(_all_scan_roots(), _watch_queue))
+        _state["watch_task"] = asyncio.create_task(
+            watch_paths(_all_scan_roots(), _watch_queue)
+        )
 
         async def _refresh_pricing() -> None:
             await _pricing_strat.refresh()
@@ -299,12 +304,17 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     async def create_profile(req: _CreateProfileRequest):
         cfg = _state["config"]
         if not cfg.profiles:
-            cfg.profiles.insert(0, Profile(
-                name="Default",
-                data_paths=cfg.data_paths,
-                color="#6b7280",
-            ))
-        profile = Profile(name=req.name, data_paths=req.data_paths or ["~/.claude"], color=req.color)
+            cfg.profiles.insert(
+                0,
+                Profile(
+                    name="Default",
+                    data_paths=cfg.data_paths,
+                    color="#6b7280",
+                ),
+            )
+        profile = Profile(
+            name=req.name, data_paths=req.data_paths or ["~/.claude"], color=req.color
+        )
         cfg.profiles.append(profile)
         save_config(cfg)
         asyncio.create_task(_rescan_and_rewatch())
@@ -351,7 +361,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     async def get_project_sessions(project_id: str):
         data_sources = _state["config"].get_active_data_sources()
         async with Database(db_path) as db:
-            return await db.get_sessions(project_id=project_id, data_sources=data_sources)
+            return await db.get_sessions(
+                project_id=project_id, data_sources=data_sources
+            )
 
     @app.get("/api/sessions")
     async def get_all_sessions():
@@ -360,7 +372,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             return await db.get_sessions(data_sources=data_sources)
 
     @app.get("/api/sessions/{session_id}")
-    async def get_session(session_id: str, limit: int | None = Query(None, ge=1, le=5000)):
+    async def get_session(
+        session_id: str, limit: int | None = Query(None, ge=1, le=5000)
+    ):
         async with Database(db_path) as db:
             # On-demand re-parse: if the JSONL file changed since last index
             # (e.g. server restarted before background scan reached this file),
@@ -434,23 +448,31 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             for s in recent:
                 detail = await db.get_session_detail(s.id)
                 session_msgs = detail.messages if detail else []
-                models_used = list(dict.fromkeys(
-                    m.model for m in session_msgs if m.model and m.role == "assistant"
-                ))
+                models_used = list(
+                    dict.fromkeys(
+                        m.model
+                        for m in session_msgs
+                        if m.model and m.role == "assistant"
+                    )
+                )
                 prompts = _analytics.prompt_breakdown(session_msgs)
                 multi = _cost_engine.compute_multi(prompts)
                 all_recent_prompts.extend(prompts)
                 all_recent_msgs.extend(session_msgs)
-                recent_data.append({
-                    "id": s.id,
-                    "title": s.title,
-                    "project_id": s.project_id,
-                    "models": models_used,
-                    "message_count": s.message_count,
-                    "total_usd": float(multi.total_usd),
-                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
-                    "last_message_role": s.last_message_role,
-                })
+                recent_data.append(
+                    {
+                        "id": s.id,
+                        "title": s.title,
+                        "project_id": s.project_id,
+                        "models": models_used,
+                        "message_count": s.message_count,
+                        "total_usd": float(multi.total_usd),
+                        "updated_at": s.updated_at.isoformat()
+                        if s.updated_at
+                        else None,
+                        "last_message_role": s.last_message_role,
+                    }
+                )
 
         # Global stats from recent sessions only (fast)
         model_usage = ModelUsageScanner().scan(all_recent_msgs)
@@ -467,7 +489,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 "id": p.id,
                 "display_name": p.display_name,
                 "session_count": p.session_count,
-                "last_activity_at": p.last_activity_at.isoformat() if p.last_activity_at else None,
+                "last_activity_at": p.last_activity_at.isoformat()
+                if p.last_activity_at
+                else None,
             }
             for p in projects
         ]
@@ -480,8 +504,12 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             "total_sessions": stats.total_sessions,
             "total_messages": stats.total_messages,
             "tips": [
-                {"rule_id": t.rule_id, "severity": t.severity,
-                 "title": t.title, "detail": t.detail}
+                {
+                    "rule_id": t.rule_id,
+                    "severity": t.severity,
+                    "title": t.title,
+                    "detail": t.detail,
+                }
                 for t in tips
             ],
         }
@@ -666,6 +694,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         if format == "json":
             data = export_json(detail, cost=cost, prompts=prompts_dicts)
             import json as _json
+
             slug = (detail.title or detail.id).replace(" ", "_").lower()
             return Response(
                 content=_json.dumps(data, indent=2),
@@ -674,7 +703,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             )
         else:
             pricing = _pricing_strat.get_pricing(model)
-            md = export_markdown(detail, cost=cost, prompts=prompts_dicts, pricing=pricing)
+            md = export_markdown(
+                detail, cost=cost, prompts=prompts_dicts, pricing=pricing
+            )
             slug = (detail.title or detail.id).replace(" ", "_").lower()
             return Response(
                 content=md,
@@ -707,7 +738,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             session_id, file_path = info
             path = Path(file_path)
             if not path.exists():
-                raise HTTPException(status_code=404, detail="Session file not found on disk")
+                raise HTTPException(
+                    status_code=404, detail="Session file not found on disk"
+                )
             edited_path, _, backup_path, _ = swap_session(
                 path, session_id, delete_uuid=message_id
             )
@@ -726,7 +759,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             session_id, file_path = info
             path = Path(file_path)
             if not path.exists():
-                raise HTTPException(status_code=404, detail="Session file not found on disk")
+                raise HTTPException(
+                    status_code=404, detail="Session file not found on disk"
+                )
             edited_path, _, backup_path, _ = swap_session(
                 path, session_id, edit_uuid=message_id, new_content=body.content_blocks
             )
@@ -767,22 +802,50 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Directory not found: {cwd}")
         bin_name = _derive_bin_name(detail.file_path)
         if sys.platform == "darwin":
-            subprocess.Popen([
-                "osascript", "-e",
-                f'tell application "Terminal"\n'
-                f'  activate\n'
-                f'  do script "cd {cwd} && {bin_name} -r {session_id}"\n'
-                f'end tell',
-            ])
+            subprocess.Popen(
+                [
+                    "osascript",
+                    "-e",
+                    f'tell application "Terminal"\n'
+                    f"  activate\n"
+                    f'  do script "cd {cwd} && {bin_name} -r {session_id}"\n'
+                    f"end tell",
+                ]
+            )
         elif sys.platform.startswith("linux"):
             for term in ["gnome-terminal", "konsole", "xfce4-terminal"]:
                 if shutil.which(term):
-                    subprocess.Popen([term, "--", "bash", "-c", f"cd {cwd} && {bin_name} -r {session_id}; exec bash"])
+                    subprocess.Popen(
+                        [
+                            term,
+                            "--",
+                            "bash",
+                            "-c",
+                            f"cd {cwd} && {bin_name} -r {session_id}; exec bash",
+                        ]
+                    )
                     break
             else:
-                subprocess.Popen(["x-terminal-emulator", "-e", "bash", "-c", f"cd {cwd} && {bin_name} -r {session_id}; exec bash"])
+                subprocess.Popen(
+                    [
+                        "x-terminal-emulator",
+                        "-e",
+                        "bash",
+                        "-c",
+                        f"cd {cwd} && {bin_name} -r {session_id}; exec bash",
+                    ]
+                )
         else:
-            subprocess.Popen(["cmd", "/c", "start", "cmd", "/k", f"cd /d {cwd} && {bin_name} -r {session_id}"])
+            subprocess.Popen(
+                [
+                    "cmd",
+                    "/c",
+                    "start",
+                    "cmd",
+                    "/k",
+                    f"cd /d {cwd} && {bin_name} -r {session_id}",
+                ]
+            )
         return {"ok": True}
 
     # -----------------------------------------------------------------------
@@ -825,7 +888,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             bin_name=bin_name,
             text=text,
             permission_mode=permission_mode,
-            auto_stop_quiet_default=_state["config"].claude_auto_stop_quiet_default_turns,
+            auto_stop_quiet_default=_state[
+                "config"
+            ].claude_auto_stop_quiet_default_turns,
         )
         response: dict = {"ok": True, "permission_mode": permission_mode}
         # Slash commands return synchronous result text (e.g. unknown-command
@@ -875,7 +940,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 raise HTTPException(
                     status_code=503, detail=f"{bin_name} not found on PATH"
                 )
-            latest_uuid: str | None = detail.messages[-1].id if detail.messages else None
+            latest_uuid: str | None = (
+                detail.messages[-1].id if detail.messages else None
+            )
 
             text = await _runner.generate_recap(
                 session_id,
@@ -889,7 +956,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             recaps = await db.list_recaps(session_id, include_dismissed=True)
         row = next((r for r in recaps if r["id"] == new_id), None)
         if row is None:
-            raise HTTPException(status_code=500, detail="recap row missing after insert")
+            raise HTTPException(
+                status_code=500, detail="recap row missing after insert"
+            )
         return row
 
     @app.get("/api/sessions/{session_id}/recaps")
@@ -898,9 +967,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         include_dismissed: bool = Query(False),
     ):
         async with Database(db_path) as db:
-            return await db.list_recaps(
-                session_id, include_dismissed=include_dismissed
-            )
+            return await db.list_recaps(session_id, include_dismissed=include_dismissed)
 
     @app.post("/api/sessions/{session_id}/recaps/{recap_id}/dismiss")
     async def dismiss_recap_route(session_id: str, recap_id: int):
@@ -963,18 +1030,48 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     # ------------------------------------------------------------------
 
     _EXTENSION_LANGUAGE: dict[str, str] = {
-        ".py": "python", ".js": "javascript", ".ts": "typescript",
-        ".tsx": "typescript", ".jsx": "javascript", ".rs": "rust",
-        ".go": "go", ".java": "java", ".kt": "kotlin", ".rb": "ruby",
-        ".php": "php", ".c": "c", ".cpp": "cpp", ".h": "c", ".hpp": "cpp",
-        ".cs": "csharp", ".swift": "swift", ".scala": "scala",
-        ".sh": "bash", ".bash": "bash", ".zsh": "bash",
-        ".sql": "sql", ".html": "xml", ".xml": "xml", ".css": "css",
-        ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "ini",
-        ".md": "markdown", ".lua": "lua", ".r": "r", ".pl": "perl",
-        ".ex": "elixir", ".exs": "elixir", ".erl": "erlang",
-        ".hs": "haskell", ".ml": "ocaml", ".vim": "vim",
-        ".dockerfile": "dockerfile", ".tf": "hcl", ".dart": "dart",
+        ".py": "python",
+        ".js": "javascript",
+        ".ts": "typescript",
+        ".tsx": "typescript",
+        ".jsx": "javascript",
+        ".rs": "rust",
+        ".go": "go",
+        ".java": "java",
+        ".kt": "kotlin",
+        ".rb": "ruby",
+        ".php": "php",
+        ".c": "c",
+        ".cpp": "cpp",
+        ".h": "c",
+        ".hpp": "cpp",
+        ".cs": "csharp",
+        ".swift": "swift",
+        ".scala": "scala",
+        ".sh": "bash",
+        ".bash": "bash",
+        ".zsh": "bash",
+        ".sql": "sql",
+        ".html": "xml",
+        ".xml": "xml",
+        ".css": "css",
+        ".json": "json",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+        ".toml": "ini",
+        ".md": "markdown",
+        ".lua": "lua",
+        ".r": "r",
+        ".pl": "perl",
+        ".ex": "elixir",
+        ".exs": "elixir",
+        ".erl": "erlang",
+        ".hs": "haskell",
+        ".ml": "ocaml",
+        ".vim": "vim",
+        ".dockerfile": "dockerfile",
+        ".tf": "hcl",
+        ".dart": "dart",
     }
 
     async def _allowed_prefixes() -> set[str]:
@@ -996,7 +1093,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     def _validate_fs_path(requested: str, prefixes: set[str]) -> Path:
         resolved = Path(requested).resolve()
         if not any(str(resolved).startswith(p) for p in prefixes):
-            raise HTTPException(status_code=403, detail="Path outside allowed directories")
+            raise HTTPException(
+                status_code=403, detail="Path outside allowed directories"
+            )
         return resolved
 
     @app.get("/api/fs/list")
@@ -1017,15 +1116,21 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 stat = child.stat()
             except OSError:
                 continue
-            entries.append({
-                "name": child.name,
-                "type": "dir" if child.is_dir() else "file",
-                "size": stat.st_size if child.is_file() else None,
-                "modified": stat.st_mtime,
-            })
+            entries.append(
+                {
+                    "name": child.name,
+                    "type": "dir" if child.is_dir() else "file",
+                    "size": stat.st_size if child.is_file() else None,
+                    "modified": stat.st_mtime,
+                }
+            )
 
-        dirs = sorted([e for e in entries if e["type"] == "dir"], key=lambda e: e["name"].lower())
-        files = sorted([e for e in entries if e["type"] == "file"], key=lambda e: e["name"].lower())
+        dirs = sorted(
+            [e for e in entries if e["type"] == "dir"], key=lambda e: e["name"].lower()
+        )
+        files = sorted(
+            [e for e in entries if e["type"] == "file"], key=lambda e: e["name"].lower()
+        )
         return {"path": str(resolved), "entries": dirs + files}
 
     class FsWriteBody(BaseModel):
@@ -1119,8 +1224,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
 # Module-level app for `uvicorn clau_decode.server:app --reload`
 # ---------------------------------------------------------------------------
 
+
 def _build_default_app() -> FastAPI:
     from .config import get_db_path, load_config
+
     _config = load_config()
     _db_path = get_db_path()
     _db_path.parent.mkdir(parents=True, exist_ok=True)
