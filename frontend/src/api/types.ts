@@ -94,12 +94,14 @@ export interface Session {
   cwd: string | null;
   git_branch: string | null;
   is_worktree: boolean;
+  is_fork: boolean;
   permission_mode: string | null;
   last_message_role: "user" | "assistant" | "system" | null;
 }
 
 export interface SessionDetail extends Session {
   messages: Message[];
+  total_message_count?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,11 +136,52 @@ export interface SearchHit {
 // Config
 // ---------------------------------------------------------------------------
 
+export interface Profile {
+  id: string;
+  name: string;
+  data_paths: string[];
+  color: string;
+}
+
+export type PermissionMode =
+  | "dontAsk"
+  | "acceptEdits"
+  | "bypassPermissions"
+  | "auto"
+  | "plan"
+  | "default";
+
 export interface AppConfig {
   data_paths: string[];
+  profiles: Profile[];
+  active_profile_id: string | null;
   theme: "light" | "dark" | "system";
   auto_open_browser: boolean;
   port: number;
+  host: string;
+  edit_enabled: boolean;
+  claude_default_permission_mode: PermissionMode;
+  claude_auto_stop_quiet_default_turns: boolean;
+  claude_recap_enabled: boolean;
+  claude_recap_idle_minutes: number;
+}
+
+// ---------------------------------------------------------------------------
+// Recap
+// ---------------------------------------------------------------------------
+
+export interface Recap {
+  id: number;
+  session_id: string;
+  text: string;
+  created_at: string;
+  covers_until_message_uuid: string | null;
+  dismissed: boolean;
+}
+
+export interface ProfilesResponse {
+  profiles: Profile[];
+  active_profile_id: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,13 +233,19 @@ export interface DailyBucket {
 // Cost
 // ---------------------------------------------------------------------------
 
-export interface SessionCostResponse {
-  session_id: string;
+export interface ModelCostEntry {
   model: string;
   input_usd: number;
   output_usd: number;
   cache_write_usd: number;
   cache_read_usd: number;
+  total_usd: number;
+  pricing_known: boolean;
+}
+
+export interface SessionCostResponse {
+  session_id: string;
+  models: ModelCostEntry[];
   total_usd: number;
   pricing_known: boolean;
   pricing_source: "live" | "hardcoded";
@@ -275,4 +324,75 @@ export interface MessageContentPatch {
 
 export interface MutationResult {
   ok: boolean;
+  session_id?: string;
 }
+
+// ---------------------------------------------------------------------------
+// File system browser
+// ---------------------------------------------------------------------------
+
+export interface DirEntry {
+  name: string;
+  type: "file" | "dir";
+  size: number | null;
+  modified: number;
+}
+
+export interface DirListing {
+  path: string;
+  entries: DirEntry[];
+}
+
+export interface FileContent {
+  path: string;
+  name: string;
+  content: string;
+  size: number;
+  language: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7 export
+// ---------------------------------------------------------------------------
+
+export type ExportFormat = "json" | "md";
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
+export interface DashboardSession {
+  id: string;
+  title: string | null;
+  project_id: string;
+  models: string[];
+  message_count: number;
+  total_usd: number;
+  updated_at: string | null;
+  last_message_role: "user" | "assistant" | "system" | null;
+}
+
+export interface DashboardProject {
+  id: string;
+  display_name: string;
+  session_count: number;
+  last_activity_at: string | null;
+}
+
+export interface DashboardTip {
+  rule_id: string;
+  severity: "info" | "warning" | "error";
+  title: string;
+  detail: string;
+}
+
+export interface DashboardData {
+  recent_sessions: DashboardSession[];
+  projects: DashboardProject[];
+  model_usage: ModelUsageEntry[];
+  total_cost_usd: number;
+  total_sessions: number;
+  total_messages: number;
+  tips: DashboardTip[];
+}
+

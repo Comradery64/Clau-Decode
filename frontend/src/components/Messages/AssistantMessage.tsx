@@ -228,12 +228,9 @@ function AssistantEditForm({
 interface AssistantMessageProps {
   messages: Message[];
   model: string | null;
-  sessionId?: string;
 }
 
-export function AssistantMessage({ messages, model, sessionId: _sessionIdProp }: AssistantMessageProps) {
-  void _sessionIdProp; // kept for API compatibility
-  const [hovered, setHovered] = useState(false);
+export function AssistantMessage({ messages, model }: AssistantMessageProps) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -314,8 +311,7 @@ export function AssistantMessage({ messages, model, sessionId: _sessionIdProp }:
 
   return (
     <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      className="hover-actions-parent"
       style={{ padding: "6px 24px" }}
     >
       {editing ? (
@@ -374,25 +370,22 @@ export function AssistantMessage({ messages, model, sessionId: _sessionIdProp }:
         >
           {model && (
             <div
+              className="hover-actions"
               style={{
                 fontSize: "11px",
                 color: "var(--text-tertiary)",
                 fontFamily: "var(--font-ui)",
-                opacity: hovered ? 1 : 0,
-                transition: "opacity var(--transition-fast)",
               }}
             >
               {formatModelName(model)}
             </div>
           )}
           <div
+            className="hover-actions"
             style={{
               display: "flex",
               alignItems: "center",
               gap: "2px",
-              opacity: hovered ? 1 : 0,
-              transition: "opacity var(--transition-fast)",
-              pointerEvents: hovered ? "auto" : "none",
               marginLeft: "auto",
             }}
           >

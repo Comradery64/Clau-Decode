@@ -1,18 +1,124 @@
-import { useState, useEffect } from "react";
-import type { Session } from "../../api/types";
+import { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from "react";
+import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
+import type { AppConfig, PermissionMode, Recap, Session } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
-import { toggleBlocksExpanded } from "../../store/blocksState";
-import { lsGetMap } from "../../utils/localStorage";
+import { lsGetMap, lsGetRaw, lsSetRaw, LS } from "../../utils/localStorage";
+import { on } from "../../utils/events";
+import { SCROLLBAR_OPTIONS } from "../ScrollContainer";
 import { EmptyState } from "./EmptyState";
 import { ConversationHeader } from "./ConversationHeader";
 import { MessageList } from "./MessageListLoader";
+import { MessageListContainerCtx } from "./MessageListContainerContext";
+import { ChatInput } from "./ChatInput";
+import { useSessionDetail, isSessionActive } from "../Messages/hooks/useSessionDetail";
+import { groupMessages } from "../Messages/groupMessages";
+import { useExpandPreserveAnchor } from "./hooks/useExpandPreserveAnchor";
+import { useScrollPositionMemory } from "./hooks/useScrollPositionMemory";
 
-const LS_RENAMED = "clau-decode:renamed";
+function readLastActive(sessionId: string): number | null {
+  const raw = lsGetRaw(LS.SESSION_LAST_ACTIVE_PREFIX + sessionId);
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function writeLastActive(sessionId: string, ts: number = Date.now()): void {
+  lsSetRaw(LS.SESSION_LAST_ACTIVE_PREFIX + sessionId, String(ts));
+}
 
 export default function ChatView() {
   const selectedSessionId = useAppStore((s) => s.selectedSessionId);
   const [session, setSession] = useState<Session | null>(null);
+  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
+  const [recaps, setRecaps] = useState<Recap[]>([]);
+  const [recapGenerating, setRecapGenerating] = useState<boolean>(false);
+  const osRef = useRef<React.ComponentRef<typeof OverlayScrollbarsComponent>>(null);
+  const scrollEl = useRef<HTMLElement | null>(null);
+  const containerRef = useMemo(() => ({ current: null as HTMLElement | null }), []);
+
+  useEffect(() => {
+    api.getConfig().then(setAppConfig).catch(() => {});
+  }, []);
+
+  const regenerateRecap = useCallback((sessionId: string, replaceId?: number) => {
+    if (replaceId !== undefined) {
+      api.dismissRecap(sessionId, replaceId).catch(() => {});
+      setRecaps((prev) => prev.filter((r) => r.id !== replaceId));
+    }
+    setRecapGenerating(true);
+    api
+      .generateRecap(sessionId)
+      .then((r) => {
+        setRecaps((prev) => (prev.some((x) => x.id === r.id) ? prev : [...prev, r]));
+      })
+      .catch(() => {})
+      .finally(() => setRecapGenerating(false));
+  }, []);
+
+  const dismissRecap = useCallback((sessionId: string, recapId: number) => {
+    setRecaps((prev) => prev.filter((r) => r.id !== recapId));
+    api.dismissRecap(sessionId, recapId).catch(() => {});
+  }, []);
+
+  // Track per-session "last active" timestamp.
+  useEffect(() => {
+    if (!selectedSessionId) return;
+    const touch = () => writeLastActive(selectedSessionId);
+    const onVis = () => { if (!document.hidden) touch(); };
+    touch();
+    document.addEventListener("visibilitychange", onVis);
+    const offRefresh = on("refresh", () => {
+      if (!document.hidden) touch();
+    });
+    return () => {
+      writeLastActive(selectedSessionId);
+      document.removeEventListener("visibilitychange", onVis);
+      offRefresh();
+    };
+  }, [selectedSessionId]);
+
+  // On navigating to a session, load prior recaps and (if idle long enough) generate a new one.
+  useEffect(() => {
+    if (!selectedSessionId) { setRecaps([]); return; }
+    let cancelled = false;
+    const sid = selectedSessionId;
+    const lastActive = readLastActive(sid);
+    const idleMin = lastActive == null ? Infinity : (Date.now() - lastActive) / 60000;
+
+    api.listRecaps(sid).then((rs) => {
+      if (!cancelled) setRecaps(rs);
+    }).catch(() => {});
+
+    if (
+      appConfig?.claude_recap_enabled &&
+      lastActive != null &&
+      idleMin >= appConfig.claude_recap_idle_minutes &&
+      (session?.message_count ?? 0) > 0
+    ) {
+      setRecapGenerating(true);
+      api.generateRecap(sid).then((r) => {
+        if (!cancelled) {
+          setRecaps((prev) => (prev.some((x) => x.id === r.id) ? prev : [...prev, r]));
+        }
+      }).catch(() => {}).finally(() => {
+        if (!cancelled) setRecapGenerating(false);
+      });
+    }
+
+    return () => { cancelled = true; };
+  }, [selectedSessionId, appConfig, session?.message_count]);
+
+  useLayoutEffect(() => {
+    const instance = osRef.current?.osInstance();
+    if (instance) {
+      const vp = instance.elements().viewport;
+      scrollEl.current = vp;
+      containerRef.current = vp;
+    }
+  });
+
+  useScrollPositionMemory(scrollEl, selectedSessionId);
 
   useEffect(() => {
     if (!selectedSessionId) { setSession(null); return; }
@@ -21,7 +127,7 @@ export default function ChatView() {
       .getSession(selectedSessionId)
       .then((detail) => {
         if (!cancelled) {
-          const renamed = lsGetMap(LS_RENAMED)[selectedSessionId];
+          const renamed = lsGetMap(LS.RENAMED)[selectedSessionId];
           setSession(renamed ? { ...detail, title: renamed } : detail);
         }
       })
@@ -30,60 +136,14 @@ export default function ChatView() {
   }, [selectedSessionId]);
 
   useEffect(() => {
-    const onRename = (e: Event) => {
-      const { id, title } = (e as CustomEvent<{ id: string; title: string }>).detail;
+    return on("rename", ({ id, title }) => {
       if (id === selectedSessionId) {
         setSession((prev) => prev ? { ...prev, title } : prev);
       }
-    };
-    window.addEventListener("clau-decode:rename", onRename);
-    return () => window.removeEventListener("clau-decode:rename", onRename);
+    });
   }, [selectedSessionId]);
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
-        e.preventDefault();
-        const container = document.getElementById("message-list-container");
-
-        // Snapshot an anchor element at the top of the visible area so we
-        // can restore its position after the expansion changes layout.
-        const anchor = (() => {
-          if (!container) return null;
-          const r = container.getBoundingClientRect();
-          return document.elementFromPoint(r.left + r.width / 2, r.top + 4);
-        })();
-
-        // Desired distance of anchor from the container's top edge (viewport-relative).
-        // We restore this after expand/collapse regardless of snap-to-bottom interference.
-        const anchorTargetOffset = (() => {
-          if (!anchor || !container) return 0;
-          return anchor.getBoundingClientRect().top - container.getBoundingClientRect().top;
-        })();
-
-        // Correct scroll after React's async render commits. We compute
-        // anchorContentOffset (invariant to scrollTop) inside the callback so
-        // the result is correct even if MessageList's snap-to-bottom ResizeObserver
-        // already ran and changed scrollTop before ours fires.
-        const inner = container?.firstElementChild;
-        if (inner && anchor && container) {
-          const ro = new ResizeObserver(() => {
-            ro.disconnect();
-            const anchorContentOffset =
-              anchor.getBoundingClientRect().top -
-              container.getBoundingClientRect().top +
-              container.scrollTop;
-            container.scrollTop = anchorContentOffset - anchorTargetOffset;
-          });
-          ro.observe(inner);
-        }
-
-        toggleBlocksExpanded();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  useExpandPreserveAnchor(scrollEl);
 
   if (!selectedSessionId) {
     return (
@@ -114,12 +174,51 @@ export default function ChatView() {
       }}
     >
       <ConversationHeader session={session} />
-      <div
-        id="message-list-container"
-        style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}
+      <OverlayScrollbarsComponent
+        ref={osRef}
+        options={SCROLLBAR_OPTIONS}
+        style={{ flex: 1 }}
       >
-        <MessageList sessionId={selectedSessionId} />
-      </div>
+        <MessageListContainerCtx.Provider value={containerRef}>
+          <MessageList
+            sessionId={selectedSessionId}
+            recaps={recaps}
+            recapGenerating={recapGenerating}
+            onDismissRecap={(id) => dismissRecap(selectedSessionId, id)}
+            onRegenerateRecap={(id) => regenerateRecap(selectedSessionId, id)}
+          />
+        </MessageListContainerCtx.Provider>
+      </OverlayScrollbarsComponent>
+      <ChatInputBar
+        sessionId={selectedSessionId}
+        session={session}
+        defaultPermissionMode={appConfig?.claude_default_permission_mode ?? "dontAsk"}
+      />
     </div>
+  );
+}
+
+function ChatInputBar({
+  sessionId,
+  session,
+  defaultPermissionMode,
+}: {
+  sessionId: string;
+  session: Session | null;
+  defaultPermissionMode: PermissionMode;
+}) {
+  const { detail, sseTimedOut } = useSessionDetail(sessionId);
+  const turns = useMemo(() => (detail ? groupMessages(detail.messages) : []), [detail]);
+  const serverActive = isSessionActive(turns);
+  // If SSE has timed out, ignore the stale "active" flag — the session is dead, not streaming.
+  const effectiveActive = serverActive && !sseTimedOut;
+  return (
+    <ChatInput
+      sessionId={sessionId}
+      isStreaming={effectiveActive}
+      disabled={!!session?.is_fork}
+      onStop={() => { api.stopMessage(sessionId).catch(() => {}); }}
+      defaultPermissionMode={defaultPermissionMode}
+    />
   );
 }

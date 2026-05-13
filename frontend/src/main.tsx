@@ -1,6 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { emit } from "./utils/events";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import "overlayscrollbars/styles/overlayscrollbars.css";
 import "./styles/theme.css";
 
 const spinStyle = document.createElement("style");
@@ -21,7 +24,7 @@ window.addEventListener(
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      window.dispatchEvent(new CustomEvent("clau-decode:refresh"));
+      emit("refresh", undefined);
     }
   },
   { capture: true }
@@ -29,6 +32,8 @@ window.addEventListener(
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>
 );

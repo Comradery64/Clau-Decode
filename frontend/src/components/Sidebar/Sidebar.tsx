@@ -5,7 +5,8 @@ import type { Project, Session } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
 import { useRoute, navigateTo } from "../../router";
-import { lsGetSet } from "../../utils/localStorage";
+import { LS } from "../../utils/localStorage";
+import { useLsSet } from "../../utils/useLsSet";
 import { on } from "../../utils/events";
 import { SCROLLBAR_OPTIONS } from "../ScrollContainer";
 import { SidebarHeader } from "./SidebarHeader";
@@ -253,7 +254,7 @@ function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
           bottom: "100%",
           left: "4px",
           right: "4px",
-          background: "var(--bg-sidebar)",
+          background: "var(--bg-modal)",
           borderRadius: "12px",
           boxShadow: "0 -2px 12px rgba(0,0,0,0.08)",
           marginBottom: "-1px",
@@ -359,8 +360,8 @@ export default function Sidebar() {
 
   // Archive view
   const [showArchive, setShowArchive] = useState(false);
-  const [archivedIds, setArchivedIds] = useState<Set<string>>(() => lsGetSet("clau-decode:archived"));
-  const [starredIds, setStarredIds] = useState<Set<string>>(() => lsGetSet("clau-decode:starred"));
+  const archived = useLsSet(LS.ARCHIVED, "archive");
+  const starred = useLsSet(LS.STARRED, "star");
 
   // Collapsible section headers
   const [starredCollapsed, setStarredCollapsed] = useState(false);
@@ -379,13 +380,21 @@ export default function Sidebar() {
   const setActiveProfileId = useAppStore((s) => s.setActiveProfileId);
 
   const showParentFolder = useAppStore((s) => s.showParentFolder);
+  const route = useRoute();
 
   const showFlat = sessionSortOrder !== "alpha";
 
   const handleSelectSession = (session: Session) => {
     selectProject(session.project_id);
-    selectSession(session.id);
     setFileExplorerRoot(session.cwd);
+    // On the Analytics view, clicking a session should re-scope the analytics
+    // to that session — not navigate away to the chat. Update the store
+    // directly and stay on /analytics.
+    if (route === "/analytics") {
+      selectSession(session.id);
+    } else {
+      navigateTo(`/chat/${session.id}`);
+    }
   };
 
   // When switching to folder mode with a session already selected, set the root.
@@ -479,24 +488,14 @@ export default function Sidebar() {
     });
   }, []);
 
-  // Sync archivedIds when a session is archived from the context menu
-  useEffect(() => {
-    return on("archive", () => setArchivedIds(lsGetSet("clau-decode:archived")));
-  }, []);
-
-  // Sync starredIds when a session is starred/unstarred from the context menu
-  useEffect(() => {
-    return on("star", () => setStarredIds(lsGetSet("clau-decode:starred")));
-  }, []);
-
   const starredSessions = useMemo(() =>
-    flatSessions.filter((s) => starredIds.has(s.id) && !archivedIds.has(s.id)),
-    [flatSessions, starredIds, archivedIds]
+    flatSessions.filter((s) => starred.has(s.id) && !archived.has(s.id)),
+    [flatSessions, starred, archived]
   );
 
   const sortedFlatSessions = useMemo(() => {
     const filtered = flatSessions.filter((s) =>
-      showArchive ? archivedIds.has(s.id) : !archivedIds.has(s.id)
+      showArchive ? archived.has(s.id) : !archived.has(s.id)
     );
     if (sessionSortOrder === "recent") {
       filtered.sort((a, b) =>
@@ -508,7 +507,7 @@ export default function Sidebar() {
       );
     }
     return filtered;
-  }, [flatSessions, sessionSortOrder, showArchive, archivedIds]);
+  }, [flatSessions, sessionSortOrder, showArchive, archived]);
 
   const toggleProject = (projectId: string) => {
     setExpandedProjects((prev) => {
@@ -531,7 +530,9 @@ export default function Sidebar() {
         borderRight: "1px solid var(--border-subtle)",
         flexShrink: 0,
         overflow: "hidden",
-        transition: "width 200ms ease",
+        // Synced with FileViewer's width transition so the chat body's
+        // remaining flex space changes at a single, predictable rate.
+        transition: "width 180ms ease-out",
       }}
     >
       <SidebarHeader collapsed={sidebarCollapsed} />
@@ -597,6 +598,8 @@ export default function Sidebar() {
       <OverlayScrollbarsComponent
         ref={sessionListRef}
         options={SCROLLBAR_OPTIONS}
+        role={sidebarMode === "chat" ? "list" : undefined}
+        aria-label={sidebarMode === "chat" ? "Sessions" : undefined}
         style={{
           flex: 1,
           padding: sidebarMode === "folder" ? "0" : "8px 0",
@@ -675,7 +678,7 @@ export default function Sidebar() {
                       displayName={displayName(project)}
                       isExpanded={expandedProjects.has(project.id)}
                       onToggle={() => toggleProject(project.id)}
-                      archivedIds={archivedIds}
+                      archivedIds={archived.ids}
                     />
                   ))}
                   {sortedProjects.length === 0 && (

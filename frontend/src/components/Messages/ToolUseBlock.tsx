@@ -3,7 +3,8 @@ import type { ToolUseBlock as ToolUseBlockType, ToolResultBlock } from "../../ap
 import { TextBlock } from "./TextBlock";
 import { useAppStore } from "../../store";
 import hljs from "../../utils/hljs";
-import { ScrollContainer } from "../ScrollContainer";
+import { ScrollContainer, SCROLLBAR_OPTIONS_X } from "../ScrollContainer";
+import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
 
 interface ToolUseBlockProps {
   toolUse: ToolUseBlockType;
@@ -20,22 +21,27 @@ function HighlightedJson({ value }: { value: string }) {
     [value]
   );
   return (
-    <pre
-      // highlight.js HTML-encodes special chars, so this is XSS-safe
-      dangerouslySetInnerHTML={{ __html: html }}
-      style={{
-        background: "var(--bg-code)",
-        border: "1px solid var(--border-subtle)",
-        borderRadius: "var(--radius-sm)",
-        fontFamily: "var(--font-mono)",
-        fontSize: "12px",
-        padding: "10px 12px",
-        overflowX: "auto",
-        maxWidth: "100%",
-        margin: 0,
-        lineHeight: 1.5,
-      }}
-    />
+    <OverlayScrollbarsComponent
+      className="code-block-wrap"
+      options={SCROLLBAR_OPTIONS_X}
+      style={{ overflow: "hidden" }}
+    >
+      <pre
+        // highlight.js HTML-encodes special chars, so this is XSS-safe
+        dangerouslySetInnerHTML={{ __html: html }}
+        style={{
+          background: "var(--bg-code)",
+          border: "1px solid var(--border-subtle)",
+          borderRadius: "var(--radius-sm)",
+          fontFamily: "var(--font-mono)",
+          fontSize: "12px",
+          padding: "10px 12px",
+          maxWidth: "100%",
+          margin: 0,
+          lineHeight: 1.5,
+        }}
+      />
+    </OverlayScrollbarsComponent>
   );
 }
 
@@ -94,7 +100,7 @@ export function ToolUseBlock({ toolUse, toolResult }: ToolUseBlockProps) {
         background: isError ? "var(--tool-error-bg)" : "var(--bg-tool-block)",
         border: `1px solid ${isError ? "var(--tool-error-border)" : "var(--border-subtle)"}`,
         borderRadius: "var(--radius-md)",
-        margin: "10px 0",
+        margin: "0",
         overflow: "hidden",
       }}
     >

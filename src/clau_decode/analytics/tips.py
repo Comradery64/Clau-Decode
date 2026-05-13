@@ -73,7 +73,7 @@ class RepeatedFileReadRule:
                 detail=(
                     "Reading the same file repeatedly re-sends its full content on every "
                     "prompt turn. Consider reading it once and referencing it from context, "
-                    "or check whether Claude has already loaded this file."
+                    "or check whether the assistant has already loaded this file."
                 ),
                 evidence=[f"{path} — read {count} times"],
             ))
@@ -112,7 +112,7 @@ class OversizedToolResultRule:
                         "This result was included verbatim in the context window. "
                         "Large results consume expensive input tokens on every subsequent "
                         "turn. Consider truncating output, using grep/head, or asking "
-                        "Claude to request only the relevant section."
+                        "the assistant to request only the relevant section."
                     ),
                     evidence=[f"~{size_k}k chars (tool_use_id: {block.tool_use_id})"],
                 ))

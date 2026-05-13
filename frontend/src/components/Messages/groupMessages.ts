@@ -1,7 +1,7 @@
 /**
  * Groups consecutive assistant message records into single visual turns.
  *
- * Claude Code stores each assistant response as multiple JSONL records:
+ * The session format stores each assistant response as multiple JSONL records:
  *   1. thinking block (separate record)
  *   2. tool_use block (separate record)
  *   3. After tool result: thinking + text (separate records)
@@ -32,12 +32,7 @@ export interface CommandTurn {
   command: string;
 }
 
-export interface AsideTurn {
-  kind: "aside";
-  message: Message;  // the sidechain assistant message
-}
-
-export type Turn = UserTurn | AssistantTurn | CommandTurn | AsideTurn;
+export type Turn = UserTurn | AssistantTurn | CommandTurn;
 
 function extractSlashCommand(text: string): string | null {
   const nameMatch = text.match(/<command-name>([^<]+)<\/command-name>/);
@@ -75,13 +70,6 @@ function isInvisibleUser(msg: Message): boolean {
   return false;
 }
 
-/** Returns true for assistant messages with no visible content. */
-function isInvisibleAssistant(msg: Message): boolean {
-  return msg.content_blocks.every(
-    (b) => b.type === "thinking" && (b as { type: "thinking"; thinking: string }).thinking === ""
-  );
-}
-
 export function groupMessages(messages: Message[]): Turn[] {
   const turns: Turn[] = [];
   let currentAssistant: Message[] | null = null;
@@ -95,22 +83,9 @@ export function groupMessages(messages: Message[]): Turn[] {
   };
 
   for (const msg of messages) {
-    if (msg.is_sidechain) {
-      // Aside response: sidechain assistant message with visible text
-      if (msg.role === "assistant") {
-        const hasText = msg.content_blocks.some(
-          (b) => b.type === "text" && (b as { type: "text"; text: string }).text.trim()
-        );
-        if (hasText) {
-          flushAssistant();
-          turns.push({ kind: "aside", message: msg });
-        }
-      }
-      continue;
-    }
+    if (msg.is_sidechain) continue;
 
     if (msg.role === "assistant") {
-      if (isInvisibleAssistant(msg)) continue;
       if (!currentAssistant) currentAssistant = [];
       currentAssistant.push(msg);
     } else if (msg.role === "user") {

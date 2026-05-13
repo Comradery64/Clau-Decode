@@ -7,13 +7,21 @@ import type {
   AppConfig,
   ContentBlock,
   DailyBucket,
+  DashboardData,
+  DirListing,
+  ExportFormat,
+  FileContent,
   FileTouchEntry,
   ModelUsageEntry,
   MutationResult,
+  PermissionMode,
   PricingTableResponse,
+  ProfilesResponse,
+  Profile,
   Project,
   PromptCostEntry,
   PromptStatsResponse,
+  Recap,
   SearchHit,
   Session,
   SessionCostResponse,
@@ -23,6 +31,28 @@ import type {
   TokenBreakdown,
   ToolUsageEntry,
 } from "./types";
+
+// In-memory cache for AppConfig — shared between App's boot-time theme
+// fetch and SettingsModal's first open so Settings paints instantly. Kept
+// fresh by updateConfig and getConfigCached below.
+let _cachedConfig: AppConfig | null = null;
+let _configInflight: Promise<AppConfig> | null = null;
+
+export function getCachedConfig(): AppConfig | null {
+  return _cachedConfig;
+}
+
+export function getConfigCached(): Promise<AppConfig> {
+  if (_configInflight) return _configInflight;
+  _configInflight = fetch("/api/config")
+    .then((r) => {
+      if (!r.ok) throw new Error(`GET /api/config → ${r.status}`);
+      return r.json() as Promise<AppConfig>;
+    })
+    .then((cfg) => { _cachedConfig = cfg; return cfg; })
+    .finally(() => { _configInflight = null; });
+  return _configInflight;
+}
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -40,8 +70,13 @@ async function put<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function post<T>(path: string): Promise<T> {
-  const res = await fetch(path, { method: "POST" });
+async function post<T>(path: string, body?: unknown): Promise<T> {
+  const opts: RequestInit = { method: "POST" };
+  if (body !== undefined) {
+    opts.headers = { "Content-Type": "application/json" };
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
   if (!res.ok) throw new Error(`POST ${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }
@@ -77,11 +112,17 @@ export const api = {
     return get<SearchHit[]>(`/api/search?${params}`);
   },
   getStats: () => get<StatsResponse>("/api/stats"),
+  getDashboard: () => get<DashboardData>("/api/dashboard"),
   getConfig: () => get<AppConfig>("/api/config"),
-  updateConfig: (config: AppConfig) => put<AppConfig>("/api/config", config),
+  updateConfig: (config: AppConfig) => {
+    _cachedConfig = config;
+    return put<AppConfig>("/api/config", config);
+  },
   refresh: () => post<{ ok: boolean }>("/api/refresh"),
   revealSession: (sessionId: string) =>
     post<{ ok: boolean }>(`/api/sessions/${encodeURIComponent(sessionId)}/reveal`),
+  openTerminal: (sessionId: string) =>
+    post<{ ok: boolean }>(`/api/sessions/${encodeURIComponent(sessionId)}/open-terminal`),
   getSessionTokens: (sessionId: string) =>
     get<TokenBreakdown>(`/api/analytics/sessions/${encodeURIComponent(sessionId)}/tokens`),
   getSessionPrompts: (sessionId: string) =>
@@ -106,6 +147,84 @@ export const api = {
     del(`/api/messages/${messageId}`),
   patchMessage: (messageId: string, content_blocks: ContentBlock[]): Promise<MutationResult> =>
     patch(`/api/messages/${messageId}`, { content_blocks }),
+
+  // Profiles
+  getProfiles: () => get<ProfilesResponse>("/api/profiles"),
+  createProfile: (name: string, data_paths?: string[], color?: string) =>
+    post<Profile>("/api/profiles", { name, data_paths: data_paths || ["~/.claude"], color: color || "#b8956a" }),
+  updateProfile: (id: string, updates: Partial<Pick<Profile, "name" | "data_paths" | "color">>) =>
+    put<Profile>(`/api/profiles/${encodeURIComponent(id)}`, updates),
+  deleteProfile: (id: string) =>
+    del<MutationResult>(`/api/profiles/${encodeURIComponent(id)}`),
+  setActiveProfile: (active_profile_id: string | null) =>
+    put<{ active_profile_id: string | null }>("/api/profiles/active", { active_profile_id }),
+
+  // File system browser
+  listDir: (path: string, showHidden = false) => {
+    const params = new URLSearchParams({ path });
+    if (showHidden) params.set("show_hidden", "true");
+    return get<DirListing>(`/api/fs/list?${params}`);
+  },
+  readFile: (path: string) =>
+    get<FileContent>(`/api/fs/read?${new URLSearchParams({ path })}`),
+  writeFile: (path: string, content: string) =>
+    put<{ ok: boolean; path: string; size: number }>("/api/fs/write", { path, content }),
+
+  // Export (Phase 7)
+  exportSession: (sessionId: string, format: ExportFormat) =>
+    fetch(
+      `/api/sessions/${encodeURIComponent(sessionId)}/export?format=${format}`
+    ).then((r) => {
+      if (!r.ok) throw new Error(`Export failed: ${r.status}`);
+      const disposition = r.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      const filename = match ? match[1] : `session.${format}`;
+      return r.blob().then((blob) => ({ blob, filename }));
+    }),
+
+  // Claude Code runner — send/stop/status (Phase 9 Rev 2)
+  sendMessage: (sessionId: string, message: string, permissionMode?: PermissionMode) =>
+    post<{
+      ok: boolean;
+      permission_mode: PermissionMode;
+      // Present only for slash commands. Synchronous response text (e.g.
+      // "/foo isn't available in this environment.") that isn't written to
+      // the JSONL and therefore wouldn't appear via SSE.
+      result_text?: string | null;
+      is_error?: boolean;
+    }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/send-message`,
+      { message, permission_mode: permissionMode },
+    ),
+  stopMessage: (sessionId: string) =>
+    post<{ ok: boolean; stopped: boolean }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/stop`,
+      {},
+    ),
+  getRunnerStatus: (sessionId: string) =>
+    get<{
+      busy: boolean;
+      last_error: string | null;
+      permission_mode: PermissionMode | null;
+      quiet_age_seconds: number | null;
+      quiet_warning: boolean;
+    }>(`/api/sessions/${encodeURIComponent(sessionId)}/runner-status`),
+
+  // Recaps
+  generateRecap: (sessionId: string) =>
+    post<Recap>(`/api/sessions/${encodeURIComponent(sessionId)}/recap`),
+  listRecaps: (sessionId: string, opts?: { includeDismissed?: boolean }) => {
+    const params = new URLSearchParams();
+    if (opts?.includeDismissed) params.set("include_dismissed", "true");
+    const qs = params.toString();
+    return get<Recap[]>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/recaps${qs ? `?${qs}` : ""}`,
+    );
+  },
+  dismissRecap: (sessionId: string, recapId: number) =>
+    post<{ ok: boolean; dismissed: boolean }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/recaps/${recapId}/dismiss`,
+    ),
 };
 
 /** SSE event source — call onRefresh when a JSONL file changes. */

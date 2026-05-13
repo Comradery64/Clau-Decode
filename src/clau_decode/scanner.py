@@ -65,7 +65,7 @@ def build_project_from_dir(dir_name: str, data_source: str) -> Project:
         showing the last two path components, and a resolved_path if the
         underlying directory exists.
     """
-    project_id = hashlib.sha256(dir_name.encode()).hexdigest()[:16]
+    project_id = hashlib.sha256(f"{dir_name}\0{data_source}".encode()).hexdigest()[:16]
 
     unmangled = _unmangle_project_id(dir_name)
     parts = [p for p in unmangled.split("/") if p]
@@ -119,5 +119,7 @@ async def scan_paths(root_paths: list[Path]) -> AsyncIterator[tuple[Project, Pat
 
             project = build_project_from_dir(project_dir.name, str(root_path))
 
-            for jsonl_file in sorted(project_dir.glob("*.jsonl")):
+            for jsonl_file in sorted(
+                f for f in project_dir.glob("*.jsonl") if ".bak." not in f.name
+            ):
                 yield project, jsonl_file

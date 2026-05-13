@@ -121,28 +121,30 @@ export function StatsTab() {
       {models.length > 0 && (
         <section>
           <SectionHeader title="Model Usage" />
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-            <thead>
-              <tr>
-                {["Model", "Responses", "Input", "Output", "Total"].map((h) => (
-                  <th key={h} style={{ textAlign: "left", padding: "4px 10px 8px", color: "var(--text-tertiary)", fontWeight: 500, fontSize: "11px", borderBottom: "1px solid var(--border-subtle)" }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {models.map((m) => (
-                <tr key={m.model} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                  <td style={{ padding: "7px 10px", fontFamily: "var(--font-mono)", fontSize: "12px", color: "var(--text-primary)" }}>{fmtModel(m.model)}</td>
-                  <td style={{ padding: "7px 10px", color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>{m.message_count}</td>
-                  <td style={{ padding: "7px 10px", color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>{fmtK(m.input_tokens)}</td>
-                  <td style={{ padding: "7px 10px", color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>{fmtK(m.output_tokens)}</td>
-                  <td style={{ padding: "7px 10px", color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>{fmtK(m.total_tokens)}</td>
+          <div style={{ borderRadius: "var(--radius-md)", border: "1px solid var(--border-subtle)", overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: "13px" }}>
+              <thead>
+                <tr>
+                  {["Model", "Responses", "Input", "Output", "Total"].map((h) => (
+                    <th key={h} style={{ textAlign: "left", padding: "4px 10px 8px", color: "var(--text-tertiary)", fontWeight: 500, fontSize: "11px", borderBottom: "1px solid var(--border-subtle)" }}>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {models.map((m, i) => (
+                  <tr key={m.model} style={{ borderBottom: i < models.length - 1 ? "1px solid var(--border-subtle)" : undefined }}>
+                    <td style={{ padding: "7px 10px", fontFamily: "var(--font-mono)", fontSize: "12px", color: "var(--text-primary)" }}>{fmtModel(m.model)}</td>
+                    <td style={{ padding: "7px 10px", color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>{m.message_count}</td>
+                    <td style={{ padding: "7px 10px", color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>{fmtK(m.input_tokens)}</td>
+                    <td style={{ padding: "7px 10px", color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>{fmtK(m.output_tokens)}</td>
+                    <td style={{ padding: "7px 10px", color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>{fmtK(m.total_tokens)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 

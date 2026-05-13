@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 
 interface Props {
@@ -11,11 +12,11 @@ interface Props {
 export function ConfirmDialog({
   title, body, confirmLabel = "Delete", onConfirm, onCancel,
 }: Props) {
-  return (
+  return createPortal(
     <div
       style={{
         position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
-        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000,
       }}
       onClick={onCancel}
     >
@@ -52,6 +53,7 @@ export function ConfirmDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

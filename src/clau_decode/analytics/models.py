@@ -29,6 +29,7 @@ class PromptCost:
     """Token breakdown for a single user→assistant turn."""
     user_message_id: str
     assistant_message_id: str
+    model: str = "unknown"
     breakdown: TokenBreakdown = field(default_factory=TokenBreakdown)
 
 

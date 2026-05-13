@@ -5,7 +5,7 @@ const sections = [
   {
     title: "Browsing Sessions",
     items: [
-      "The sidebar shows all your Claude Code conversation sessions grouped by project.",
+      "The sidebar shows all your conversation sessions grouped by project.",
       "Click a session to open it. Use the sort buttons to switch between recent, oldest, or project order.",
       "Star frequently used sessions for quick access. Archive sessions you no longer need.",
     ],
@@ -19,7 +19,7 @@ const sections = [
   {
     title: "Profiles",
     items: [
-      "Switch between profiles to view sessions from different Claude Code config directories.",
+      "Switch between profiles to view sessions from different config directories.",
       "Click the avatar in the bottom-left to open the profile switcher.",
       "Manage profiles and their data paths in Settings.",
     ],
@@ -35,7 +35,7 @@ const sections = [
     title: "Reading Conversations",
     items: [
       "Tool use blocks show files read, commands run, and edits made.",
-      "Thinking blocks reveal Claude's reasoning process.",
+      "Thinking blocks reveal the AI's reasoning process.",
       "Press ⌘O to expand or collapse all tool and thinking blocks at once.",
       "Press ⌘E to toggle full tool output without truncation.",
     ],

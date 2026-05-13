@@ -4,9 +4,13 @@ import type { PartialOptions } from "overlayscrollbars";
 
 export const SCROLLBAR_OPTIONS: PartialOptions = {
   scrollbars: {
-    autoHide: "scroll",
-    autoHideDelay: 1500,
-    autoHideSuspend: true,
+    // "leave" → visible while pointer is over the viewport AND while scrolling;
+    // hides on pointer-leave + autoHideDelay. Combined with autoHideSuspend:false
+    // so the scrollbar starts hidden on mount instead of waiting for a first
+    // scroll to activate auto-hiding.
+    autoHide: "leave",
+    autoHideDelay: 800,
+    autoHideSuspend: false,
     dragScroll: true,
     clickScroll: true,
     pointers: ["mouse", "touch", "pen"],
@@ -18,6 +22,15 @@ export const SCROLLBAR_OPTIONS: PartialOptions = {
 export const SCROLLBAR_OPTIONS_BOTH: PartialOptions = {
   ...SCROLLBAR_OPTIONS,
   overflow: { x: "scroll", y: "scroll" },
+};
+
+/** Horizontal-only scrolling for code blocks, tables, and similar.
+ *  Module-level constant so prop reference is stable across re-renders —
+ *  inline option objects cause OverlayScrollbars to detect "changed options"
+ *  and re-initialize the instance on every parent render. */
+export const SCROLLBAR_OPTIONS_X: PartialOptions = {
+  ...SCROLLBAR_OPTIONS,
+  overflow: { x: "scroll", y: "hidden" },
 };
 
 /**

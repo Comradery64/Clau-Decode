@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
-# Content blocks — mirrors Claude API content block types
+# Content blocks — mirrors API content block types
 # ---------------------------------------------------------------------------
 
 class TextBlock(BaseModel):
@@ -46,7 +46,7 @@ ContentBlock = Union[TextBlock, ToolUseBlock, ToolResultBlock, ThinkingBlock, Im
 
 
 # ---------------------------------------------------------------------------
-# Token usage — from Claude API assistant messages
+# Token usage — from API assistant messages
 # ---------------------------------------------------------------------------
 
 class TokenUsage(BaseModel):
@@ -101,6 +101,7 @@ class Session(BaseModel):
     cwd: Optional[str] = None
     git_branch: Optional[str] = None
     is_worktree: bool = False
+    is_fork: bool = False
     permission_mode: Optional[str] = None
     last_message_role: Optional[Literal["user", "assistant", "system"]] = None
 
@@ -108,6 +109,7 @@ class Session(BaseModel):
 class SessionDetail(Session):
     """Session with its full conversation included."""
     messages: list[Message] = Field(default_factory=list)
+    total_message_count: Optional[int] = None  # set when messages are truncated
 
 
 # ---------------------------------------------------------------------------
@@ -142,15 +144,54 @@ class SearchHit(BaseModel):
 # Config — user-facing settings
 # ---------------------------------------------------------------------------
 
+class Profile(BaseModel):
+    id: str = Field(default_factory=lambda: __import__("uuid").uuid4().hex[:12])
+    name: str = Field(..., min_length=1)
+    data_paths: list[str] = Field(default_factory=lambda: ["~/.claude"])
+    color: str = "#b8956a"
+
+
 class AppConfig(BaseModel):
     data_paths: list[str] = Field(
         default_factory=lambda: ["~/.claude"],
-        description="Root directories to scan for Claude Code JSONL files",
+        description="Root directories to scan (legacy, used when profiles is empty)",
     )
+    profiles: list[Profile] = Field(default_factory=list)
+    active_profile_id: Optional[str] = None
     theme: Literal["light", "dark", "system"] = "system"
     auto_open_browser: bool = True
     port: int = 4242
-    edit_enabled: bool = False
+    host: str = "127.0.0.1"
+    edit_enabled: bool = True
+    claude_default_permission_mode: str = "dontAsk"
+    claude_auto_stop_quiet_default_turns: bool = False
+    claude_recap_enabled: bool = False
+    claude_recap_idle_minutes: int = 5
+
+    def get_all_scan_paths(self) -> list[str]:
+        """Collect all data_paths from all profiles (deduplicated, expanded)."""
+        from pathlib import Path
+        if self.profiles:
+            seen: set[str] = set()
+            result: list[str] = []
+            for p in self.profiles:
+                for dp in p.data_paths:
+                    expanded = str(Path(dp).expanduser())
+                    if expanded not in seen:
+                        result.append(dp)
+                        seen.add(expanded)
+            return result or self.data_paths
+        return self.data_paths
+
+    def get_active_data_sources(self) -> list[str] | None:
+        """Return expanded paths for the active profile, or None for all."""
+        from pathlib import Path
+        if not self.profiles or not self.active_profile_id:
+            return None
+        for p in self.profiles:
+            if p.id == self.active_profile_id:
+                return [str(Path(dp).expanduser()) for dp in p.data_paths]
+        return None
 
 
 # ---------------------------------------------------------------------------

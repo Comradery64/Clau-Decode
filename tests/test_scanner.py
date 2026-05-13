@@ -69,6 +69,20 @@ class TestScanPaths:
             results.append(item)
         assert len(results) == 4
 
+    async def test_skips_backup_files(self, fake_claude_dir):
+        """Backup files (*.bak.*.jsonl) must not be yielded by the scanner."""
+        from clau_decode.scanner import scan_paths
+        proj_dir = fake_claude_dir / "projects" / "-Users-alice-project-foo"
+        (proj_dir / "aaaaaaaa-0000-0000-0000-000000000001.bak.20260505_120000.jsonl").write_text(
+            '{"type":"custom-title","sessionId":"aaaaaaaa-0000-0000-0000-000000000001"}\n'
+        )
+        results = []
+        async for _, path in scan_paths([fake_claude_dir]):
+            results.append(path.name)
+        assert not any(".bak." in name for name in results)
+        # Originals still found
+        assert "aaaaaaaa-0000-0000-0000-000000000001.jsonl" in results
+
 
 class TestBuildProjectFromDir:
     def test_basic_path_parsing(self):

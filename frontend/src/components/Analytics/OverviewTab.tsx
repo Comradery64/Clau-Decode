@@ -67,16 +67,23 @@ export function OverviewTab({ stats, daily, selectedSessionId }: OverviewTabProp
             Selected Session Cost
           </h3>
           {sessionCost ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
-              <StatCard label="Model" value={sessionCost.model.replace("claude-", "")} />
-              <StatCard label="Total Cost" value={fmtUsd(sessionCost.total_usd)} />
-              <StatCard label="Input" value={fmtUsd(sessionCost.input_usd)} />
-              <StatCard label="Output" value={fmtUsd(sessionCost.output_usd)} />
-              <StatCard label="Cache Write" value={fmtUsd(sessionCost.cache_write_usd)} />
-              <StatCard label="Cache Read" value={fmtUsd(sessionCost.cache_read_usd)} />
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              {sessionCost.models.map((mc) => (
+                <div key={mc.model} style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
+                  <StatCard label="Model" value={mc.model.replace("claude-", "")} />
+                  <StatCard label="Cost" value={fmtUsd(mc.total_usd)} />
+                  <StatCard label="Input" value={fmtUsd(mc.input_usd)} />
+                  <StatCard label="Output" value={fmtUsd(mc.output_usd)} />
+                  <StatCard label="Cache Write" value={fmtUsd(mc.cache_write_usd)} />
+                  <StatCard label="Cache Read" value={fmtUsd(mc.cache_read_usd)} />
+                </div>
+              ))}
+              {sessionCost.models.length > 1 && (
+                <StatCard label="Total Cost" value={fmtUsd(sessionCost.total_usd)} />
+              )}
               {!sessionCost.pricing_known && (
-                <div style={{ fontSize: "12px", color: "var(--text-tertiary)", alignSelf: "center" }}>
-                  ⚠ Pricing not available for this model
+                <div style={{ fontSize: "12px", color: "var(--text-tertiary)" }}>
+                  Pricing not available for one or more models
                 </div>
               )}
             </div>

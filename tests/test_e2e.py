@@ -69,7 +69,7 @@ async def client_seeded():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "test.db"
         await _seed_db(db_path)
-        app = _make_app(db_path)
+        app = _make_app(db_path, config=AppConfig())
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as c:
@@ -83,7 +83,7 @@ async def client_empty():
         db_path = Path(tmp) / "test.db"
         async with Database(db_path) as db:
             await db.init_schema()
-        app = _make_app(db_path)
+        app = _make_app(db_path, config=AppConfig())
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as c:
@@ -625,3 +625,174 @@ class TestSSEPayloadContract:
         from clau_decode.server import _sse_event_data
         result = _sse_event_data("/some/file.jsonl")
         assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# Message mutations (Phase 6) — DELETE + PATCH /api/messages/{id}
+# ---------------------------------------------------------------------------
+
+SIMPLE_USER_MSG_ID = "msg-0001"  # first user message in simple_session.jsonl
+
+
+@pytest.fixture
+async def edit_client():
+    """App with edit_enabled=True, session file writable in a temp dir."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        db_path = tmp_path / "test.db"
+
+        session_file = tmp_path / SIMPLE_JSONL.name
+        shutil.copy(SIMPLE_JSONL, session_file)
+
+        async with Database(db_path) as db:
+            await db.init_schema()
+            project = Project(
+                id="proj-edit",
+                display_name="edit-test",
+                raw_path="-edit-test",
+                data_source="test",
+            )
+            session, messages = parse_session(session_file)
+            session.project_id = project.id
+            await db.upsert_project(project)
+            await db.upsert_session(session)
+            await db.upsert_messages(messages)
+
+        from clau_decode.models import AppConfig as _AppConfig
+        config = _AppConfig(edit_enabled=True)
+        app = _make_app(db_path, config)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            yield c, tmp_path
+
+
+@pytest.fixture
+async def read_only_client():
+    """AsyncClient backed by a seeded app with edit_enabled=False."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "test.db"
+        await _seed_db(db_path)
+        app = _make_app(db_path, config=AppConfig(edit_enabled=False))
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            yield c
+
+
+class TestMessageMutations:
+    # -- 403 guard ----------------------------------------------------------
+
+    async def test_delete_returns_403_without_edit_flag(self, read_only_client):
+        r = await read_only_client.delete(f"/api/messages/{SIMPLE_USER_MSG_ID}")
+        assert r.status_code == 403
+        assert "edit_enabled" in r.json()["detail"]
+
+    async def test_patch_returns_403_without_edit_flag(self, read_only_client):
+        r = await read_only_client.patch(
+            f"/api/messages/{SIMPLE_USER_MSG_ID}",
+            json={"content_blocks": [{"type": "text", "text": "hi"}]},
+        )
+        assert r.status_code == 403
+
+    # -- 404 for unknown message --------------------------------------------
+
+    async def test_delete_returns_404_for_unknown_message(self, edit_client):
+        client, _ = edit_client
+        r = await client.delete("/api/messages/nonexistent-uuid-that-does-not-exist")
+        assert r.status_code == 404
+        assert r.json()["detail"] == "Message not found"
+
+    async def test_patch_returns_404_for_unknown_message(self, edit_client):
+        client, _ = edit_client
+        r = await client.patch(
+            "/api/messages/nonexistent-uuid-that-does-not-exist",
+            json={"content_blocks": [{"type": "text", "text": "hi"}]},
+        )
+        assert r.status_code == 404
+
+    # -- DELETE happy path — swap model ------------------------------------
+    # Delete rewrites the session in-place (same UUID, Claude-resumable).
+    # A .bak. copy of the original appears as a separate sidebar session.
+
+    async def test_delete_keeps_same_session_id(self, edit_client):
+        client, _ = edit_client
+        r = await client.delete(f"/api/messages/{SIMPLE_USER_MSG_ID}")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["ok"] is True
+        assert data["session_id"] == SIMPLE_SESSION_ID
+
+    async def test_delete_omits_message_from_session(self, edit_client):
+        """After swap-delete, the session no longer contains the deleted message."""
+        client, _ = edit_client
+        await client.delete(f"/api/messages/{SIMPLE_USER_MSG_ID}")
+        r = await client.get(f"/api/sessions/{SIMPLE_SESSION_ID}")
+        ids = [m["id"] for m in r.json()["messages"]]
+        assert SIMPLE_USER_MSG_ID not in ids
+
+    async def test_delete_creates_backup_file(self, edit_client):
+        """A .bak. JSONL file is created preserving the original content."""
+        client, tmp_path = edit_client
+        await client.delete(f"/api/messages/{SIMPLE_USER_MSG_ID}")
+        backups = list(tmp_path.glob("*.bak.*.jsonl"))
+        assert len(backups) == 1
+
+    async def test_delete_backup_contains_original_message(self, edit_client):
+        """The backup file preserves all original messages including the deleted one."""
+        client, tmp_path = edit_client
+        await client.delete(f"/api/messages/{SIMPLE_USER_MSG_ID}")
+        backup = list(tmp_path.glob("*.bak.*.jsonl"))[0]
+        import json as _json
+        uuids = {
+            _json.loads(l).get("uuid")
+            for l in backup.read_text().splitlines()
+            if l.strip()
+        } - {None}
+        assert SIMPLE_USER_MSG_ID in uuids
+
+    # -- PATCH happy path — swap model --------------------------------------
+
+    async def test_patch_keeps_same_session_id(self, edit_client):
+        client, _ = edit_client
+        r = await client.patch(
+            f"/api/messages/{SIMPLE_USER_MSG_ID}",
+            json={"content_blocks": [{"type": "text", "text": "patched"}]},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["ok"] is True
+        assert data["session_id"] == SIMPLE_SESSION_ID
+
+    async def test_patch_original_backed_up(self, edit_client):
+        client, tmp_path = edit_client
+        original_text = "Write me a greeting function."
+        await client.patch(
+            f"/api/messages/{SIMPLE_USER_MSG_ID}",
+            json={"content_blocks": [{"type": "text", "text": "patched"}]},
+        )
+        backup = list(tmp_path.glob("*.bak.*.jsonl"))[0]
+        import json as _json
+        original_found = any(
+            original_text in _json.dumps(_json.loads(l))
+            for l in backup.read_text().splitlines() if l.strip()
+        )
+        assert original_found
+
+    async def test_patch_fork_has_new_content(self, edit_client):
+        """The session itself shows the patched text after a swap."""
+        client, _ = edit_client
+        new_text = "Patched content for e2e test"
+        r = await client.patch(
+            f"/api/messages/{SIMPLE_USER_MSG_ID}",
+            json={"content_blocks": [{"type": "text", "text": new_text}]},
+        )
+        fork_id = r.json()["session_id"]
+        r2 = await client.get(f"/api/sessions/{fork_id}")
+        all_texts = [
+            b["text"]
+            for m in r2.json()["messages"]
+            for b in m.get("content_blocks", [])
+            if b.get("type") == "text"
+        ]
+        assert new_text in all_texts

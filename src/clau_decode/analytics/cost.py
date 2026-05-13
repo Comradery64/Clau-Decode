@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from .models import TokenBreakdown
+from .models import PromptCost, TokenBreakdown
 
 if TYPE_CHECKING:
     from .pricing import CachedPricingStrategy, ModelPricing
@@ -19,6 +20,12 @@ class SessionCost:
     output_usd: Decimal
     cache_write_usd: Decimal
     cache_read_usd: Decimal
+    total_usd: Decimal
+
+
+@dataclass
+class MultiModelCost:
+    models: list[SessionCost]
     total_usd: Decimal
 
 
@@ -57,3 +64,14 @@ class CostEngine:
             cache_read_usd=cr,
             total_usd=inp + out + cw + cr,
         )
+
+    def compute_multi(self, prompts: list[PromptCost]) -> MultiModelCost:
+        by_model: dict[str, TokenBreakdown] = {}
+        for p in prompts:
+            bd = by_model.setdefault(p.model, TokenBreakdown())
+            by_model[p.model] = bd + p.breakdown
+        results: list[SessionCost] = []
+        for model, bd in sorted(by_model.items()):
+            results.append(self.compute(model, bd))
+        total = sum((r.total_usd for r in results), Decimal("0"))
+        return MultiModelCost(models=results, total_usd=total)

@@ -6,12 +6,13 @@ import { SessionItem } from "./SessionItem";
 
 interface ProjectGroupProps {
   project: Project;
+  displayName: string;
   isExpanded: boolean;
   onToggle: () => void;
   archivedIds: Set<string>;
 }
 
-export function ProjectGroup({ project, isExpanded, onToggle, archivedIds }: ProjectGroupProps) {
+export function ProjectGroup({ project, displayName, isExpanded, onToggle, archivedIds }: ProjectGroupProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,7 +101,7 @@ export function ProjectGroup({ project, isExpanded, onToggle, archivedIds }: Pro
             whiteSpace: "nowrap",
           }}
         >
-          {project.display_name}
+          {displayName}
         </span>
         <span
           style={{

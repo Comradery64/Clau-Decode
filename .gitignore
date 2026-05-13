@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -5,17 +6,42 @@ __pycache__/
 dist/
 build/
 .venv/
+.venv*/
 venv/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Databases / scratch
 *.db
 *.tmp
 
+# Node
+node_modules/
 frontend/node_modules/
 frontend/dist/
 
+# Worktrees
 .worktrees/
 
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Local secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+
+# Session-edit safety backups (created by --enable-edit before each write)
+*.bak.*.jsonl
+
 # Keep the built static assets — they ship with the package
-!src/ccview/static/
+!src/clau_decode/static/

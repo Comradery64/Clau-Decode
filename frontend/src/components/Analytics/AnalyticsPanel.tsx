@@ -1,15 +1,38 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "../../api/client";
 import type { DailyBucket, PricingTableResponse, StatsResponse } from "../../api/types";
 import { useAppStore } from "../../store";
+import { on } from "../../utils/events";
 import { OverviewTab } from "./OverviewTab";
 import { DailyTab } from "./DailyTab";
 import { PricingTab } from "./PricingTab";
 import { StatsTab } from "./StatsTab";
 import { TipsTab } from "./TipsTab";
+import { ScrollContainer } from "../ScrollContainer";
 
 const TABS = ["Overview", "Daily", "Pricing", "Stats", "Tips"] as const;
 type Tab = (typeof TABS)[number];
+
+async function fetchAll(
+  setStats: (s: StatsResponse | null) => void,
+  setDaily: (d: DailyBucket[]) => void,
+  setPricing: (p: PricingTableResponse | null) => void,
+  setLoading: (l: boolean) => void,
+) {
+  setLoading(true);
+  try {
+    const [s, d, p] = await Promise.all([
+      api.getStats(),
+      api.getDailyAnalytics(),
+      api.getPricingTable(),
+    ]);
+    setStats(s);
+    setDaily(d);
+    setPricing(p);
+  } finally {
+    setLoading(false);
+  }
+}
 
 export default function AnalyticsPanel() {
   const [activeTab, setActiveTab] = useState<Tab>("Overview");
@@ -19,29 +42,16 @@ export default function AnalyticsPanel() {
   const [loading, setLoading] = useState(true);
   const selectedSessionId = useAppStore((s) => s.selectedSessionId);
 
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [s, d, p] = await Promise.all([
-        api.getStats(),
-        api.getDailyAnalytics(),
-        api.getPricingTable(),
-      ]);
-      setStats(s);
-      setDaily(d);
-      setPricing(p);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // Use a ref so the refresh listener always calls the latest setters without
+  // re-registering the event listener on every render.
+  const fetchRef = useRef(() => fetchAll(setStats, setDaily, setPricing, setLoading));
+  fetchRef.current = () => fetchAll(setStats, setDaily, setPricing, setLoading);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => { fetchRef.current(); }, []);
 
   useEffect(() => {
-    const handler = () => { void fetchAll(); };
-    window.addEventListener("clau-decode:refresh", handler);
-    return () => window.removeEventListener("clau-decode:refresh", handler);
-  }, [fetchAll]);
+    return on("refresh", () => { fetchRef.current(); });
+  }, []);
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-base)" }}>
@@ -74,7 +84,7 @@ export default function AnalyticsPanel() {
       </div>
 
       {/* Tab content */}
-      <div style={{ flex: 1, overflow: "auto", padding: "20px" }}>
+      <ScrollContainer style={{ flex: 1, padding: "20px" }}>
         {activeTab === "Overview" && (
           <OverviewTab stats={stats} daily={daily} selectedSessionId={selectedSessionId} />
         )}
@@ -82,7 +92,7 @@ export default function AnalyticsPanel() {
         {activeTab === "Pricing" && <PricingTab pricing={pricing} />}
         {activeTab === "Stats" && <StatsTab />}
         {activeTab === "Tips" && <TipsTab />}
-      </div>
+      </ScrollContainer>
     </div>
   );
 }

@@ -3,15 +3,15 @@ import { api } from "../../api/client";
 import type { TipEntry } from "../../api/types";
 
 const SEVERITY_COLOR: Record<string, string> = {
-  error:   "#ef4444",
-  warning: "#f59e0b",
-  info:    "#60a5fa",
+  error:   "#c47a7a",
+  warning: "#c9a96e",
+  info:    "#7eb6c4",
 };
 
 const SEVERITY_BG: Record<string, string> = {
-  error:   "rgba(239,68,68,0.10)",
-  warning: "rgba(245,158,11,0.10)",
-  info:    "rgba(96,165,250,0.10)",
+  error:   "rgba(196,122,122,0.10)",
+  warning: "rgba(201,169,110,0.10)",
+  info:    "rgba(126,182,196,0.10)",
 };
 
 function TipCard({ tip }: { tip: TipEntry }) {
@@ -122,7 +122,7 @@ export function TipsTab() {
         <span style={{
           fontSize: "12px",
           fontFamily: "var(--font-mono)",
-          color: tips.length > 0 ? "#f59e0b" : "#34d399",
+          color: tips.length > 0 ? "var(--accent-orange)" : "#6bb5a6",
         }}>
           {tips.length > 0
             ? `${tips.length} issue${tips.length > 1 ? "s" : ""} found`

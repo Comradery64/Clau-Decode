@@ -29,28 +29,30 @@ export function PricingTab({ pricing }: PricingTabProps) {
         </span>
       </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-        <thead>
-          <tr style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-            {["Model", "Input", "Output", "Cache Write", "Cache Read"].map((h) => (
-              <th key={h} style={{ textAlign: "left", padding: "6px 10px", color: "var(--text-tertiary)", fontWeight: 500, fontSize: "11px" }}>
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {pricing.models.map((m) => (
-            <tr key={m.model} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-              <td style={{ padding: "8px 10px", fontFamily: "var(--font-mono)", fontSize: "12px", color: "var(--text-primary)" }}>{m.model}</td>
-              <td style={{ padding: "8px 10px", fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{fmtRate(m.input_per_mtok)}</td>
-              <td style={{ padding: "8px 10px", fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{fmtRate(m.output_per_mtok)}</td>
-              <td style={{ padding: "8px 10px", fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{fmtRate(m.cache_write_per_mtok)}</td>
-              <td style={{ padding: "8px 10px", fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{fmtRate(m.cache_read_per_mtok)}</td>
+      <div style={{ borderRadius: "var(--radius-md)", border: "1px solid var(--border-subtle)", overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: "13px" }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+              {["Model", "Input", "Output", "Cache Write", "Cache Read"].map((h) => (
+                <th key={h} style={{ textAlign: "left", padding: "6px 10px", color: "var(--text-tertiary)", fontWeight: 500, fontSize: "11px" }}>
+                  {h}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {pricing.models.map((m, i) => (
+              <tr key={m.model} style={{ borderBottom: i < pricing.models.length - 1 ? "1px solid var(--border-subtle)" : undefined }}>
+                <td style={{ padding: "8px 10px", fontFamily: "var(--font-mono)", fontSize: "12px", color: "var(--text-primary)" }}>{m.model}</td>
+                <td style={{ padding: "8px 10px", fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{fmtRate(m.input_per_mtok)}</td>
+                <td style={{ padding: "8px 10px", fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{fmtRate(m.output_per_mtok)}</td>
+                <td style={{ padding: "8px 10px", fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{fmtRate(m.cache_write_per_mtok)}</td>
+                <td style={{ padding: "8px 10px", fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{fmtRate(m.cache_read_per_mtok)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

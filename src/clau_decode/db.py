@@ -129,12 +129,29 @@ class Database:
     async def __aenter__(self) -> "Database":
         self._conn = await aiosqlite.connect(self._db_path)
         self._conn.row_factory = aiosqlite.Row
+        # WAL lets readers run alongside a single writer instead of blocking
+        # outright; busy_timeout makes contending writers wait briefly instead
+        # of erroring. Required because every endpoint + the scanner opens its
+        # own connection.
+        await self._conn.execute("PRAGMA journal_mode=WAL")
+        await self._conn.execute("PRAGMA synchronous=NORMAL")
+        await self._conn.execute("PRAGMA busy_timeout=5000")
         return self
 
     async def __aexit__(self, *args: object) -> None:
         if self._conn:
             await self._conn.close()
             self._conn = None
+
+    async def execute(self, sql: str, params: tuple = ()) -> None:
+        """Execute a single SQL statement."""
+        assert self._conn is not None
+        await self._conn.execute(sql, params)
+
+    async def commit(self) -> None:
+        """Commit the current transaction."""
+        assert self._conn is not None
+        await self._conn.commit()
 
     # -----------------------------------------------------------------------
     # Schema
@@ -167,6 +184,7 @@ class Database:
                 cwd TEXT,
                 git_branch TEXT,
                 is_worktree INTEGER NOT NULL DEFAULT 0,
+                is_fork INTEGER NOT NULL DEFAULT 0,
                 permission_mode TEXT,
                 file_mtime REAL,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -200,8 +218,38 @@ class Database:
             -- Without this, each session row triggered a full messages-table scan.
             CREATE INDEX IF NOT EXISTS idx_messages_session_timestamp
                 ON messages (session_id, timestamp DESC);
+
+            CREATE TABLE IF NOT EXISTS _meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS recaps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                covers_until_message_uuid TEXT,
+                dismissed INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_recaps_session_id
+                ON recaps(session_id, created_at);
         """)
         await self._conn.commit()
+        await self._migrate_add_is_fork()
+
+    async def _migrate_add_is_fork(self) -> None:
+        """Idempotent: add is_fork column to existing DBs."""
+        assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT name FROM pragma_table_info('sessions') WHERE name='is_fork'"
+        ) as cur:
+            if not await cur.fetchone():
+                await self._conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN is_fork INTEGER NOT NULL DEFAULT 0"
+                )
+                await self._conn.commit()
 
     async def reset_xml_title_mtimes(self) -> int:
         """Clear file_mtime for sessions whose title contains XML tags.
@@ -225,6 +273,25 @@ class Database:
             )
             await self._conn.commit()
         return len(bad_ids)
+
+    async def migrate_project_id_v2(self) -> None:
+        """Mark the project ID v2 migration as done.
+
+        The project ID hash now includes data_source to avoid collisions
+        across profiles. Old sessions keep their existing project_ids until
+        they're naturally re-scanned (file change, manual refresh).
+        """
+        assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT value FROM _meta WHERE key = 'project_id_v2'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is not None:
+            return  # already migrated
+        await self._conn.execute(
+            "INSERT OR REPLACE INTO _meta (key, value) VALUES ('project_id_v2', '1')"
+        )
+        await self._conn.commit()
 
     # -----------------------------------------------------------------------
     # Projects
@@ -251,11 +318,17 @@ class Database:
         )
         await self._conn.commit()
 
-    async def get_projects(self) -> list[Project]:
+    async def get_projects(self, data_sources: Optional[list[str]] = None) -> list[Project]:
         assert self._conn is not None
-        async with self._conn.execute(
-            "SELECT * FROM projects ORDER BY last_activity_at DESC NULLS LAST"
-        ) as cursor:
+        if data_sources is not None:
+            placeholders = ",".join("?" * len(data_sources))
+            query = (f"SELECT * FROM projects WHERE data_source IN ({placeholders}) "
+                     "ORDER BY last_activity_at DESC NULLS LAST")
+            params: tuple = tuple(data_sources)
+        else:
+            query = "SELECT * FROM projects ORDER BY last_activity_at DESC NULLS LAST"
+            params = ()
+        async with self._conn.execute(query, params) as cursor:
             rows = await cursor.fetchall()
         return [
             Project(
@@ -290,8 +363,8 @@ class Database:
             INSERT OR REPLACE INTO sessions
                 (id, project_id, file_path, title, model, started_at, updated_at,
                  message_count, user_message_count, cwd, git_branch, is_worktree,
-                 permission_mode, file_mtime)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 is_fork, permission_mode, file_mtime)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.id,
@@ -306,32 +379,37 @@ class Database:
                 session.cwd,
                 session.git_branch,
                 1 if session.is_worktree else 0,
+                1 if session.is_fork else 0,
                 session.permission_mode,
                 file_mtime,
             ),
         )
         await self._conn.commit()
 
-    async def get_sessions(self, project_id: Optional[str] = None) -> list[Session]:
+    async def get_sessions(self, project_id: Optional[str] = None, data_sources: Optional[list[str]] = None) -> list[Session]:
         assert self._conn is not None
         _lmr = ("(SELECT role FROM messages WHERE session_id = s.id "
                 "ORDER BY timestamp DESC LIMIT 1) AS last_message_role")
-        # Exclude sessions with no real user-typed content.  title IS NULL means
-        # title inference found nothing (e.g. /exit sessions, /model-only sessions,
-        # last-prompt stubs, history.jsonl artifacts) — these are never useful to show.
+        conditions = ["s.title IS NOT NULL"]
+        params: list = []
         if project_id is not None:
-            query = (f"SELECT s.*, {_lmr} FROM sessions s "
-                     "WHERE s.project_id = ? AND s.title IS NOT NULL "
-                     "ORDER BY s.updated_at DESC")
-            params: tuple = (project_id,)
-        else:
-            query = (f"SELECT s.*, {_lmr} FROM sessions s "
-                     "WHERE s.title IS NOT NULL "
-                     "ORDER BY s.updated_at DESC")
-            params = ()
-        async with self._conn.execute(query, params) as cursor:
+            conditions.append("s.project_id = ?")
+            params.append(project_id)
+        if data_sources is not None:
+            placeholders = ",".join("?" * len(data_sources))
+            conditions.append(f"s.project_id IN (SELECT id FROM projects WHERE data_source IN ({placeholders}))")
+            params.extend(data_sources)
+        where = " AND ".join(conditions)
+        query = f"SELECT s.*, {_lmr} FROM sessions s WHERE {where} ORDER BY s.updated_at DESC"
+        async with self._conn.execute(query, tuple(params)) as cursor:
             rows = await cursor.fetchall()
         return [_row_to_session(row) for row in rows]
+
+    async def clear_all_mtimes(self) -> None:
+        """Reset stored file mtimes so the next scan re-parses every session."""
+        assert self._conn is not None
+        await self._conn.execute("UPDATE sessions SET file_mtime = NULL")
+        await self._conn.commit()
 
     async def get_session_mtime(self, session_id: str) -> Optional[float]:
         """Return stored file mtime for cache-busting, or None if not indexed."""
@@ -416,7 +494,88 @@ class Database:
 
         await self._conn.commit()
 
-    async def get_session_detail(self, session_id: str) -> Optional[SessionDetail]:
+    async def get_session_detail_json_bytes(self, session_id: str) -> Optional[bytes]:
+        """Build the SessionDetail JSON response without going through Pydantic.
+
+        Embeds the stored ``content_json`` and ``usage_json`` strings directly
+        as JSON fragments, skipping the per-message parse + Pydantic construct
+        + Pydantic dump cycle that dominates response time on large chats.
+        Used for the unlimited (no ``message_limit``) hot path.
+        """
+        assert self._conn is not None
+
+        async with self._conn.execute(
+            """SELECT s.*,
+                   (SELECT role FROM messages WHERE session_id = s.id
+                    ORDER BY timestamp DESC LIMIT 1) AS last_message_role
+               FROM sessions s WHERE s.id = ?""",
+            (session_id,),
+        ) as cur:
+            srow = await cur.fetchone()
+        if srow is None:
+            return None
+
+        async with self._conn.execute(
+            "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC",
+            (session_id,),
+        ) as cur:
+            mrows = await cur.fetchall()
+
+        session_dict = {
+            "id": srow["id"],
+            "project_id": srow["project_id"],
+            "file_path": srow["file_path"],
+            "title": srow["title"],
+            "model": srow["model"],
+            "started_at": srow["started_at"],
+            "updated_at": srow["updated_at"],
+            "message_count": srow["message_count"],
+            "user_message_count": srow["user_message_count"],
+            "cwd": srow["cwd"],
+            "git_branch": srow["git_branch"],
+            "is_worktree": bool(srow["is_worktree"]),
+            "is_fork": bool(srow["is_fork"]) if "is_fork" in srow.keys() else False,
+            "permission_mode": srow["permission_mode"],
+            "last_message_role": srow["last_message_role"],
+        }
+        session_bytes = json.dumps(
+            session_dict, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+
+        parts: list[bytes] = [session_bytes[:-1], b',"messages":[']
+        for i, m in enumerate(mrows):
+            if i > 0:
+                parts.append(b",")
+            header = {
+                "id": m["id"],
+                "session_id": m["session_id"],
+                "parent_id": m["parent_id"],
+                "role": m["role"],
+                "timestamp": m["timestamp"],
+                "model": m["model"],
+                "is_sidechain": bool(m["is_sidechain"]),
+                "is_meta": bool(m["is_meta"]),
+                "cwd": m["cwd"],
+                "git_branch": m["git_branch"],
+                "request_id": None,
+                "source_tool_assistant_uuid": m["source_tool_assistant_uuid"],
+            }
+            header_bytes = json.dumps(
+                header, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+            cb = (m["content_json"] or "[]").encode("utf-8")
+            usage = (m["usage_json"] or "null").encode("utf-8")
+            parts.append(header_bytes[:-1])
+            parts.append(b',"content_blocks":')
+            parts.append(cb)
+            parts.append(b',"usage":')
+            parts.append(usage)
+            parts.append(b"}")
+        parts.append(b'],"total_message_count":null}')
+
+        return b"".join(parts)
+
+    async def get_session_detail(self, session_id: str, message_limit: Optional[int] = None) -> Optional[SessionDetail]:
         assert self._conn is not None
 
         # Fetch the session row (include last_message_role subquery for consistency)
@@ -432,12 +591,33 @@ class Database:
         if session_row is None:
             return None
 
-        # Fetch messages ordered by timestamp
-        async with self._conn.execute(
-            "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC",
-            (session_id,),
-        ) as cursor:
-            msg_rows = await cursor.fetchall()
+        # Count total messages for truncation info
+        total_count: Optional[int] = None
+        if message_limit is not None:
+            async with self._conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                total_count = row[0]
+
+        # Fetch messages ordered by timestamp, optionally capped to last N
+        if message_limit is not None and total_count is not None and total_count > message_limit:
+            # Fetch last N messages by using a subquery to get the tail
+            query = (
+                "SELECT * FROM messages WHERE session_id = ? "
+                "ORDER BY timestamp DESC LIMIT ?"
+            )
+            async with self._conn.execute(query, (session_id, message_limit)) as cursor:
+                msg_rows = await cursor.fetchall()
+            # Reverse back to chronological order
+            msg_rows = list(reversed(msg_rows))
+        else:
+            total_count = None  # no truncation needed
+            async with self._conn.execute(
+                "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC",
+                (session_id,),
+            ) as cursor:
+                msg_rows = await cursor.fetchall()
 
         messages = [_row_to_message(row) for row in msg_rows]
 
@@ -445,6 +625,7 @@ class Database:
         return SessionDetail(
             **session.model_dump(),
             messages=messages,
+            total_message_count=total_count,
         )
 
     async def delete_message(self, message_id: str) -> None:
@@ -475,6 +656,17 @@ class Database:
                    WHERE id = ?""",
                 (session_id, session_id, session_id),
             )
+        await self._conn.commit()
+
+    async def delete_session_messages(self, session_id: str) -> None:
+        """Delete all messages (and their FTS entries) for a session."""
+        assert self._conn is not None
+        await self._conn.execute(
+            "DELETE FROM messages_fts WHERE session_id = ?", (session_id,)
+        )
+        await self._conn.execute(
+            "DELETE FROM messages WHERE session_id = ?", (session_id,)
+        )
         await self._conn.commit()
 
     async def update_message_content(
@@ -508,20 +700,23 @@ class Database:
         await self._conn.commit()
 
     async def get_session_file_path_for_message(self, message_id: str) -> str | None:
-        """Return the file_path of the session that owns the given message.
+        """Return the file_path of the session that owns the given message."""
+        result = await self.get_session_info_for_message(message_id)
+        return result[1] if result else None
 
-        Used by mutation routes to find the correct JSONL file regardless of how
-        many data paths are configured (feature 37).
-        """
+    async def get_session_info_for_message(
+        self, message_id: str
+    ) -> tuple[str, str] | None:
+        """Return ``(session_id, file_path)`` for the session owning the message."""
         assert self._conn is not None
         async with self._conn.execute(
-            """SELECT s.file_path FROM sessions s
+            """SELECT s.id, s.file_path FROM sessions s
                JOIN messages m ON m.session_id = s.id
                WHERE m.id = ?""",
             (message_id,),
         ) as cursor:
             row = await cursor.fetchone()
-        return row["file_path"] if row else None
+        return (row["id"], row["file_path"]) if row else None
 
     async def get_all_messages(self) -> list[Message]:
         """Fetch all messages from all sessions ordered by timestamp."""
@@ -623,6 +818,69 @@ class Database:
             data_paths=[],  # filled in by server.py
         )
 
+    # -----------------------------------------------------------------------
+    # Recaps
+    # -----------------------------------------------------------------------
+
+    async def insert_recap(
+        self,
+        session_id: str,
+        text: str,
+        covers_until_message_uuid: Optional[str],
+    ) -> int:
+        assert self._conn is not None
+        created_at = datetime.now().isoformat()
+        cursor = await self._conn.execute(
+            """
+            INSERT INTO recaps (session_id, text, created_at, covers_until_message_uuid)
+            VALUES (?, ?, ?, ?)
+            """,
+            (session_id, text, created_at, covers_until_message_uuid),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid  # type: ignore[return-value]
+
+    async def list_recaps(
+        self, session_id: str, *, include_dismissed: bool = False
+    ) -> list[dict]:
+        assert self._conn is not None
+        if include_dismissed:
+            sql = (
+                "SELECT id, session_id, text, created_at, "
+                "covers_until_message_uuid, dismissed "
+                "FROM recaps WHERE session_id = ? ORDER BY created_at ASC, id ASC"
+            )
+            params: tuple = (session_id,)
+        else:
+            sql = (
+                "SELECT id, session_id, text, created_at, "
+                "covers_until_message_uuid, dismissed "
+                "FROM recaps WHERE session_id = ? AND dismissed = 0 "
+                "ORDER BY created_at ASC, id ASC"
+            )
+            params = (session_id,)
+        async with self._conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "session_id": row["session_id"],
+                "text": row["text"],
+                "created_at": row["created_at"],
+                "covers_until_message_uuid": row["covers_until_message_uuid"],
+                "dismissed": bool(row["dismissed"]),
+            }
+            for row in rows
+        ]
+
+    async def dismiss_recap(self, recap_id: int) -> bool:
+        assert self._conn is not None
+        cursor = await self._conn.execute(
+            "UPDATE recaps SET dismissed = 1 WHERE id = ?", (recap_id,)
+        )
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
 
 # ---------------------------------------------------------------------------
 # Private row → model converters
@@ -642,6 +900,7 @@ def _row_to_session(row: aiosqlite.Row) -> Session:
         cwd=row["cwd"],
         git_branch=row["git_branch"],
         is_worktree=bool(row["is_worktree"]),
+        is_fork=bool(row["is_fork"]) if "is_fork" in row.keys() else False,
         permission_mode=row["permission_mode"],
         last_message_role=row["last_message_role"],
     )

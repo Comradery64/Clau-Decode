@@ -1,8 +1,15 @@
 import { useState, useMemo, useEffect } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
+import {
+  SCROLLBAR_OPTIONS,
+  SCROLLBAR_OPTIONS_BOTH,
+  SCROLLBAR_OPTIONS_X,
+} from "../ScrollContainer";
 import type { PairedBlock, ToolUsePair } from "./pairToolBlocks";
 import type { ToolUseBlock as ToolUseBlockType, ToolResultBlock } from "../../api/types";
 import { getBlocksExpanded, subscribeBlocksExpanded } from "../../store/blocksState";
+import { useAppStore } from "../../store";
 import hljs from "../../utils/hljs";
 
 // ============================================================
@@ -109,13 +116,13 @@ function getToolSummary(toolUse: ToolUseBlockType): { description: string; badge
     return { description: "Update Todos", badge: null };
   }
   if (name.includes("write") || name.includes("create")) {
-    return { description: fileName ? `Created ${fileName}` : toolUse.name, badge: fileName || null };
+    return { description: "Created", badge: fileName || null };
   }
   if (name.includes("edit") || name.includes("patch") || name.includes("str_replace")) {
-    return { description: fileName ? `Edited ${fileName}` : toolUse.name, badge: fileName || null };
+    return { description: "Edited", badge: fileName || null };
   }
   if (name.includes("read") || name.includes("view")) {
-    return { description: fileName ? `Read ${fileName}` : toolUse.name, badge: fileName || null };
+    return { description: "Read", badge: fileName || null };
   }
   if (name.includes("bash") || name.includes("execute")) {
     const command = (input.command as string) || (input.cmd as string) || "";
@@ -132,26 +139,48 @@ function getToolSummary(toolUse: ToolUseBlockType): { description: string; badge
   };
 }
 
+function getToolAction(toolUse: ToolUseBlockType): string {
+  const name = toolUse.name.toLowerCase();
+  if (name === "todowrite") return "Updated todos";
+  if (name.includes("write") || name.includes("create")) return "Created";
+  if (name.includes("edit") || name.includes("patch") || name.includes("str_replace")) return "Edited";
+  if (name.includes("read") || name.includes("view")) return "Read";
+  if (name.includes("bash") || name.includes("execute")) return "Ran command";
+  if (name.includes("glob") || name.includes("grep") || name.includes("find") || name.includes("search")) return "Searched";
+  return toolUse.name;
+}
+
 function computeTitle(blocks: PairedBlock[]): string {
   const toolPairs = blocks.filter((b): b is ToolUsePair => b.type === "tool_use_pair");
   const hasThinking = blocks.some((b) => b.type === "thinking");
 
   if (toolPairs.length === 0) return "Thought for a moment";
   if (toolPairs.length === 1) {
-    const { description } = getToolSummary(toolPairs[0].toolUse);
-    return description.length <= 60 ? description : "Used 1 tool";
+    return getToolAction(toolPairs[0].toolUse);
   }
 
-  const writtenFiles = toolPairs
-    .filter((b) => b.toolUse.name.toLowerCase().includes("write"))
-    .map((b) => (b.toolUse.input.file_path as string || "").split("/").pop() ?? "")
-    .filter(Boolean);
+  // Multiple tools — short summary
+  const groups = new Map<string, number>();
+  for (const b of toolPairs) {
+    const action = getToolAction(b.toolUse);
+    groups.set(action, (groups.get(action) ?? 0) + 1);
+  }
+  const parts = [...groups.entries()].map(([action, count]) => {
+    if (count <= 1) return action;
+    const lower = action.toLowerCase();
+    const spaceIdx = lower.indexOf(" ");
+    if (spaceIdx > 0) {
+      const verb = lower.slice(0, spaceIdx);
+      const rest = lower.slice(spaceIdx + 1);
+      const plural = rest.endsWith("s") ? rest : rest + "s";
+      return `${verb} ${count} ${plural}`;
+    }
+    return `${lower} ${count}`;
+  });
 
-  if (writtenFiles.length === 1) return `Created ${writtenFiles[0]}`;
-  if (writtenFiles.length > 1 && writtenFiles.length <= 3) return `Created ${writtenFiles.join(", ")}`;
-  if (writtenFiles.length > 3) return `Created ${writtenFiles.length} files`;
+  if (hasThinking) parts.unshift("Thought");
 
-  return `${hasThinking ? "Thought and used" : "Used"} ${toolPairs.length} tool${toolPairs.length !== 1 ? "s" : ""}`;
+  return parts.join(" · ");
 }
 
 // ============================================================
@@ -185,7 +214,7 @@ const CODE_PRE: CSSProperties = {
   fontFamily: "var(--font-mono)",
   fontSize: "12px",
   padding: "8px 10px",
-  overflowX: "auto",
+  overflowX: "hidden",
   margin: "6px 0 0",
   lineHeight: 1.5,
   color: "var(--text-code)",
@@ -195,7 +224,15 @@ const CODE_PRE: CSSProperties = {
 
 function HighlightedJson({ value }: { value: string }) {
   const html = useMemo(() => hljs.highlight(value, { language: "json" }).value, [value]);
-  return <pre dangerouslySetInnerHTML={{ __html: html }} style={CODE_PRE} />;
+  return (
+    <OverlayScrollbarsComponent
+      className="code-block-wrap"
+      options={SCROLLBAR_OPTIONS_X}
+      style={{ overflow: "hidden" }}
+    >
+      <pre dangerouslySetInnerHTML={{ __html: html }} style={CODE_PRE} />
+    </OverlayScrollbarsComponent>
+  );
 }
 
 function BashInput({ command }: { command: string }) {
@@ -207,6 +244,7 @@ function BashInput({ command }: { command: string }) {
 }
 
 function DiffView({ filePath, oldStr, newStr }: { filePath?: string; oldStr?: string; newStr?: string }) {
+  const setViewingFilePath = useAppStore((s) => s.setViewingFilePath);
   const removedLines = oldStr ? oldStr.split("\n") : [];
   const addedLines = newStr ? newStr.split("\n") : [];
   const statsLine = [
@@ -217,14 +255,34 @@ function DiffView({ filePath, oldStr, newStr }: { filePath?: string; oldStr?: st
   return (
     <div style={{ border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", overflow: "hidden", margin: "6px 0 0", fontSize: "12px", fontFamily: "var(--font-mono)" }}>
       <div style={{ padding: "4px 10px", background: "var(--bg-code-block-header)", borderBottom: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ color: "var(--text-code-lang)", fontSize: "11px" }}>
-          {filePath ? filePath.split("/").pop() : "diff"}
-        </span>
+        {filePath ? (
+          <button
+            onClick={() => setViewingFilePath(filePath)}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "var(--text-code-lang)",
+              fontSize: "11px",
+              fontFamily: "var(--font-mono)",
+              padding: 0,
+              textDecoration: "underline",
+              textUnderlineOffset: "2px",
+            }}
+          >
+            {filePath.split("/").pop()}
+          </button>
+        ) : (
+          <span style={{ color: "var(--text-code-lang)", fontSize: "11px" }}>diff</span>
+        )}
         {statsLine && (
           <span style={{ fontSize: "10px", color: "var(--text-tertiary)", letterSpacing: "0.03em" }}>{statsLine}</span>
         )}
       </div>
-      <div style={{ maxHeight: "320px", overflowY: "auto" }}>
+      <OverlayScrollbarsComponent
+        options={SCROLLBAR_OPTIONS}
+        style={{ maxHeight: "320px" }}
+      >
         {removedLines.map((line, i) => (
           <div key={`-${i}`} style={{ display: "flex", background: "rgba(239,68,68,0.07)", borderLeft: "2px solid rgba(239,68,68,0.45)" }}>
             <span style={{ color: "#ef4444", padding: "0 8px", userSelect: "none", flexShrink: 0, lineHeight: "1.6em" }}>-</span>
@@ -237,22 +295,57 @@ function DiffView({ filePath, oldStr, newStr }: { filePath?: string; oldStr?: st
             <span style={{ color: "var(--text-primary)", padding: "0 8px 0 0", lineHeight: "1.6em", whiteSpace: "pre-wrap", wordBreak: "break-all", flex: 1 }}>{line}</span>
           </div>
         ))}
-      </div>
+      </OverlayScrollbarsComponent>
     </div>
   );
 }
 
 function FileContentView({ filePath, content }: { filePath?: string; content: string }) {
+  const setViewingFilePath = useAppStore((s) => s.setViewingFilePath);
   const lines = content.split("\n");
   return (
     <div style={{ border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", overflow: "hidden", margin: "6px 0 0", fontSize: "12px", fontFamily: "var(--font-mono)" }}>
       <div style={{ padding: "4px 10px", background: "var(--bg-code-block-header)", borderBottom: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ color: "var(--text-code-lang)", fontSize: "11px" }}>{filePath ? filePath.split("/").pop() : "file"}</span>
+        {filePath ? (
+          <button
+            onClick={() => setViewingFilePath(filePath)}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "var(--text-code-lang)",
+              fontSize: "11px",
+              fontFamily: "var(--font-mono)",
+              padding: 0,
+              textDecoration: "underline",
+              textUnderlineOffset: "2px",
+            }}
+          >
+            {filePath.split("/").pop()}
+          </button>
+        ) : (
+          <span style={{ color: "var(--text-code-lang)", fontSize: "11px" }}>file</span>
+        )}
         <span style={{ fontSize: "10px", color: "var(--text-tertiary)" }}>+{lines.length} lines</span>
       </div>
-      <pre style={{ ...CODE_PRE, margin: 0, borderRadius: 0, border: "none", maxHeight: "320px", overflowY: "auto" }}>{content}</pre>
+      <OverlayScrollbarsComponent
+        className="code-block-wrap"
+        options={SCROLLBAR_OPTIONS_BOTH}
+        style={{ maxHeight: "320px" }}
+      >
+        <pre style={{ ...CODE_PRE, margin: 0, borderRadius: 0, border: "none" }}>{content}</pre>
+      </OverlayScrollbarsComponent>
     </div>
   );
+}
+
+function hasSpecializedInput(toolUse: ToolUseBlockType): boolean {
+  const name = toolUse.name.toLowerCase();
+  const input = toolUse.input as Record<string, unknown>;
+  if ((name.includes("bash") || name === "execute") && ((input.command as string) || (input.cmd as string))) return true;
+  if ((name.includes("str_replace") || name.includes("edit") || name.includes("patch")) && (input.old_string !== undefined || input.new_string !== undefined)) return true;
+  if ((name.includes("write") || name.includes("create")) && ((input.content as string) || (input.new_file as string))) return true;
+  return false;
 }
 
 function renderToolInput(toolUse: ToolUseBlockType): ReactNode {
@@ -350,8 +443,6 @@ function BashInOutView({ command, result, isError }: { command: string; result: 
     wordBreak: "break-all",
     flex: 1,
     lineHeight: 1.5,
-    maxHeight: "140px",
-    overflowY: "auto",
   });
   const truncated = result.length > BASH_OUT_LIMIT ? result.slice(0, BASH_OUT_LIMIT) + "\n…" : result;
   return (
@@ -368,13 +459,23 @@ function BashInOutView({ command, result, isError }: { command: string; result: 
       {command && (
         <div style={{ ...rowStyle, borderBottom: result ? "1px solid var(--border-subtle)" : "none" }}>
           <span style={labelStyle}>IN</span>
-          <pre style={preStyle()}>{command}</pre>
+          <OverlayScrollbarsComponent
+            options={SCROLLBAR_OPTIONS}
+            style={{ flex: 1, maxHeight: "140px" }}
+          >
+            <pre style={preStyle()}>{command}</pre>
+          </OverlayScrollbarsComponent>
         </div>
       )}
       {result && (
         <div style={rowStyle}>
           <span style={{ ...labelStyle, color: isError ? "var(--tool-error-text)" : "var(--text-tertiary)" }}>OUT</span>
-          <pre style={preStyle(isError)}>{truncated}</pre>
+          <OverlayScrollbarsComponent
+            options={SCROLLBAR_OPTIONS}
+            style={{ flex: 1, maxHeight: "140px" }}
+          >
+            <pre style={preStyle(isError)}>{truncated}</pre>
+          </OverlayScrollbarsComponent>
         </div>
       )}
     </div>
@@ -400,62 +501,15 @@ function renderInlineContent(toolUse: ToolUseBlockType, toolResult: ToolResultBl
 }
 
 // ============================================================
-// Show more / less button
-// ============================================================
-
-function ShowMoreBtn({
-  expanded,
-  visible,
-  onClick,
-}: {
-  expanded: boolean;
-  visible: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      style={{
-        background: "none",
-        border: "none",
-        cursor: "pointer",
-        color: "var(--text-tertiary)",
-        fontSize: "12px",
-        padding: "3px 0 0",
-        fontFamily: "var(--font-ui)",
-        display: "block",
-        opacity: visible ? 1 : 0,
-        pointerEvents: visible ? "auto" : "none",
-        transition: "opacity var(--transition-fast)",
-      }}
-      onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = "var(--text-secondary)")}
-      onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)")}
-    >
-      {expanded ? "Show less" : "Show more"}
-    </button>
-  );
-}
-
-// ============================================================
 // Thinking item
 // ============================================================
 
-const THINKING_LIMIT = 300;
-
 function ThinkingItem({ thinking }: { thinking: string }) {
-  const [globalExpanded, setGlobalExpanded] = useState(getBlocksExpanded);
-  const [localExpanded, setLocalExpanded] = useState<boolean | null>(null);
-  const [hovered, setHovered] = useState(false);
-  const isLong = thinking.length > THINKING_LIMIT;
-  useEffect(() => subscribeBlocksExpanded((v) => { setGlobalExpanded(v); setLocalExpanded(null); }), []);
-  const expanded = localExpanded !== null ? localExpanded : globalExpanded;
-  const display = isLong && !expanded ? thinking.slice(0, THINKING_LIMIT) + "…" : thinking;
+  const text = thinking.trim() || "Thought for a moment";
 
   return (
     <div
       style={{ display: "flex", gap: "10px" }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
       <div style={iconCol}>
         <div style={{ color: "var(--text-tertiary)", lineHeight: 0, paddingTop: "1px" }}>
@@ -463,7 +517,7 @@ function ThinkingItem({ thinking }: { thinking: string }) {
         </div>
         <div style={connectorLine} />
       </div>
-      <div style={{ flex: 1, paddingBottom: "10px", minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
         <p
           style={{
             margin: 0,
@@ -474,15 +528,8 @@ function ThinkingItem({ thinking }: { thinking: string }) {
             wordBreak: "break-word",
           }}
         >
-          {display}
+          {text}
         </p>
-        {isLong && (
-          <ShowMoreBtn
-            expanded={expanded}
-            visible={hovered || expanded}
-            onClick={() => setLocalExpanded(!expanded)}
-          />
-        )}
       </div>
     </div>
   );
@@ -507,25 +554,23 @@ function renderResultText(content: ToolResultBlock["content"]): string {
 function ToolItem({
   toolUse,
   toolResult,
+  parentOpen,
 }: {
   toolUse: ToolUseBlockType;
   toolResult: ToolResultBlock | null;
+  parentOpen: boolean;
 }) {
-  const [globalExpanded, setGlobalExpanded] = useState(getBlocksExpanded);
-  const [localExpanded, setLocalExpanded] = useState<boolean | null>(null);
-  const [hovered, setHovered] = useState(false);
-  useEffect(() => subscribeBlocksExpanded((v) => { setGlobalExpanded(v); setLocalExpanded(null); }), []);
-  const expanded = localExpanded !== null ? localExpanded : globalExpanded;
+  const setViewingFilePath = useAppStore((s) => s.setViewingFilePath);
   const { description, badge } = getToolSummary(toolUse);
   const resultText = toolResult ? renderResultText(toolResult.content) : "";
   const RESULT_LIMIT = 600;
   const inlineContent = renderInlineContent(toolUse, toolResult);
+  const toolFilePath = (toolUse.input.file_path as string) || (toolUse.input.path as string) || "";
+  const specialized = hasSpecializedInput(toolUse);
 
   return (
     <div
       style={{ display: "flex", gap: "10px" }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
       <div style={iconCol}>
         <div style={{ color: "var(--text-tertiary)", lineHeight: 0, paddingTop: "1px" }}>
@@ -533,8 +578,8 @@ function ToolItem({
         </div>
         <div style={connectorLine} />
       </div>
-      <div style={{ flex: 1, paddingBottom: "10px", minWidth: 0 }}>
-        {/* Summary line */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {/* Summary line with inline badge */}
         <span
           style={{
             fontSize: "13px",
@@ -544,10 +589,9 @@ function ToolItem({
           }}
         >
           {description}
-        </span>
-        {!inlineContent && badge && (
-          <div style={{ marginTop: "4px" }}>
-            <span
+          {!inlineContent && badge && (
+            <button
+              onClick={toolFilePath ? () => setViewingFilePath(toolFilePath) : undefined}
               style={{
                 display: "inline-block",
                 fontSize: "11px",
@@ -556,81 +600,74 @@ function ToolItem({
                 background: "var(--bg-sidebar-active)",
                 borderRadius: "4px",
                 padding: "1px 7px",
+                border: "none",
+                cursor: toolFilePath ? "pointer" : "default",
+                marginLeft: "6px",
+                verticalAlign: "middle",
               }}
             >
               {badge}
-            </span>
-          </div>
-        )}
+            </button>
+          )}
+        </span>
 
         {/* Specialized inline view — replaces show-more JSON for known tools */}
         {inlineContent}
 
-        {/* Hover-reveal "Show more" + expanded JSON (non-specialized tools only) */}
-        {!inlineContent && (
-          <>
-            <ShowMoreBtn
-              expanded={expanded}
-              visible={hovered || expanded}
-              onClick={() => setLocalExpanded(!expanded)}
-            />
-            {expanded && (
-              <div style={{ marginTop: "4px" }}>
+        {/* Specialized input view (diff, file content, bash) — shown when parent is open */}
+        {!inlineContent && specialized && parentOpen && (
+          <div style={{ marginTop: "4px" }}>
+            {renderToolInput(toolUse)}
+          </div>
+        )}
+
+        {/* Generic tools — always show input when parent is open */}
+        {!inlineContent && !specialized && parentOpen && (
+          <div style={{ marginTop: "4px" }}>
+            {renderToolInput(toolUse)}
+            {resultText && (
+              <>
                 <div
                   style={{
                     fontSize: "10px",
                     fontWeight: 600,
-                    color: "var(--text-tertiary)",
+                    color: toolResult?.is_error ? "var(--tool-error-text)" : "var(--text-tertiary)",
                     textTransform: "uppercase",
                     letterSpacing: "0.06em",
+                    marginTop: "8px",
                     marginBottom: "2px",
                   }}
                 >
-                  Input
+                  Result
                 </div>
-                {renderToolInput(toolUse)}
-                {resultText && (
-                  <>
-                    <div
-                      style={{
-                        fontSize: "10px",
-                        fontWeight: 600,
-                        color: toolResult?.is_error ? "var(--tool-error-text)" : "var(--text-tertiary)",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.06em",
-                        marginTop: "8px",
-                        marginBottom: "2px",
-                      }}
-                    >
-                      Result
-                    </div>
-                    <pre
-                      style={{
-                        background: toolResult?.is_error ? "var(--tool-error-bg)" : "var(--bg-code)",
-                        border: `1px solid ${toolResult?.is_error ? "var(--tool-error-border)" : "var(--border-subtle)"}`,
-                        borderRadius: "var(--radius-sm)",
-                        fontFamily: "var(--font-mono)",
-                        fontSize: "12px",
-                        padding: "8px 10px",
-                        overflowX: "auto",
-                        margin: 0,
-                        lineHeight: 1.5,
-                        color: toolResult?.is_error ? "var(--tool-error-text)" : "var(--text-code)",
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-all",
-                        maxHeight: "300px",
-                        overflowY: "auto",
-                      }}
-                    >
-                      {resultText.length > RESULT_LIMIT
-                        ? resultText.slice(0, RESULT_LIMIT) + "\n…"
-                        : resultText}
-                    </pre>
-                  </>
-                )}
-              </div>
+                <OverlayScrollbarsComponent
+                  className="code-block-wrap"
+                  options={SCROLLBAR_OPTIONS_BOTH}
+                  style={{ maxHeight: "300px" }}
+                >
+                  <pre
+                    style={{
+                      background: toolResult?.is_error ? "var(--tool-error-bg)" : "var(--bg-code)",
+                      border: `1px solid ${toolResult?.is_error ? "var(--tool-error-border)" : "var(--border-subtle)"}`,
+                      borderRadius: "var(--radius-sm)",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "12px",
+                      padding: "8px 10px",
+                      margin: 0,
+                      lineHeight: 1.5,
+                      color: toolResult?.is_error ? "var(--tool-error-text)" : "var(--text-code)",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-all",
+                    }}
+                  >
+                    {resultText.length > RESULT_LIMIT
+                      ? resultText.slice(0, RESULT_LIMIT) + "\n…"
+                      : resultText}
+                  </pre>
+                </OverlayScrollbarsComponent>
+              </>
             )}
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -665,12 +702,25 @@ interface ThoughtChainProps {
 export function ThoughtChain({ blocks }: ThoughtChainProps) {
   const [globalOpen, setGlobalOpen] = useState(getBlocksExpanded);
   const [localOpen, setLocalOpen] = useState<boolean | null>(null);
+  const setViewingFilePath = useAppStore((s) => s.setViewingFilePath);
   useEffect(() => subscribeBlocksExpanded((v) => { setGlobalOpen(v); setLocalOpen(null); }), []);
   const open = localOpen !== null ? localOpen : globalOpen;
+  // Lazy-mount on first open, then keep the children in the DOM and toggle
+  // visibility via CSS. The first expand still pays the mount cost (hljs +
+  // OverlayScrollbars instances per tool); subsequent collapses/expansions
+  // are near-instant because nothing remounts.
+  const [hasOpened, setHasOpened] = useState(open);
+  useEffect(() => { if (open && !hasOpened) setHasOpened(true); }, [open, hasOpened]);
   const title = computeTitle(blocks);
 
+  // For single-tool chains, extract badge to show in collapsed header
+  const toolPairs = blocks.filter((b): b is ToolUsePair => b.type === "tool_use_pair");
+  const singleTool = toolPairs.length === 1 ? toolPairs[0].toolUse : null;
+  const singleBadge = singleTool ? getToolSummary(singleTool).badge : null;
+  const singleFilePath = singleTool ? ((singleTool.input.file_path as string) || (singleTool.input.path as string) || "") : "";
+
   return (
-    <div style={{ margin: "0 0 10px" }}>
+    <div style={{ margin: "0 0 14px" }}>
       <button
         onClick={() => setLocalOpen(!open)}
         style={{
@@ -689,10 +739,27 @@ export function ThoughtChain({ blocks }: ThoughtChainProps) {
       >
         <ChevronIcon open={open} />
         <span>{title}</span>
+        {!open && singleBadge && (
+          <span
+            onClick={(e) => { e.stopPropagation(); if (singleFilePath) setViewingFilePath(singleFilePath); }}
+            style={{
+              display: "inline-block",
+              fontSize: "11px",
+              fontFamily: "var(--font-mono)",
+              color: "var(--text-secondary)",
+              background: "var(--bg-sidebar-active)",
+              borderRadius: "4px",
+              padding: "1px 7px",
+              cursor: singleFilePath ? "pointer" : "default",
+            }}
+          >
+            {singleBadge}
+          </span>
+        )}
       </button>
 
-      {open && (
-        <div style={{ marginTop: "10px", paddingLeft: "4px" }}>
+      {hasOpened && (
+        <div style={{ marginTop: "10px", paddingLeft: "4px", display: open ? "flex" : "none", flexDirection: "column", gap: "4px" }}>
           {blocks.map((block, i) => {
             if (block.type === "thinking") {
               return <ThinkingItem key={i} thinking={block.thinking} />;
@@ -703,6 +770,9 @@ export function ThoughtChain({ blocks }: ThoughtChainProps) {
                   key={i}
                   toolUse={block.toolUse}
                   toolResult={block.toolResult}
+                  // Always true once mounted — collapse hides via CSS, so we
+                  // don't want the inner content to unmount on close.
+                  parentOpen={true}
                 />
               );
             }

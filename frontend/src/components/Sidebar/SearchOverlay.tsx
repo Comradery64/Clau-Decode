@@ -1,33 +1,28 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { SearchHit } from "../../api/types";
 import { api } from "../../api/client";
+import { getCached, fetchSession } from "../../api/sessionCache";
 import { useAppStore } from "../../store";
+import { navigateTo } from "../../router";
 import { formatRelativeDate } from "./SessionItem";
-import { lsGetSet, lsPutSet } from "../../utils/localStorage";
-
-const LS_ARCHIVED = "clau-decode:archived";
-
-function useDebounce<T>(value: T, delay: number): T {
-  const [debounced, setDebounced] = useState<T>(value);
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(id);
-  }, [value, delay]);
-  return debounced;
-}
+import { LS } from "../../utils/localStorage";
+import { useDebounce } from "../../utils/useDebounce";
+import { useLsSet } from "../../utils/useLsSet";
+import { ScrollContainer } from "../ScrollContainer";
 
 export default function SearchOverlay() {
   const closeSearch = useAppStore((s) => s.closeSearch);
-  const selectSession = useAppStore((s) => s.selectSession);
+  const setPendingScrollMessageId = useAppStore((s) => s.setPendingScrollMessageId);
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [archivedIds, setArchivedIds] = useState(() => lsGetSet(LS_ARCHIVED));
+  const archived = useLsSet(LS.ARCHIVED, "archive");
 
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const debouncedQuery = useDebounce(query, 300);
 
   // Scroll active result into view when navigating with keyboard
@@ -43,10 +38,24 @@ export default function SearchOverlay() {
     inputRef.current?.focus();
   }, []);
 
-  // Close on Escape
+  // Close on Escape, trap Tab within dialog
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeSearch();
+      if (e.key === "Escape") { closeSearch(); return; }
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'input, button, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -82,17 +91,24 @@ export default function SearchOverlay() {
   const handleSelect = useCallback(
     (hit: SearchHit) => {
       // If the session is archived, unarchive it so it surfaces in the sidebar
-      const archived = lsGetSet(LS_ARCHIVED);
       if (archived.has(hit.session_id)) {
-        archived.delete(hit.session_id);
-        lsPutSet(LS_ARCHIVED, archived);
-        setArchivedIds(new Set(archived));
-        window.dispatchEvent(new CustomEvent("clau-decode:archive", { detail: hit.session_id }));
+        archived.remove(hit.session_id);
       }
-      selectSession(hit.session_id);
-      closeSearch();
+      setPendingScrollMessageId(hit.message_id);
+
+      const navigate = () => { navigateTo(`/chat/${hit.session_id}`); closeSearch(); };
+
+      if (getCached(hit.session_id)) {
+        // Already in cache — navigate immediately, no loading flash.
+        navigate();
+      } else {
+        // Pre-fetch so MessageList renders from cache and skips the loading spinner.
+        fetchSession(hit.session_id, api.getSession)
+          .then(navigate)
+          .catch(navigate); // on error, navigate anyway and let MessageList retry
+      }
     },
-    [selectSession, closeSearch]
+    [closeSearch, setPendingScrollMessageId, archived]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -127,6 +143,7 @@ export default function SearchOverlay() {
       }}
     >
       <div
+        ref={dialogRef}
         style={{
           width: "100%",
           maxWidth: "600px",
@@ -193,6 +210,11 @@ export default function SearchOverlay() {
 
         {/* Results */}
         {results.length > 0 && (
+          <ScrollContainer
+            style={{
+              maxHeight: "400px",
+            }}
+          >
           <ul
             ref={listRef}
             role="listbox"
@@ -200,8 +222,6 @@ export default function SearchOverlay() {
               listStyle: "none",
               margin: 0,
               padding: "8px 0",
-              maxHeight: "400px",
-              overflowY: "auto",
             }}
           >
             {results.map((hit, i) => (
@@ -241,7 +261,7 @@ export default function SearchOverlay() {
                   >
                     {hit.session_title ?? "Untitled"}
                   </span>
-                  {archivedIds.has(hit.session_id) && (
+                  {archived.has(hit.session_id) && (
                     <span
                       style={{
                         fontSize: "10px",
@@ -282,6 +302,7 @@ export default function SearchOverlay() {
               </li>
             ))}
           </ul>
+          </ScrollContainer>
         )}
 
         {/* Empty state when query typed but no results */}

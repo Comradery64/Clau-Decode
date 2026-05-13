@@ -1,7 +1,9 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { useAppStore } from "./store";
-import { createEventSource, api } from "./api/client";
-import { useRoute } from "./router";
+import { createEventSource, getConfigCached } from "./api/client";
+import { useRoute, getChatIdFromRoute } from "./router";
+import { emit } from "./utils/events";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 function applyTheme(theme: string) {
   if (theme === "dark") {
@@ -17,75 +19,100 @@ function applyTheme(theme: string) {
 
 (window as Window & { __clauDecodeApplyTheme?: typeof applyTheme }).__clauDecodeApplyTheme = applyTheme;
 
-const Sidebar = React.lazy(() => import("./components/Sidebar/Sidebar"));
-const ChatView = React.lazy(() => import("./components/ChatView/ChatView"));
-const AnalyticsPanel = React.lazy(() => import("./components/Analytics/AnalyticsPanel"));
-const SettingsModal = React.lazy(() => import("./components/Settings/SettingsModal"));
-const SearchOverlay = React.lazy(() => import("./components/Sidebar/SearchOverlay"));
+const chatViewImport = () => import("./components/ChatView/ChatView");
+const searchOverlayImport = () => import("./components/Sidebar/SearchOverlay");
+const settingsModalImport = () => import("./components/Settings/SettingsModal");
 
-function IconSidebarExpand() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2"/>
-      <path d="M9 3v18"/>
-    </svg>
-  );
-}
+const Sidebar = React.lazy(() => import("./components/Sidebar/Sidebar"));
+const ChatView = React.lazy(chatViewImport);
+const AnalyticsPanel = React.lazy(() => import("./components/Analytics/AnalyticsPanel"));
+const Dashboard = React.lazy(() => import("./components/Dashboard/Dashboard"));
+const SettingsModal = React.lazy(settingsModalImport);
+const SearchOverlay = React.lazy(searchOverlayImport);
+const HelpPopup = React.lazy(() => import("./components/Sidebar/HelpPopup"));
+const ShortcutsPopup = React.lazy(() => import("./components/Sidebar/ShortcutsPopup"));
+const FileViewer = React.lazy(() => import("./components/FileViewer/FileViewer"));
 
 export default function App() {
-  const { isSettingsOpen, isSearchOpen, sidebarCollapsed } = useAppStore();
-  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
+  const { isSettingsOpen, isSearchOpen, isHelpOpen, isShortcutsOpen, viewingFilePath } = useAppStore();
   const route = useRoute();
+  const chatIdFromUrl = getChatIdFromRoute(route);
+
+  // URL is the source of truth for selectedSessionId. Sync on route change
+  // (covers initial mount, sidebar clicks, search clicks, browser back/forward).
+  useEffect(() => {
+    const current = useAppStore.getState().selectedSessionId;
+    if (chatIdFromUrl !== current) {
+      useAppStore.getState().selectSession(chatIdFromUrl);
+    }
+  }, [chatIdFromUrl]);
 
   useEffect(() => {
-    api.getConfig().then((cfg) => applyTheme(cfg.theme)).catch(() => {});
+    // Cached so SettingsModal's first open paints instantly off the same
+    // network round-trip used here for theme.
+    getConfigCached().then((cfg) => applyTheme(cfg.theme)).catch(() => {});
+  }, []);
+
+  // Preload the lazy chunks the user will likely hit first so they're ready
+  // in the background before the first click — avoids a chunk-fetch delay on
+  // cold first open.
+  useEffect(() => {
+    chatViewImport();
+    searchOverlayImport();
+    settingsModalImport();
   }, []);
 
   useEffect(() => {
     const es = createEventSource(() => {
-      window.dispatchEvent(new CustomEvent("clau-decode:refresh"));
+      emit("refresh", undefined);
     });
     return () => es.close();
   }, []);
 
-  // Apple-style scrollbar fade: add .is-scrolling to the scrolling element, remove after idle
+  // When the file viewer opens as a split pane, auto-collapse the sidebar so
+  // the chat/dashboard stays readable; restore the user's prior sidebar state
+  // when the file viewer closes.
+  const prevSidebarRef = useRef<boolean | null>(null);
   useEffect(() => {
-    const timers = new Map<Element, ReturnType<typeof setTimeout>>();
-    const onScroll = (e: Event) => {
-      if (!(e.target instanceof Element)) return;
-      const el = e.target;
-      el.classList.add("is-scrolling");
-      const existing = timers.get(el);
-      if (existing) clearTimeout(existing);
-      timers.set(el, setTimeout(() => {
-        el.classList.remove("is-scrolling");
-        timers.delete(el);
-      }, 1000));
-    };
-    document.addEventListener("scroll", onScroll, { capture: true, passive: true });
-    return () => {
-      document.removeEventListener("scroll", onScroll, { capture: true });
-      timers.forEach(clearTimeout);
-    };
-  }, []);
+    if (viewingFilePath) {
+      if (prevSidebarRef.current === null) {
+        prevSidebarRef.current = useAppStore.getState().sidebarCollapsed;
+        useAppStore.getState().setSidebarCollapsed(true);
+      }
+    } else if (prevSidebarRef.current !== null) {
+      useAppStore.getState().setSidebarCollapsed(prevSidebarRef.current);
+      prevSidebarRef.current = null;
+    }
+  }, [viewingFilePath]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        const s = useAppStore.getState();
+        if (s.isSearchOpen || s.isSettingsOpen || s.isHelpOpen || s.isShortcutsOpen || s.viewingFilePath) {
+          e.preventDefault();
+          s.closeSearch();
+          s.closeSettings();
+          s.closeHelp();
+          s.closeShortcuts();
+          s.setViewingFilePath(null);
+        }
+        return;
+      }
+
       const ctrl = e.metaKey || e.ctrlKey;
       if (!ctrl) return;
 
       if (e.key === "k") {
         e.preventDefault();
         useAppStore.getState().openSearch();
-      } else if (e.key === "o") {
-        // Ctrl+O — expand/collapse all tool + thinking blocks
-        e.preventDefault();
-        useAppStore.getState().toggleBlocksExpanded();
       } else if (e.key === "e") {
         // Ctrl+E — toggle show-all-content (no "show more" truncation)
         e.preventDefault();
         useAppStore.getState().toggleResultsExpanded();
+      } else if (e.shiftKey && e.key === ",") {
+        e.preventDefault();
+        useAppStore.getState().openSettings();
       }
       // Cmd+R / Cmd+J refresh is registered in main.tsx before React mounts,
       // so it has the earliest possible registration time and best chance of
@@ -106,47 +133,31 @@ export default function App() {
         background: "var(--bg-base)",
       }}
     >
+      {/* Main content in its own boundary so overlay lazy-loads never blank it. */}
       <React.Suspense fallback={null}>
         {/* Keep Sidebar mounted when collapsed so we don't refetch every project
             and session each time the user toggles. The Sidebar reads
             sidebarCollapsed itself and hides via display:none. */}
         <Sidebar />
-        {route === "/analytics" ? <AnalyticsPanel /> : <ChatView />}
-        {isSettingsOpen && <SettingsModal />}
-        {isSearchOpen && <SearchOverlay />}
+        <div style={{ flex: 1, display: "flex", minWidth: 0, overflow: "hidden" }}>
+          <ErrorBoundary>
+            {route === "/analytics" ? <AnalyticsPanel /> : chatIdFromUrl ? <ChatView /> : <Dashboard />}
+          </ErrorBoundary>
+        </div>
+        {viewingFilePath && (
+          <ErrorBoundary>
+            <React.Suspense fallback={null}>
+              <FileViewer />
+            </React.Suspense>
+          </ErrorBoundary>
+        )}
       </React.Suspense>
-      {sidebarCollapsed && (
-        <button
-          onClick={toggleSidebar}
-          aria-label="Expand sidebar"
-          style={{
-            position: "fixed",
-            top: "12px",
-            left: "12px",
-            zIndex: 100,
-            background: "var(--bg-sidebar)",
-            border: "1px solid var(--border-subtle)",
-            borderRadius: "var(--radius-sm)",
-            cursor: "pointer",
-            color: "var(--text-tertiary)",
-            padding: "6px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            transition: "color var(--transition-fast), background var(--transition-fast)",
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
-            (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-sidebar-hover)";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)";
-            (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-sidebar)";
-          }}
-        >
-          <IconSidebarExpand />
-        </button>
-      )}
+      {/* Each overlay gets its own error boundary + Suspense — a crash or lazy
+          load in one overlay never blanks the page behind it. */}
+      {isSettingsOpen && <ErrorBoundary><React.Suspense fallback={null}><SettingsModal /></React.Suspense></ErrorBoundary>}
+      {isSearchOpen && <ErrorBoundary><React.Suspense fallback={null}><SearchOverlay /></React.Suspense></ErrorBoundary>}
+      {isHelpOpen && <ErrorBoundary><React.Suspense fallback={null}><HelpPopup /></React.Suspense></ErrorBoundary>}
+      {isShortcutsOpen && <ErrorBoundary><React.Suspense fallback={null}><ShortcutsPopup /></React.Suspense></ErrorBoundary>}
     </div>
   );
 }

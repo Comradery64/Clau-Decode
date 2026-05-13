@@ -32,7 +32,10 @@ export function pairToolBlocks(blocks: ContentBlock[]): PairedBlock[] {
   // Second pass: emit paired items, skip standalone tool_result blocks
   const result: PairedBlock[] = [];
   for (const block of blocks) {
-    if (block.type === "text" || block.type === "thinking" || block.type === "image") {
+    if (block.type === "thinking") {
+      if (block.thinking.trim() === "") continue;
+      result.push(block);
+    } else if (block.type === "text" || block.type === "image") {
       result.push(block);
     } else if (block.type === "tool_use") {
       result.push({

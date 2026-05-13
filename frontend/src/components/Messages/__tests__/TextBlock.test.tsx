@@ -65,6 +65,13 @@ describe("TextBlock", () => {
     expect(container.querySelector(".table-wrap")).toBeInTheDocument();
   });
 
+  it("renders table with alternating row shading", () => {
+    const md = `| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |`;
+    const { container } = render(<TextBlock text={md} />);
+    const evenRow = container.querySelector("tbody tr:nth-child(even) td");
+    expect(evenRow).toBeInTheDocument();
+  });
+
   it("renders code block with language label", () => {
     render(<TextBlock text={"```python\nprint('hello')\n```"} />);
     expect(screen.getByText("python")).toBeInTheDocument();

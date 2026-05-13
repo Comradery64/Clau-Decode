@@ -16,6 +16,7 @@ const baseSession: Session = {
   cwd: "/test",
   git_branch: "main",
   is_worktree: false,
+  is_fork: false,
   permission_mode: "default",
   last_message_role: null,
 };
@@ -80,10 +81,13 @@ describe("SessionItem", () => {
 
   it("fires onClick on Enter keydown", () => {
     const onClick = vi.fn();
-    const { container } = render(
+    render(
       <SessionItem session={baseSession} isActive={false} onClick={onClick} />
     );
-    fireEvent.keyDown(container.firstChild as HTMLElement, { key: "Enter" });
+    // Row body is now a native <button>, so Enter triggers a click natively.
+    // Query by aria-label which equals the display title.
+    const rowBtn = screen.getByRole("button", { name: "Test Session Title" });
+    fireEvent.click(rowBtn);
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 

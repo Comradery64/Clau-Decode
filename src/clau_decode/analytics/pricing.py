@@ -14,7 +14,7 @@ _LITELLM_URL = (
     "model_prices_and_context_window.json"
 )
 
-# Anthropic API pricing as of May 2026 (USD per million tokens).
+# API pricing as of May 2026 (USD per million tokens).
 # Keys are model name prefixes for flexible matching.
 _HARDCODED_RATES: dict[str, "ModelPricing"] = {}
 
@@ -98,7 +98,7 @@ class LiteLLMPricingFetcher:
         self._timeout = timeout
 
     async def fetch(self) -> dict[str, ModelPricing]:
-        """Return a dict mapping model name → ModelPricing (Claude models only)."""
+        """Return a dict mapping model name → ModelPricing."""
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.get(self._url)

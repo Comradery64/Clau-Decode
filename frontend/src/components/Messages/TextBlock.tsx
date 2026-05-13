@@ -3,6 +3,8 @@ import type { ReactNode, ReactElement } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
+import { SCROLLBAR_OPTIONS_X } from "../ScrollContainer";
 import type { Components } from "react-markdown";
 import type { ClassAttributes, HTMLAttributes } from "react";
 import type { ExtraProps } from "react-markdown";
@@ -71,7 +73,7 @@ function CopyButton({ text }: { text: string }) {
         background: "none",
         border: "none",
         cursor: "pointer",
-        color: copied ? "#d97706" : "var(--text-code-lang)",
+        color: copied ? "var(--accent-orange)" : "var(--text-code-lang)",
         fontSize: "11px",
         fontFamily: "var(--font-ui)",
         padding: "2px 6px",
@@ -108,6 +110,7 @@ function CodeBlockWrapper({ children }: { children: ReactNode }) {
 
   return (
     <div
+      className="code-block-wrap"
       style={{
         background: "var(--bg-code-block)",
         borderRadius: "var(--radius-md)",
@@ -142,21 +145,25 @@ function CodeBlockWrapper({ children }: { children: ReactNode }) {
         {codeText && <CopyButton text={codeText} />}
       </div>
       {/* Code content */}
-      <pre
-        style={{
-          margin: 0,
-          padding: "14px 16px",
-          overflowX: "auto",
-          fontFamily: "var(--font-mono)",
-          fontSize: "13px",
-          lineHeight: 1.6,
-          background: "transparent",
-          border: "none",
-          borderRadius: 0,
-        }}
+      <OverlayScrollbarsComponent
+        options={SCROLLBAR_OPTIONS_X}
+        style={{ overflow: "hidden" }}
       >
-        {children}
-      </pre>
+        <pre
+          style={{
+            margin: 0,
+            padding: "14px 16px",
+            fontFamily: "var(--font-mono)",
+            fontSize: "13px",
+            lineHeight: 1.6,
+            background: "transparent",
+            border: "none",
+            borderRadius: 0,
+          }}
+        >
+          {children}
+        </pre>
+      </OverlayScrollbarsComponent>
     </div>
   );
 }
@@ -166,12 +173,16 @@ function CodeBlockWrapper({ children }: { children: ReactNode }) {
 // ---------------------------------------------------------------------------
 
 const components: Components = {
-  table({ children }) {
+  table({ children, node, ...props }) {
+    void node;
     return (
       <div className="table-wrap">
-        <div className="table-scroll">
-          <table>{children}</table>
-        </div>
+        <OverlayScrollbarsComponent
+          options={SCROLLBAR_OPTIONS_X}
+          style={{ overflow: "hidden" }}
+        >
+          <table {...props}>{children}</table>
+        </OverlayScrollbarsComponent>
       </div>
     );
   },

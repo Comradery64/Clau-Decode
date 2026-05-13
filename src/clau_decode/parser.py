@@ -112,8 +112,12 @@ def parse_session(path: Path) -> tuple[Session, list[Message]]:
                 session.is_worktree = True
                 continue
 
+            if record_type in ("clau-decode-fork", "clau-decode-backup"):
+                session.is_fork = True
+                continue
+
             # --- mid-stream queued commands ---
-            # When the user types a message while Claude is working, Claude Code
+            # When the user types a message while the assistant is working, the session
             # stores it as an "attachment" record with type "queued_command".
             # We surface it as a regular user message so it appears in the thread.
             if record_type == "attachment":
@@ -353,7 +357,7 @@ def _session_id_from_content(path: Path) -> str:
                 return str(session_id)
     raise ValueError(
         f"No valid UUID sessionId found in '{path}'. "
-        "This does not appear to be a Claude Code session file."
+        "This does not appear to be a valid session file."
     )
 
 

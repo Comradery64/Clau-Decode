@@ -6,7 +6,7 @@ import { api } from "../../api/client";
 import { emit } from "../../utils/events";
 
 // ---------------------------------------------------------------------------
-// XML tag parsing — Claude Code injects various system tags into user messages
+// XML tag parsing — system tags in user messages
 // ---------------------------------------------------------------------------
 
 type Segment =
@@ -309,6 +309,7 @@ export function UserMessage({ message }: UserMessageProps) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   if (message.is_meta) return null;
 
@@ -330,8 +331,6 @@ export function UserMessage({ message }: UserMessageProps) {
 
   if (allSegments.length === 0 && !hasImages) return null;
 
-  const dispatchMutated = () =>
-    emit("session-mutated", message.session_id);
 
   const handleCopy = async () => {
     const text = message.content_blocks
@@ -353,13 +352,19 @@ export function UserMessage({ message }: UserMessageProps) {
   async function saveEdit(text: string) {
     await api.patchMessage(message.id, [{ type: "text", text }]);
     setEditing(false);
-    dispatchMutated();
+    emit("refresh", undefined);
   }
 
   async function doDelete() {
-    await api.deleteMessage(message.id);
-    setConfirmDelete(false);
-    dispatchMutated();
+    setDeleteError(null);
+    try {
+      await api.deleteMessage(message.id);
+      setConfirmDelete(false);
+      emit("refresh", undefined);
+    } catch (e) {
+      const msg = (e as Error).message || "Delete failed";
+      setDeleteError(msg.includes("403") ? "Editing is disabled. Set edit_enabled in Settings." : msg);
+    }
   }
 
   // Output-only (no user text, no images) — render without bubble
@@ -457,9 +462,13 @@ export function UserMessage({ message }: UserMessageProps) {
       {confirmDelete && (
         <ConfirmDialog
           title="Delete message?"
-          body="This removes the message from the session file. A backup is created automatically before the write."
+          body={
+            deleteError
+              ? <span style={{ color: "var(--tool-error-text)" }}>{deleteError}</span>
+              : "This removes the message from the session file. A backup is created automatically before the write."
+          }
           onConfirm={doDelete}
-          onCancel={() => setConfirmDelete(false)}
+          onCancel={() => { setConfirmDelete(false); setDeleteError(null); }}
         />
       )}
     </div>

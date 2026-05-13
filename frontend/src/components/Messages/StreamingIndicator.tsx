@@ -1,4 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { STREAMING } from "../../config/ui";
+import { useCycle } from "./hooks/useCycle";
 
 const THINKING_WORDS: string[] = [
   "Accomplishing", "Actioning", "Actualizing", "Architecting", "Baking",
@@ -6,7 +8,7 @@ const THINKING_WORDS: string[] = [
   "Bloviating", "Boogieing", "Boondoggling", "Booping", "Bootstrapping",
   "Brewing", "Bunning", "Burrowing", "Calculating", "Canoodling",
   "Caramelizing", "Cascading", "Catapulting", "Cerebrating", "Channeling",
-  "Channelling", "Choreographing", "Churning", "Clauding", "Coalescing",
+  "Channelling", "Choreographing", "Churning", "Coalescing",
   "Cogitating", "Combobulating", "Composing", "Computing", "Concocting",
   "Considering", "Contemplating", "Cooking", "Crafting", "Creating",
   "Crunching", "Crystallizing", "Cultivating", "Deciphering", "Deliberating",
@@ -71,40 +73,19 @@ export function StreamingIndicator({
   hasThinking,
 }: StreamingIndicatorProps) {
   const [elapsed, setElapsed] = useState(0);
-  const [wordIndex, setWordIndex] = useState(() => Math.floor(Math.random() * THINKING_WORDS.length));
-  const [tipIndex, setTipIndex] = useState(() => Math.floor(Math.random() * TIPS.length));
-  const [dotPhase, setDotPhase] = useState(0);
+  const word = useMemo(() => THINKING_WORDS[Math.floor(Math.random() * THINKING_WORDS.length)], []);
+  const tip = useCycle(TIPS, STREAMING.TIP_CYCLE_MS);
+  const dotPhase = useCycle(["0", "1", "2", "3"], STREAMING.DOT_PULSE_MS);
 
   useEffect(() => {
     const start = lastUserTimestamp ? new Date(lastUserTimestamp).getTime() : Date.now();
     const tick = () => setElapsed(Math.floor((Date.now() - start) / 1000));
     tick();
-    const id = setInterval(tick, 1000);
+    const id = setInterval(tick, STREAMING.ELAPSED_TICK_MS);
     return () => clearInterval(id);
   }, [lastUserTimestamp]);
 
-  // Cycle thinking word every 3s
-  useEffect(() => {
-    const id = setInterval(
-      () => setWordIndex((i) => (i + 1) % THINKING_WORDS.length),
-      3000
-    );
-    return () => clearInterval(id);
-  }, []);
-
-  // Cycle tip every 9s
-  useEffect(() => {
-    const id = setInterval(() => setTipIndex((i) => (i + 1) % TIPS.length), 9000);
-    return () => clearInterval(id);
-  }, []);
-
-  // Pulse the dot
-  useEffect(() => {
-    const id = setInterval(() => setDotPhase((p) => (p + 1) % 4), 400);
-    return () => clearInterval(id);
-  }, []);
-
-  const dotOpacity = [1, 0.6, 0.3, 0.6][dotPhase];
+  const dotOpacity = [1, 0.6, 0.3, 0.6][Number(dotPhase)];
 
   const kTokens =
     totalInputTokens >= 1000
@@ -146,7 +127,7 @@ export function StreamingIndicator({
         >
           ●
         </span>
-        <span>{THINKING_WORDS[wordIndex]}…</span>
+        <span>{word}…</span>
         <span style={{ opacity: 0.55 }}>({stats})</span>
       </div>
       <div
@@ -157,7 +138,7 @@ export function StreamingIndicator({
           marginTop: "2px",
         }}
       >
-        └ Tip: {TIPS[tipIndex]}
+        └ Tip: {tip}
       </div>
     </div>
   );

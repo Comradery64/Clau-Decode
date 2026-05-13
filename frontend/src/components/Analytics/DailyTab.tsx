@@ -19,10 +19,10 @@ interface DailyTabProps {
 }
 
 const PALETTE = {
-  input:      "#60a5fa",
-  output:     "#34d399",
-  cacheWrite: "#f59e0b",
-  cacheRead:  "#a78bfa",
+  input:      "#7eb6c4",
+  output:     "#6bb5a6",
+  cacheWrite: "#c9a96e",
+  cacheRead:  "#9b8ec4",
 };
 
 function isDark(): boolean {

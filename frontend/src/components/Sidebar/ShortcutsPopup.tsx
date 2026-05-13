@@ -1,7 +1,7 @@
 import { useAppStore } from "../../store";
 
 const shortcuts = [
-  { keys: "⌘I", action: "Toggle Claude chat panel" },
+  { keys: "⌘I", action: "Toggle chat panel" },
   { keys: "⌘K", action: "Open search" },
   { keys: "⇧⌘,", action: "Open settings" },
   { keys: "⌘O", action: "Expand / collapse all tool blocks" },

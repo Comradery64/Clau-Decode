@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "clau-decode"
 dynamic = ["version"]
-description = "A local web UI for browsing Claude Code chat history"
+description = "A local web UI for browsing and analyzing AI coding assistant chat history"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-keywords = ["claude", "claude-code", "anthropic", "chat-history", "viewer"]
+keywords = ["ai-chat", "chat-history", "viewer", "analytics"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Web Environment",
@@ -44,9 +44,9 @@ dev = [
 clau-decode = "clau_decode.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/nicholasgasior/clau-decode"
-Repository = "https://github.com/nicholasgasior/clau-decode"
-Issues = "https://github.com/nicholasgasior/clau-decode/issues"
+Homepage = "https://github.com/Comradery64/clau-decode"
+Repository = "https://github.com/Comradery64/clau-decode"
+Issues = "https://github.com/Comradery64/clau-decode/issues"
 
 [tool.hatch.version]
 source = "vcs"

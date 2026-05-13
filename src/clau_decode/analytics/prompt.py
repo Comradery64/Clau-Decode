@@ -28,5 +28,6 @@ class PromptIterator:
             yield PromptCost(
                 user_message_id=parent.id,
                 assistant_message_id=msg.id,
+                model=msg.model or "unknown",
                 breakdown=self._extractor.extract(msg),
             )

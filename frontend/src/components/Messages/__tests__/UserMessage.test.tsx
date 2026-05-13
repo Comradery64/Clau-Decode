@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 import { UserMessage } from "../UserMessage";
 import type { Message } from "../../../api/types";
+import { on } from "../../../utils/events";
 
 vi.mock("../../../api/client", () => ({
   api: {
@@ -109,20 +110,24 @@ describe("UserMessage — edit", () => {
   it("clicking save calls api.patchMessage and emits refresh", async () => {
     const { api } = await import("../../../api/client");
     let refreshed = false;
-    window.addEventListener("clau-decode:refresh", () => {
+    const off = on("refresh", () => {
       refreshed = true;
     });
 
-    render(<UserMessage message={makeMessage({ session_id: "sess_x" })} />);
-    fireEvent.click(screen.getByTitle("Edit message"));
-    fireEvent.click(screen.getByText("Save"));
+    try {
+      render(<UserMessage message={makeMessage({ session_id: "sess_x" })} />);
+      fireEvent.click(screen.getByTitle("Edit message"));
+      fireEvent.click(screen.getByText("Save"));
 
-    await waitFor(() => {
-      expect(api.patchMessage).toHaveBeenCalledWith("msg_001", [
-        { type: "text", text: "Hello, Claude!" },
-      ]);
-      expect(refreshed).toBe(true);
-    });
+      await waitFor(() => {
+        expect(api.patchMessage).toHaveBeenCalledWith("msg_001", [
+          { type: "text", text: "Hello, Claude!" },
+        ]);
+        expect(refreshed).toBe(true);
+      });
+    } finally {
+      off();
+    }
   });
 });
 
@@ -148,17 +153,21 @@ describe("UserMessage — delete", () => {
   it("confirming delete calls api.deleteMessage and emits refresh", async () => {
     const { api } = await import("../../../api/client");
     let refreshed = false;
-    window.addEventListener("clau-decode:refresh", () => {
+    const off = on("refresh", () => {
       refreshed = true;
     });
 
-    render(<UserMessage message={makeMessage({ session_id: "sess_y" })} />);
-    fireEvent.click(screen.getByTitle("Delete message"));
-    fireEvent.click(screen.getByText("Delete"));
+    try {
+      render(<UserMessage message={makeMessage({ session_id: "sess_y" })} />);
+      fireEvent.click(screen.getByTitle("Delete message"));
+      fireEvent.click(screen.getByText("Delete"));
 
-    await waitFor(() => {
-      expect(api.deleteMessage).toHaveBeenCalledWith("msg_001");
-      expect(refreshed).toBe(true);
-    });
+      await waitFor(() => {
+        expect(api.deleteMessage).toHaveBeenCalledWith("msg_001");
+        expect(refreshed).toBe(true);
+      });
+    } finally {
+      off();
+    }
   });
 });

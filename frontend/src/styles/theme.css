@@ -1,72 +1,84 @@
 /*
- * Design tokens — extracted from Claude.ai via dembrandt (dembrandt claude.ai).
- * Light mode from: login page render. Dark mode inferred from dark sidebar elements.
+ * Design tokens for Clau-Decode.
  */
+
+/* Lora's slash glyphs are heavy and stylized — they look out of place in path-like
+   text. Override just U+002F (/) and U+005C (\) with a system sans so paths and
+   branch names read cleanly. */
+@font-face {
+  font-family: "ContentSlashOverride";
+  src: local("HelveticaNeue"), local("Helvetica Neue"),
+       local("Helvetica"), local("Arial"),
+       local("SegoeUI"), local("Segoe UI");
+  unicode-range: U+002F, U+005C;
+  font-display: swap;
+}
 
 :root {
   /* --- Backgrounds --- */
   --bg-base: #faf9f5;
-  --bg-sidebar: #f3f2ed;
-  --bg-sidebar-hover: #eceae4;
-  --bg-sidebar-active: #e4e2db;
-  --bg-user-msg: #eceae4;
-  --bg-tool-block: #f0efe9;
-  --bg-tool-result: #f3f2ed;
-  --bg-thinking: #f0efe9;
-  --bg-code: #edece6;
-  --bg-inline-code: rgba(31, 30, 29, 0.07);
+  --bg-sidebar: transparent;
+  --bg-sidebar-hover: #f0eee9;
+  --bg-sidebar-active: #ebe9e3;
+  --bg-user-msg: #f0eee9;
+  --bg-tool-block: #f3f2ed;
+  --bg-tool-result: #f5f4ef;
+  --bg-thinking: #f3f2ed;
+  --bg-code: #f1f0ea;
+  --bg-inline-code: rgba(97, 96, 94, 0.05);
   --bg-input: #faf9f5;
-  --bg-modal-overlay: rgba(0, 0, 0, 0.22);
+  --bg-modal-overlay: rgba(75, 75, 74, 0.15);
   --bg-modal: #faf9f5;
-  /* Code block — light mode uses warm beige matching Claude.ai */
-  --bg-code-block: #f0efe9;
-  --bg-code-block-header: #eceae4;
-  --border-code-block: rgba(31, 30, 29, 0.10);
-  --text-code-lang: #9c9a92;
+  /* Code block — light mode warm beige */
+  --bg-code-block: #f3f2ed;
+  --bg-code-block-header: #f0eee9;
+  --border-code-block: rgba(97, 96, 94, 0.07);
+  --text-code-lang: #95948e;
   /* Syntax highlighting vars — light mode (dark text on warm bg) */
-  --hljs-base: #141413;
-  --hljs-comment: #9c9a92;
-  --hljs-string: #d97706;
-  --hljs-number: #d97706;
-  --hljs-keyword: #141413;
-  --hljs-type: #0f6e6e;
-  --hljs-property: #8a5200;
-  --hljs-operator: #73726c;
-  --hljs-meta: #9c9a92;
+  --hljs-base: #2b2b29;
+  --hljs-comment: #8a8a82;
+  --hljs-string: #4f8a4a;
+  --hljs-number: #a8682a;
+  --hljs-keyword: #8b4f8e;
+  --hljs-function: #9e6f1f;
+  --hljs-type: #9e6f1f;
+  --hljs-property: #3f6b78;
+  --hljs-operator: #6e6e68;
+  --hljs-meta: #8b4f8e;
 
-  --search-highlight-bg: rgba(217, 119, 6, 0.12);
+  --search-highlight-bg: rgba(139, 115, 85, 0.08);
 
-  /* --- Borders — translucent, matching Claude.ai's actual approach --- */
-  --border-subtle: rgba(31, 30, 29, 0.12);
-  --border-default: rgba(31, 30, 29, 0.22);
-  --border-strong: rgba(31, 30, 29, 0.35);
-  --border-code: rgba(31, 30, 29, 0.15);
-  --border-accent: #d97706;
+  /* --- Borders --- */
+  --border-subtle: rgba(97, 96, 94, 0.08);
+  --border-default: rgba(97, 96, 94, 0.15);
+  --border-strong: rgba(97, 96, 94, 0.24);
+  --border-code: rgba(97, 96, 94, 0.10);
+  --border-accent: #8b7355;
 
-  /* --- Text — extracted directly from dembrandt --- */
-  --text-primary: #141413;
-  --text-secondary: #73726c;
-  --text-tertiary: #8a887f;
-  --text-accent: #d97706;
+  /* --- Text --- */
+  --text-primary: #484846;
+  --text-secondary: #7e7d79;
+  --text-tertiary: #8c8a83;
+  --text-accent: #8b7355;
   --text-on-accent: #ffffff;
-  --text-code: #141413;
-  --text-inline-code: #141413;
-  --text-thinking: #8a887f;
+  --text-code: #484846;
+  --text-inline-code: #484846;
+  --text-thinking: #8c8a83;
 
   /* --- Accents --- */
-  --accent-orange: #d97706;
-  --accent-orange-hover: #b45309;
-  --accent-orange-subtle: rgba(217, 119, 6, 0.12);
+  --accent-orange: #8b7355;
+  --accent-orange-hover: #7a6548;
+  --accent-orange-subtle: rgba(139, 115, 85, 0.08);
 
   /* --- Tool blocks --- */
-  --tool-name-color: #141413;
-  --tool-error-bg: #fef2f2;
-  --tool-error-border: #fca5a5;
-  --tool-error-text: #dc2626;
+  --tool-name-color: #484846;
+  --tool-error-bg: #fdf4f3;
+  --tool-error-border: #cb9a99;
+  --tool-error-text: #b95251;
 
-  /* --- Typography — Anthropic Sans + system fallbacks --- */
-  --font-ui: "Anthropic Sans", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-content: "Anthropic Sans", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* --- Typography --- */
+  --font-ui: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-content: "ContentSlashOverride", "Lora", Georgia, "Times New Roman", serif;
   --font-mono: "Berkeley Mono", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
 
   /* --- Sizing --- */
@@ -79,9 +91,9 @@
   --radius-pill: 999px;
 
   /* --- Shadows --- */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --shadow-sm: 0 1px 2px rgba(75, 75, 74, 0.03);
+  --shadow-md: 0 4px 12px rgba(75, 75, 74, 0.06);
+  --shadow-lg: 0 8px 32px rgba(75, 75, 74, 0.08);
 
   /* --- Transitions --- */
   --transition-fast: 120ms ease;
@@ -89,62 +101,64 @@
 }
 
 /* ============================================================
-   DARK MODE — inferred from Claude.ai dark sidebar colors
-   extracted via dembrandt: #181816, #161615, #151514, #dedcd1
+   DARK MODE
    ============================================================ */
 [data-theme="dark"] {
   /* --- Backgrounds --- */
-  --bg-base: #1c1c1a;
-  --bg-sidebar: #161615;
-  --bg-sidebar-hover: #1f1f1d;
-  --bg-sidebar-active: #272725;
-  --bg-user-msg: #252523;
-  --bg-tool-block: #1f1f1d;
-  --bg-tool-result: #1c1c1a;
-  --bg-thinking: #1e1e1c;
-  --bg-code: #141413;
-  --bg-inline-code: rgba(222, 220, 209, 0.14);
-  --bg-input: #252523;
-  --bg-modal-overlay: rgba(0, 0, 0, 0.55);
-  --bg-modal: #1f1f1d;
+  --bg-base: #262624;
+  --bg-sidebar: transparent;
+  --bg-sidebar-hover: #2f2f2c;
+  --bg-sidebar-active: #35352f;
+  --bg-user-msg: #30302e;
+  --bg-tool-block: #2a2a28;
+  --bg-tool-result: #262624;
+  --bg-thinking: #2a2a28;
+  --bg-code: #1f1e1c;
+  --bg-inline-code: rgba(244, 145, 130, 0.13);
+  --bg-input: #30302e;
+  --bg-modal-overlay: rgba(8, 8, 8, 0.45);
+  --bg-modal: #2a2a28;
   /* Code block — dark mode stays terminal-dark */
-  --bg-code-block: #1a1917;
-  --bg-code-block-header: #1f1e1c;
-  --border-code-block: rgba(255, 255, 255, 0.08);
-  --text-code-lang: #73726c;
-  /* Syntax highlighting vars — dark mode (light text on dark bg) */
-  --hljs-base: #c9c7bf;
-  --hljs-comment: #6b6b6b;
-  --hljs-string: #d97706;
-  --hljs-number: #e09a2a;
-  --hljs-keyword: #e8e6df;
-  --hljs-type: #4dc4c4;
-  --hljs-property: #d4962a;
-  --hljs-operator: #a8a69f;
-  --hljs-meta: #9c8850;
-  --search-highlight-bg: rgba(217, 119, 6, 0.18);
+  --bg-code-block: #1f1e1c;
+  --bg-code-block-header: #262624;
+  --border-code-block: rgba(187, 187, 186, 0.06);
+  --text-code-lang: #8a887f;
+  /* Syntax highlighting vars — dark mode */
+  /* Claude.ai-style dark palette: purple keywords, yellow types/functions,
+     green strings, light-teal properties, warm-amber numbers. */
+  --hljs-base: #d6d6d2;
+  --hljs-comment: #7c7c74;
+  --hljs-string: #a3c98b;
+  --hljs-number: #d9986d;
+  --hljs-keyword: #c39ee0;
+  --hljs-function: #e6c187;
+  --hljs-type: #e6c187;
+  --hljs-property: #b8d4dc;
+  --hljs-operator: #a8a89e;
+  --hljs-meta: #c39ee0;
+  --search-highlight-bg: rgba(217, 119, 6, 0.13);
 
   /* --- Borders --- */
-  --border-subtle: rgba(222, 220, 209, 0.10);
-  --border-default: rgba(222, 220, 209, 0.18);
-  --border-strong: rgba(222, 220, 209, 0.28);
-  --border-code: rgba(222, 220, 209, 0.08);
+  --border-subtle: rgba(164, 162, 154, 0.07);
+  --border-default: rgba(164, 162, 154, 0.13);
+  --border-strong: rgba(164, 162, 154, 0.20);
+  --border-code: rgba(164, 162, 154, 0.06);
   --border-accent: #d97706;
 
-  /* --- Text — from dembrandt dark palette --- */
-  --text-primary: #dedcd1;
-  --text-secondary: #9c9a92;
+  /* --- Text --- */
+  --text-primary: #f5f4ed;
+  --text-secondary: #a8a69c;
   --text-tertiary: #8a887f;
   --text-accent: #e09a2a;
   --text-on-accent: #141413;
-  --text-code: #dedcd1;
-  --text-inline-code: #f5c5bc;
+  --text-code: #f5f4ed;
+  --text-inline-code: #f08378;
   --text-thinking: #8a887f;
 
   /* --- Accents --- */
   --accent-orange: #d97706;
   --accent-orange-hover: #f59e0b;
-  --accent-orange-subtle: rgba(217, 119, 6, 0.18);
+  --accent-orange-subtle: rgba(217, 119, 6, 0.13);
 
   /* --- Tool blocks --- */
   --tool-name-color: #dedcd1;
@@ -153,9 +167,9 @@
   --tool-error-text: #f87171;
 
   /* --- Shadows --- */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 1px 2px rgba(8, 8, 8, 0.17);
+  --shadow-md: 0 4px 12px rgba(8, 8, 8, 0.24);
+  --shadow-lg: 0 8px 32px rgba(8, 8, 8, 0.35);
 }
 
 /* --- Reset & base --- */
@@ -169,7 +183,7 @@ html, body, #root {
 
 body {
   font-family: var(--font-ui);
-  background: var(--bg-sidebar);
+  background: var(--bg-base);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -191,10 +205,11 @@ body {
   animation: search-highlight 1.8s ease forwards;
 }
 
-/* --- Native scrollbars — transparent by default, visible when scrolling --- */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: transparent; border-radius: var(--radius-pill); }
+/* --- Native scrollbars: hidden entirely, OverlayScrollbars handles all scrolling --- */
+* {
+  scrollbar-width: none;
+}
+::-webkit-scrollbar { width: 0; height: 0; }
 
 /* --- OverlayScrollbars custom theme --- */
 .os-scrollbar {
@@ -202,6 +217,25 @@ body {
   --os-handle-bg-hover: rgba(0, 0, 0, 0.55);
   --os-handle-bg-active: rgba(0, 0, 0, 0.65);
   --os-size: 8px;
+}
+
+/* Horizontal scrollbar handles in tables and code blocks — color only;
+   visibility is governed by the OverlayScrollbars autoHide policy. */
+.table-wrap .os-scrollbar-horizontal .os-scrollbar-handle,
+.code-block-wrap .os-scrollbar-horizontal .os-scrollbar-handle {
+  background: rgba(0, 0, 0, 0.18);
+}
+.table-wrap .os-scrollbar-horizontal .os-scrollbar-handle:hover,
+.code-block-wrap .os-scrollbar-horizontal .os-scrollbar-handle:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+[data-theme="dark"] .table-wrap .os-scrollbar-horizontal .os-scrollbar-handle,
+[data-theme="dark"] .code-block-wrap .os-scrollbar-horizontal .os-scrollbar-handle {
+  background: rgba(255, 255, 255, 0.15);
+}
+[data-theme="dark"] .table-wrap .os-scrollbar-horizontal .os-scrollbar-handle:hover,
+[data-theme="dark"] .code-block-wrap .os-scrollbar-horizontal .os-scrollbar-handle:hover {
+  background: rgba(255, 255, 255, 0.28);
 }
 
 [data-theme="dark"] .os-scrollbar {
@@ -262,9 +296,7 @@ body {
 }
 .prose-content blockquote p:last-child { margin-bottom: 0; }
 .prose-content .table-wrap { overflow: hidden; border-radius: var(--radius-md); border: 1px solid var(--border-default); margin: 0 0 14px 0; }
-.prose-content .table-scroll { overflow-x: auto; }
 .prose-content table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 14px; }
-.prose-content .table-scroll table { margin: 0; }
 .prose-content th, .prose-content td { padding: 8px 12px; border-right: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); text-align: left; white-space: nowrap; }
 .prose-content th:last-child, .prose-content td:last-child { border-right: none; white-space: normal; }
 .prose-content tbody tr:last-child td { border-bottom: none; }
@@ -350,7 +382,7 @@ body {
 /* Function & section titles */
 .hljs-title,
 .hljs-title.function_,
-.hljs-section { color: var(--hljs-keyword); font-weight: 600; }
+.hljs-section { color: var(--hljs-function); font-weight: 500; }
 
 /* Object properties, HTML/XML attributes & tag names */
 .hljs-property,
@@ -398,3 +430,17 @@ body {
 
 /* Kill browser focus rings — we use custom hover/active states instead */
 :focus { outline: none; }
+
+/* Reveals on hover OR keyboard focus so action affordances are reachable via Tab. */
+.hover-actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+.hover-actions-parent:hover .hover-actions,
+.hover-actions-parent:focus-within .hover-actions,
+.hover-actions:hover,
+.hover-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
