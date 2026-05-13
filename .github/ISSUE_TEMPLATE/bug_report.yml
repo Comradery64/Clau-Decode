@@ -1,0 +1,80 @@
+name: Bug report
+description: Report something that's broken or behaving unexpectedly.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report! Please fill out the form below as completely as you can — clear repro steps make fixes happen faster.
+
+        Note: clau-decode runs entirely on your machine. Please redact any private chat content, file paths, or tokens before pasting logs.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear, concise description of the bug.
+      placeholder: When I click X, the app does Y instead of Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-expected
+    attributes:
+      label: What did you expect to happen?
+      description: What did you think would happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps that reliably trigger the bug.
+      placeholder: |
+        1. Run `clau-decode`
+        2. Open the file viewer for `…`
+        3. Click `…`
+        4. See error
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other (please specify in "What happened?")
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: clau-decode version
+      description: Run `clau-decode --version` and paste the output.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / output
+      description: |
+        Paste any tracebacks, console output, or browser devtools errors. They'll be rendered as a code block automatically — no need to add backticks.
+      render: shell
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
+        - label: I'm running the latest released version of clau-decode (or a recent `main`).
+          required: true

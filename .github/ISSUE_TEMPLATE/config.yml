@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+contact_links:
+  # If GitHub Discussions is enabled on this repo, route questions and
+  # general chat there instead of the issue tracker.
+  - name: Questions and general discussion
+    url: https://github.com/Comradery64/clau-decode/discussions
+    about: For usage questions, ideas in flux, or anything that isn't a clear bug or feature request, please use Discussions.
