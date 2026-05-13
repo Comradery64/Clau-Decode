@@ -1,0 +1,1 @@
+import{r as n}from"./react-DpJIJ3La.js";import{j as o}from"./index-D10qLKDx.js";function p(t,s){const[r,e]=n.useState(t);return n.useEffect(()=>{const c=setTimeout(()=>e(t),s);return()=>clearTimeout(c)},[t,s]),r}function m(t){return t.split(/<b>|<\/b>/).map((r,e)=>e%2===1?o.jsx("strong",{children:r},e):o.jsx(n.Fragment,{children:r},e))}export{m as r,p as u};
