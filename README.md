@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Comradery64/clau-decode/actions/workflows/ci.yml">
-    <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Comradery64/clau-decode/ci.yml?branch=main&label=CI&style=flat-square">
+  <a href="https://github.com/Comradery64/Clau-Decode/actions/workflows/ci.yml">
+    <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Comradery64/Clau-Decode/ci.yml?branch=main&label=CI&style=flat-square">
   </a>
   <a href="LICENSE">
     <img alt="License" src="https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue?style=flat-square">
@@ -14,7 +14,7 @@
   <a href="pyproject.toml">
     <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square">
   </a>
-  <a href="https://github.com/Comradery64/clau-decode/blob/main/CHANGELOG.md">
+  <a href="https://github.com/Comradery64/Clau-Decode/blob/main/CHANGELOG.md">
     <img alt="Changelog" src="https://img.shields.io/badge/changelog-keep--a--changelog-orange?style=flat-square">
   </a>
 </p>
@@ -198,8 +198,8 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for a system diagram and deeper notes.
 ## Development
 
 ```bash
-git clone https://github.com/Comradery64/clau-decode
-cd clau-decode
+git clone https://github.com/Comradery64/Clau-Decode
+cd Clau-Decode
 
 # Install backend deps + build the frontend
 make dev

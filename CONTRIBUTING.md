@@ -16,8 +16,8 @@ If you're not sure whether something is in scope, open an issue first and we can
 Clau-Decode has a Python 3.10+ backend (FastAPI + SQLite, tested with pytest) and a TypeScript frontend (React 18 + Vite, tested with vitest). You'll need Python 3.10+, [`uv`](https://docs.astral.sh/uv/), and Node.js 20+.
 
 ```bash
-git clone https://github.com/Comradery64/clau-decode
-cd clau-decode
+git clone https://github.com/Comradery64/Clau-Decode
+cd Clau-Decode
 
 # Install backend deps + build the frontend
 make dev
