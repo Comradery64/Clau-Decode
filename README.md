@@ -1,19 +1,35 @@
-# Clau-Decode
+<h1 align="center">clau-decode</h1>
 
-Browse, search, and analyze your AI coding assistant chat history — entirely local, entirely private.
+<p align="center">
+  <em>Browse, search, and analyze your AI coding assistant chat history — entirely local, entirely private.</em>
+</p>
 
-All data stays on your machine. Nothing is sent to any server.
+<p align="center">
+  <a href="https://github.com/Comradery64/clau-decode/actions/workflows/ci.yml">
+    <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Comradery64/clau-decode/ci.yml?branch=main&label=CI&style=flat-square">
+  </a>
+  <a href="LICENSE">
+    <img alt="License" src="https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue?style=flat-square">
+  </a>
+  <a href="pyproject.toml">
+    <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square">
+  </a>
+  <a href="https://github.com/Comradery64/clau-decode/blob/main/CHANGELOG.md">
+    <img alt="Changelog" src="https://img.shields.io/badge/changelog-keep--a--changelog-orange?style=flat-square">
+  </a>
+</p>
+
+> **Note (Demo):** `<demo gif placeholder — record with VHS later: docs/demo.tape>`
 
 ---
 
-## Highlights
+## Why clau-decode?
 
-- **Redesigned home page** — hero with inline live search, "Pick up where you left off" featured card, 30-day activity heatmap, 7-day sparklines, headline insights, and a clickable strip of recent projects.
-- **Side-by-side file viewer** — opens as a resizable split pane (not a modal), auto-collapses the sidebar, with word-wrapped source, markdown preview, and in-place editing.
-- **Refined dark mode** — restrained, surface-based design that holds up to long viewing sessions.
-- **Cross-session analytics** — token usage, costs, top tools, most-touched files, and optimization tips, all derived locally.
-
----
+Your AI coding assistant writes a small mountain of JSONL session files into
+`~/.claude/projects/` — useful, but unreadable and impossible to search by hand.
+clau-decode reads those files locally, indexes them into SQLite, and serves a
+fast browser UI with full-text search, conversation rendering, analytics, and a
+recap engine.
 
 ## Features
 
@@ -78,22 +94,17 @@ All data stays on your machine. Nothing is sent to any server.
 - Click the avatar in the bottom-left to switch
 
 ### Themes
-Light, dark, and system theme. Dark mode is tuned for long sessions — neutral surfaces, accent reserved for primary actions and live signals.
+- Light, dark, and system theme
+- Dark mode is tuned for long sessions — neutral surfaces, accent reserved for primary actions and live signals
 
-### Keyboard shortcuts
+## Quickstart
 
-| Shortcut | Action |
-|----------|--------|
-| `Cmd+K` | Open global search |
-| `Cmd+O` | Expand/collapse all tool + thinking blocks |
-| `Cmd+E` | Toggle full tool results |
-| `Cmd+S` | Save (in file editor) |
-| `Cmd+I` | Toggle chat panel |
-| `Cmd+B` | Toggle sidebar |
-| `Shift+Cmd+,` | Open settings |
-| `Esc` | Close dialog / search |
+```bash
+pip install clau-decode    # or: uv tool install clau-decode
+clau-decode                 # opens http://localhost:4242
+```
 
----
+Requires Python 3.10+. All data stays on your machine — no telemetry.
 
 ## Installation
 
@@ -113,21 +124,12 @@ Or with [`pipx`](https://pipx.pypa.io/):
 pipx install clau-decode
 ```
 
-Requires **Python 3.10+**. The wheel ships the pre-built frontend, so no Node.js is needed at install time.
+The wheel ships the pre-built frontend, so **no Node.js is needed at install
+time** — only at development time.
 
----
+## Usage
 
-## Quick start
-
-```bash
-clau-decode
-```
-
-The app scans your session files, starts a local server, and opens your browser at `http://localhost:4242`.
-
----
-
-## CLI
+### CLI
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -153,11 +155,23 @@ The app scans your session files, starts a local server, and opens your browser 
 | `clau-decode stats` | Print statistical metrics |
 | `clau-decode tips` | Print optimization tips |
 
----
+### Keyboard shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+K` | Open global search |
+| `Cmd+O` | Expand/collapse all tool + thinking blocks |
+| `Cmd+E` | Toggle full tool results |
+| `Cmd+S` | Save (in file editor) |
+| `Cmd+I` | Toggle chat panel |
+| `Cmd+B` | Toggle sidebar |
+| `Shift+Cmd+,` | Open settings |
+| `Esc` | Close dialog / search |
 
 ## Configuration
 
-Settings are saved to `~/.config/clau-decode/config.json`. Edit in the UI or directly:
+Settings are saved to `~/.config/clau-decode/config.json`. Edit them in the UI,
+or directly:
 
 ```json
 {
@@ -169,9 +183,17 @@ Settings are saved to `~/.config/clau-decode/config.json`. Edit in the UI or dir
 }
 ```
 
-The session index lives at `~/.cache/clau-decode/index.db`. Delete it to force a full rescan, or run `clau-decode --force-refresh`.
+The session index lives at `~/.cache/clau-decode/index.db`. Delete it to force a
+full rescan, or run `clau-decode --force-refresh`.
 
----
+## Architecture
+
+clau-decode is a local-first FastAPI server that scans your AI coding
+assistant's JSONL session files into a SQLite index, serves a React +
+TypeScript SPA, and optionally drives the Claude CLI in stream-json mode for
+in-app sessions.
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for a system diagram and deeper notes.
 
 ## Development
 
@@ -192,17 +214,41 @@ make test
 make frontend
 ```
 
-Requires Python 3.10+, [`uv`](https://docs.astral.sh/uv/), and Node.js 20+.
+Requires Python 3.10+, [`uv`](https://docs.astral.sh/uv/), and Node.js 20+ for
+frontend development.
 
----
+GitHub Actions runs lint, type-check, and the Python + frontend test suites on
+every PR — see [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+## Contributing
+
+Pull requests are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) for
+the dev setup, code style, and commit conventions, and our
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+If you discover a security issue, please follow the responsible disclosure
+process in [`SECURITY.md`](SECURITY.md) — do **not** open a public issue.
+
+## Related docs
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — system diagram and component overview
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — dev setup and PR guidelines
+- [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — community expectations
+- [`SECURITY.md`](SECURITY.md) — responsible disclosure
+- [`CHANGELOG.md`](CHANGELOG.md) — release notes
 
 ## License
 
-This project is licensed under the **Functional Source License, Version 1.1, with the Apache 2.0 Future License** ([FSL-1.1-Apache-2.0](LICENSE)).
+This project is licensed under the **Functional Source License, Version 1.1,
+with the Apache 2.0 Future License**
+([FSL-1.1-Apache-2.0](LICENSE)).
 
 In short:
-- ✅ Free for personal use, internal business use, modification, and forking.
-- ❌ You may not use it to build a competing commercial product or service.
-- 🕓 Each release automatically converts to Apache 2.0 two years after publication.
+- Free for personal use, internal business use, modification, and forking.
+- You may not use it to build a competing commercial product or service.
+- Each release automatically converts to Apache 2.0 two years after publication.
 
-See the [LICENSE](LICENSE) file for the full text and the [FSL FAQ](https://fsl.software/) for context.
+See [`LICENSE`](LICENSE) for the full text and the
+[FSL FAQ](https://fsl.software/) for context.
