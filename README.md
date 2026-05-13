@@ -198,4 +198,11 @@ Requires Python 3.10+, [`uv`](https://docs.astral.sh/uv/), and Node.js 20+.
 
 ## License
 
-MIT
+This project is licensed under the **Functional Source License, Version 1.1, with the Apache 2.0 Future License** ([FSL-1.1-Apache-2.0](LICENSE)).
+
+In short:
+- ✅ Free for personal use, internal business use, modification, and forking.
+- ❌ You may not use it to build a competing commercial product or service.
+- 🕓 Each release automatically converts to Apache 2.0 two years after publication.
+
+See the [LICENSE](LICENSE) file for the full text and the [FSL FAQ](https://fsl.software/) for context.

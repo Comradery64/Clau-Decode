@@ -7,14 +7,13 @@ name = "clau-decode"
 dynamic = ["version"]
 description = "A local web UI for browsing and analyzing AI coding assistant chat history"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "FSL-1.1-Apache-2.0" }
 requires-python = ">=3.10"
 keywords = ["ai-chat", "chat-history", "viewer", "analytics"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Web Environment",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
