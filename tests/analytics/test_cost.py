@@ -70,10 +70,17 @@ class TestCostEngine:
 
 
 class TestCostRoutes:
-    async def test_cost_route_exists(self):
+    async def test_cost_route_exists(self, tmp_path):
         from httpx import ASGITransport, AsyncClient
 
-        from clau_decode.server import app
+        from clau_decode.config import load_config
+        from clau_decode.db import Database
+        from clau_decode.server import create_app
+
+        db_path = tmp_path / "test.db"
+        async with Database(db_path) as db:
+            await db.init_schema()
+        app = create_app(load_config(), db_path)
 
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -83,10 +90,17 @@ class TestCostRoutes:
             assert r.status_code == 404
             assert r.json().get("detail") == "Session not found"
 
-    async def test_pricing_route_exists(self):
+    async def test_pricing_route_exists(self, tmp_path):
         from httpx import ASGITransport, AsyncClient
 
-        from clau_decode.server import app
+        from clau_decode.config import load_config
+        from clau_decode.db import Database
+        from clau_decode.server import create_app
+
+        db_path = tmp_path / "test.db"
+        async with Database(db_path) as db:
+            await db.init_schema()
+        app = create_app(load_config(), db_path)
 
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
