@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-clau-decode is in the 0.x series. Security fixes are applied to the latest minor version; older 0.x minors are not back-patched.
+Clau-Decode is in the 0.x series. Security fixes are applied to the latest minor version; older 0.x minors are not back-patched.
 
 | Version       | Supported |
 | ------------- | --------- |
@@ -30,7 +30,7 @@ What to expect:
 
 ## Scope and threat model
 
-clau-decode runs entirely on the user's machine and binds to `127.0.0.1` by default. There is no telemetry, no remote backend, and no authentication layer — the security model assumes the local user trusts processes running as themselves.
+Clau-Decode runs entirely on the user's machine and binds to `127.0.0.1` by default. There is no telemetry, no remote backend, and no authentication layer — the security model assumes the local user trusts processes running as themselves.
 
 The interesting attack surface is therefore narrow:
 

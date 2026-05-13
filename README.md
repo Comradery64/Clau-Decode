@@ -1,4 +1,4 @@
-<h1 align="center">clau-decode</h1>
+<h1 align="center">Clau-Decode</h1>
 
 <p align="center">
   <em>Browse, search, and analyze your AI coding assistant chat history — entirely local, entirely private.</em>
@@ -23,11 +23,11 @@
 
 ---
 
-## Why clau-decode?
+## Why Clau-Decode?
 
 Your AI coding assistant writes a small mountain of JSONL session files into
 `~/.claude/projects/` — useful, but unreadable and impossible to search by hand.
-clau-decode reads those files locally, indexes them into SQLite, and serves a
+Clau-Decode reads those files locally, indexes them into SQLite, and serves a
 fast browser UI with full-text search, conversation rendering, analytics, and a
 recap engine.
 
@@ -188,7 +188,7 @@ full rescan, or run `clau-decode --force-refresh`.
 
 ## Architecture
 
-clau-decode is a local-first FastAPI server that scans your AI coding
+Clau-Decode is a local-first FastAPI server that scans your AI coding
 assistant's JSONL session files into a SQLite index, serves a React +
 TypeScript SPA, and optionally drives the Claude CLI in stream-json mode for
 in-app sessions.

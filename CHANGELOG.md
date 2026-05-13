@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to clau-decode will be documented in this file.
+All notable changes to Clau-Decode will be documented in this file.
 
 The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the project is in the 0.x series, breaking changes may land in any minor release; we'll call them out clearly.
 
