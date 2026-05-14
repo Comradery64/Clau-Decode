@@ -763,6 +763,7 @@ class Database:
         # interpreted as ordinary terms (AND'd by default), not column filters
         # or NOT operators. This is a search-quality fix, not a security fix.
         import re as _re
+
         sanitized = _re.sub(r"[^\w\s]", " ", query).strip()
         if not sanitized:
             return []
