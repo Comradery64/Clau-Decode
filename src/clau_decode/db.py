@@ -758,6 +758,16 @@ class Database:
     ) -> list[SearchHit]:
         assert self._conn is not None
 
+        # FTS5 treats `-`, `"`, `:`, etc. as operators. Coerce user input to
+        # space-separated word tokens so queries like "eye-candy" or "a:b" are
+        # interpreted as ordinary terms (AND'd by default), not column filters
+        # or NOT operators. This is a search-quality fix, not a security fix.
+        import re as _re
+        sanitized = _re.sub(r"[^\w\s]", " ", query).strip()
+        if not sanitized:
+            return []
+        match_query = sanitized
+
         if project_id is not None:
             sql = """
                 SELECT
@@ -776,7 +786,7 @@ class Database:
                 ORDER BY s.updated_at DESC
                 LIMIT ?
             """
-            params: tuple = (query, project_id, limit)
+            params: tuple = (match_query, project_id, limit)
         else:
             sql = """
                 SELECT
@@ -794,7 +804,7 @@ class Database:
                 ORDER BY s.updated_at DESC
                 LIMIT ?
             """
-            params = (query, limit)
+            params = (match_query, limit)
 
         async with self._conn.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
