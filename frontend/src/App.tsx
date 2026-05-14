@@ -34,7 +34,15 @@ const ShortcutsPopup = React.lazy(() => import("./components/Sidebar/ShortcutsPo
 const FileViewer = React.lazy(() => import("./components/FileViewer/FileViewer"));
 
 export default function App() {
-  const { isSettingsOpen, isSearchOpen, isHelpOpen, isShortcutsOpen, viewingFilePath } = useAppStore();
+  // Five individual selectors instead of `useAppStore()` without a selector —
+  // zustand v5 uses Object.is on the full-state return, which would re-render
+  // App on every state change (including unrelated ones like a sidebar click).
+  // Per-field selectors only re-render when the specific field changes.
+  const isSettingsOpen = useAppStore((s) => s.isSettingsOpen);
+  const isSearchOpen = useAppStore((s) => s.isSearchOpen);
+  const isHelpOpen = useAppStore((s) => s.isHelpOpen);
+  const isShortcutsOpen = useAppStore((s) => s.isShortcutsOpen);
+  const viewingFilePath = useAppStore((s) => s.viewingFilePath);
   const route = useRoute();
   const chatIdFromUrl = getChatIdFromRoute(route);
 
