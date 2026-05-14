@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { useAppStore } from "./store";
-import { createEventSource, getConfigCached } from "./api/client";
+import { api, createEventSource, getConfigCached } from "./api/client";
 import { useRoute, getChatIdFromRoute } from "./router";
 import { emit } from "./utils/events";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -51,6 +51,11 @@ export default function App() {
     // Cached so SettingsModal's first open paints instantly off the same
     // network round-trip used here for theme.
     getConfigCached().then((cfg) => applyTheme(cfg.theme)).catch(() => {});
+    // Stash host info in the store so SessionItem etc. can gate host-side
+    // actions (Open in terminal, Reveal in Finder) when accessed remotely.
+    api.getHostInfo()
+      .then((info) => useAppStore.getState().setHostInfo(info))
+      .catch(() => {});
   }, []);
 
   // Preload the lazy chunks the user will likely hit first so they're ready

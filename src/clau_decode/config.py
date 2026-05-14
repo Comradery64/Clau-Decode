@@ -36,7 +36,9 @@ def get_config_path() -> Path:
     Returns:
         ``<xdg_config>/clau-decode/config.json``
     """
-    xdg_config = os.environ.get("XDG_CONFIG_HOME", "") or str(Path("~/.config").expanduser())
+    xdg_config = os.environ.get("XDG_CONFIG_HOME", "") or str(
+        Path("~/.config").expanduser()
+    )
     return Path(xdg_config) / "clau-decode" / "config.json"
 
 
@@ -49,11 +51,15 @@ def get_db_path() -> Path:
     Returns:
         ``<xdg_cache>/clau-decode/index.db``
     """
-    xdg_cache = os.environ.get("XDG_CACHE_HOME", "") or str(Path("~/.cache").expanduser())
+    xdg_cache = os.environ.get("XDG_CACHE_HOME", "") or str(
+        Path("~/.cache").expanduser()
+    )
     return Path(xdg_cache) / "clau-decode" / "index.db"
 
 
-def load_config(extra_paths: list[str] | None = None, port: int | None = None) -> AppConfig:
+def load_config(
+    extra_paths: list[str] | None = None, port: int | None = None
+) -> AppConfig:
     """Load config from disk and apply any CLI overrides.
 
     If the config file does not exist, a default ``AppConfig()`` is returned.

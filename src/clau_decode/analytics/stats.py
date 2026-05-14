@@ -55,8 +55,12 @@ class ModelUsageScanner:
 
     def scan(self, messages: list[Message]) -> list[dict[str, Any]]:
         buckets: dict[str, dict[str, int]] = defaultdict(
-            lambda: {"message_count": 0, "input_tokens": 0,
-                     "output_tokens": 0, "total_tokens": 0}
+            lambda: {
+                "message_count": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            }
         )
         for msg in messages:
             if msg.role != "assistant" or not msg.model or not msg.usage:
@@ -65,9 +69,12 @@ class ModelUsageScanner:
             b["message_count"] += 1
             b["input_tokens"] += msg.usage.input_tokens
             b["output_tokens"] += msg.usage.output_tokens
-            b["total_tokens"] += (msg.usage.input_tokens + msg.usage.output_tokens
-                                  + msg.usage.cache_creation_input_tokens
-                                  + msg.usage.cache_read_input_tokens)
+            b["total_tokens"] += (
+                msg.usage.input_tokens
+                + msg.usage.output_tokens
+                + msg.usage.cache_creation_input_tokens
+                + msg.usage.cache_read_input_tokens
+            )
         result = [{"model": model, **counts} for model, counts in buckets.items()]
         return sorted(result, key=lambda r: r["total_tokens"], reverse=True)
 
@@ -81,8 +88,7 @@ class ToolUsageScanner:
             for block in msg.content_blocks:
                 if isinstance(block, ToolUseBlock):
                     counts[block.name] += 1
-        return [{"tool": name, "count": count}
-                for name, count in counts.most_common()]
+        return [{"tool": name, "count": count} for name, count in counts.most_common()]
 
 
 class FileTouchScanner:
@@ -101,9 +107,11 @@ class FileTouchScanner:
             for block in msg.content_blocks:
                 if not isinstance(block, ToolUseBlock):
                     continue
-                path = (block.input.get("file_path") or block.input.get("path") or "")
+                path = block.input.get("file_path") or block.input.get("path") or ""
                 if not path or not isinstance(path, str):
                     continue
                 counts[path] += 1
-        return [{"file": path, "count": count}
-                for path, count in counts.most_common(self._top_n)]
+        return [
+            {"file": path, "count": count}
+            for path, count in counts.most_common(self._top_n)
+        ]

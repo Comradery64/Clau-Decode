@@ -66,17 +66,19 @@ class RepeatedFileReadRule:
 
         tips = []
         for path, count in sorted(flagged.items(), key=lambda x: -x[1]):
-            tips.append(Tip(
-                rule_id="repeated_file_read",
-                severity="warning",
-                title=f"File read {count}× without edit: {path.split('/')[-1]}",
-                detail=(
-                    "Reading the same file repeatedly re-sends its full content on every "
-                    "prompt turn. Consider reading it once and referencing it from context, "
-                    "or check whether the assistant has already loaded this file."
-                ),
-                evidence=[f"{path} — read {count} times"],
-            ))
+            tips.append(
+                Tip(
+                    rule_id="repeated_file_read",
+                    severity="warning",
+                    title=f"File read {count}× without edit: {path.split('/')[-1]}",
+                    detail=(
+                        "Reading the same file repeatedly re-sends its full content on every "
+                        "prompt turn. Consider reading it once and referencing it from context, "
+                        "or check whether the assistant has already loaded this file."
+                    ),
+                    evidence=[f"{path} — read {count} times"],
+                )
+            )
         return tips
 
 
@@ -85,7 +87,9 @@ def _result_char_count(block: ToolResultBlock) -> int:
         return 0
     if isinstance(block.content, str):
         return len(block.content)
-    return sum(len(item.get("text", "")) for item in block.content if isinstance(item, dict))
+    return sum(
+        len(item.get("text", "")) for item in block.content if isinstance(item, dict)
+    )
 
 
 class OversizedToolResultRule:
@@ -104,26 +108,31 @@ class OversizedToolResultRule:
                 if size < self._threshold:
                     continue
                 size_k = round(size / 1_000)
-                tips.append(Tip(
-                    rule_id="oversized_tool_result",
-                    severity="warning",
-                    title=f"Oversized tool result (~{size_k}k chars)",
-                    detail=(
-                        "This result was included verbatim in the context window. "
-                        "Large results consume expensive input tokens on every subsequent "
-                        "turn. Consider truncating output, using grep/head, or asking "
-                        "the assistant to request only the relevant section."
-                    ),
-                    evidence=[f"~{size_k}k chars (tool_use_id: {block.tool_use_id})"],
-                ))
+                tips.append(
+                    Tip(
+                        rule_id="oversized_tool_result",
+                        severity="warning",
+                        title=f"Oversized tool result (~{size_k}k chars)",
+                        detail=(
+                            "This result was included verbatim in the context window. "
+                            "Large results consume expensive input tokens on every subsequent "
+                            "turn. Consider truncating output, using grep/head, or asking "
+                            "the assistant to request only the relevant section."
+                        ),
+                        evidence=[
+                            f"~{size_k}k chars (tool_use_id: {block.tool_use_id})"
+                        ],
+                    )
+                )
         return tips
 
 
 class LowCacheHitRule:
     """Flag corpora where cache-read tokens are < ratio_threshold of all input-type tokens."""
 
-    def __init__(self, ratio_threshold: float = 0.10,
-                 min_input_tokens: int = 5_000) -> None:
+    def __init__(
+        self, ratio_threshold: float = 0.10, min_input_tokens: int = 5_000
+    ) -> None:
         self._ratio = ratio_threshold
         self._min_input = min_input_tokens
 
@@ -133,9 +142,11 @@ class LowCacheHitRule:
         for msg in messages:
             if msg.role != "assistant" or not msg.usage:
                 continue
-            total_input += (msg.usage.input_tokens
-                            + msg.usage.cache_read_input_tokens
-                            + msg.usage.cache_creation_input_tokens)
+            total_input += (
+                msg.usage.input_tokens
+                + msg.usage.cache_read_input_tokens
+                + msg.usage.cache_creation_input_tokens
+            )
             total_cache_read += msg.usage.cache_read_input_tokens
 
         if total_input < self._min_input:
@@ -147,17 +158,19 @@ class LowCacheHitRule:
 
         pct = round(ratio * 100, 1)
         threshold_pct = round(self._ratio * 100, 1)
-        return [Tip(
-            rule_id="low_cache_hit",
-            severity="info",
-            title=f"Low cache hit ratio ({pct}%)",
-            detail=(
-                f"Less than {threshold_pct:g}% of input tokens came from cache reads. "
-                "Pinning large, stable content (system prompts, file context) with "
-                "cache_control can substantially reduce cost and latency on long sessions."
-            ),
-            evidence=[
-                f"Cache hit ratio: {pct}% "
-                f"({total_cache_read:,} cache-read tokens vs {total_input:,} total input tokens)"
-            ],
-        )]
+        return [
+            Tip(
+                rule_id="low_cache_hit",
+                severity="info",
+                title=f"Low cache hit ratio ({pct}%)",
+                detail=(
+                    f"Less than {threshold_pct:g}% of input tokens came from cache reads. "
+                    "Pinning large, stable content (system prompts, file context) with "
+                    "cache_control can substantially reduce cost and latency on long sessions."
+                ),
+                evidence=[
+                    f"Cache hit ratio: {pct}% "
+                    f"({total_cache_read:,} cache-read tokens vs {total_input:,} total input tokens)"
+                ],
+            )
+        ]

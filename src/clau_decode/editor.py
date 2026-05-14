@@ -15,6 +15,7 @@ is unknown to the CLI's internal index).
 
 Legacy in-place helpers are kept for the test suite only.
 """
+
 from __future__ import annotations
 
 import json
@@ -104,6 +105,7 @@ def swap_session(
 # Legacy in-place helpers (kept for tests; not used by server routes)
 # ---------------------------------------------------------------------------
 
+
 def backup_session(path: Path) -> Path:
     """Copy path to <path>.bak.<YYYYMMDD_HHMMSS>[_N].jsonl and return the backup path."""
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -151,8 +153,11 @@ def edit_content_in_session(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _read_lines(path: Path) -> list[str]:
-    return [l for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    return [
+        line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
 
 
 def _write_lines(path: Path, lines: list[str]) -> None:

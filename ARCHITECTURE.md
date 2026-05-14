@@ -6,7 +6,7 @@ contributor or reviewer needs to navigate the code.
 
 ## Overview
 
-clau-decode is a single-process, local-first application. A FastAPI server
+Clau-Decode is a single-process, local-first application. A FastAPI server
 (uvicorn, bound to `127.0.0.1:4242` by default) scans your AI coding
 assistant's JSONL session files into a SQLite index, exposes them through a
 JSON HTTP API plus a Server-Sent Events stream, and serves a pre-built React +
@@ -108,7 +108,7 @@ flowchart LR
 
 ## Storage
 
-clau-decode follows the [XDG Base Directory
+Clau-Decode follows the [XDG Base Directory
 spec](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html):
 
 | Purpose | Path (default) | Notes |
