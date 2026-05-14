@@ -55,7 +55,7 @@ describe("SessionItem", () => {
     expect(el.style.background).toBe("transparent");
   });
 
-  it("renders long titles in full and wraps to multiple lines", () => {
+  it("keeps long titles on one line and exposes them via hover tooltip", () => {
     const longTitle = "A".repeat(100);
     const { container } = render(
       <SessionItem
@@ -64,14 +64,18 @@ describe("SessionItem", () => {
         onClick={() => {}}
       />
     );
-    const titleEl = container.querySelector("[data-testid='session-title']");
+    const titleEl = container.querySelector("[data-testid='session-title']") as HTMLElement;
     expect(titleEl).toBeTruthy();
-    // Full title text is present — no truncation.
-    expect(titleEl?.textContent).toBe(longTitle);
-    // Wrap-friendly styles applied (replaces the previous ellipsis cap).
-    const style = (titleEl as HTMLElement).style;
-    expect(style.whiteSpace).toBe("normal");
-    expect(style.overflowWrap).toBe("anywhere");
+    // Full title text is in the DOM (will be visually clipped by ellipsis
+    // when the sidebar is narrower than the title).
+    expect(titleEl.textContent).toBe(longTitle);
+    // Single-line truncation styles applied.
+    expect(titleEl.style.whiteSpace).toBe("nowrap");
+    expect(titleEl.style.overflow).toBe("hidden");
+    expect(titleEl.style.textOverflow).toBe("ellipsis");
+    // Native title attribute reveals the full text on hover so users can
+    // recover the truncated portion without widening the sidebar.
+    expect(titleEl.getAttribute("title")).toBe(longTitle);
   });
 
   it("fires onClick when clicked", () => {

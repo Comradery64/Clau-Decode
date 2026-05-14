@@ -317,6 +317,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
 
               <span
                 data-testid="session-title"
+                title={displayTitle}
                 style={{
                   flex: 1,
                   minWidth: 0,
@@ -324,12 +325,13 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                   color: "var(--text-primary)",
                   fontWeight: isActive ? 500 : 400,
                   lineHeight: "1.35",
-                  // Wrap to as many lines as the title needs — the sidebar's
-                  // drag-resize lets users widen it to fit long titles, so
-                  // the previous single-line ellipsis was redundant noise.
-                  whiteSpace: "normal",
-                  overflowWrap: "anywhere",
-                  wordBreak: "break-word",
+                  // Single line — users widen the sidebar (drag handle on the
+                  // right edge) to fit long titles in full. When the panel is
+                  // narrower than the title, ellipsis truncates and the
+                  // title-attribute tooltip reveals the full text on hover.
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
                 }}
               >
                 {displayTitle}
