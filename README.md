@@ -19,7 +19,19 @@
   </a>
 </p>
 
-https://github.com/user-attachments/assets/6f5a9a09-fbab-467f-82b1-c2e642dc8726
+<p align="center">
+  <video
+    src="https://github.com/user-attachments/assets/6f5a9a09-fbab-467f-82b1-c2e642dc8726"
+    poster="https://github.com/Comradery64/Clau-Decode/raw/main/docs/demo-poster.jpg"
+    controls
+    muted
+    playsinline
+    width="820">
+    <a href="https://github.com/user-attachments/assets/6f5a9a09-fbab-467f-82b1-c2e642dc8726">
+      <img src="https://github.com/Comradery64/Clau-Decode/raw/main/docs/demo-poster.jpg" alt="Clau-Decode demo — click to play" width="820">
+    </a>
+  </video>
+</p>
 
 ---
 
