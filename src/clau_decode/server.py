@@ -82,7 +82,13 @@ def _derive_bin_name(file_path: str) -> str:
 
     ~/.claude/projects/... → .claude → claude
     ~/.cc-mirror/zai/config/projects/... → zai
+
+    If the inferred name isn't on PATH (e.g. demo data living under a
+    `demo-data/projects/` tree where the parent isn't a real CLI), fall back
+    to the plain `claude` binary.
     """
+    import shutil as _shutil
+
     parts = Path(file_path).parts
     for i, p in enumerate(parts):
         if p == "projects":
@@ -90,7 +96,9 @@ def _derive_bin_name(file_path: str) -> str:
             while j >= 0 and parts[j] == "config":
                 j -= 1
             if j >= 0:
-                return parts[j].lstrip(".")
+                candidate = parts[j].lstrip(".")
+                if _shutil.which(candidate) is not None:
+                    return candidate
             break
     return "claude"
 
