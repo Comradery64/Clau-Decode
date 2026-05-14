@@ -1,12 +1,20 @@
 """Tests for TokenAnalyticsService."""
+
 from clau_decode.models import Message, TokenUsage
 from datetime import datetime, timezone
 
 
-def _asst(id: str, input: int, output: int,
-          ts: datetime | None = None, parent_id: str | None = None) -> Message:
+def _asst(
+    id: str,
+    input: int,
+    output: int,
+    ts: datetime | None = None,
+    parent_id: str | None = None,
+) -> Message:
     return Message(
-        id=id, session_id="s1", role="assistant",
+        id=id,
+        session_id="s1",
+        role="assistant",
         parent_id=parent_id,
         timestamp=ts,
         usage=TokenUsage(input_tokens=input, output_tokens=output),
@@ -24,6 +32,7 @@ SESSION_MESSAGES = [
 class TestTokenAnalyticsService:
     def setup_method(self):
         from clau_decode.analytics.service import TokenAnalyticsService
+
         self.svc = TokenAnalyticsService()
 
     def test_session_totals(self):
@@ -55,14 +64,16 @@ class TestAnalyticsRoutes:
         from clau_decode.server import create_app
         from clau_decode.config import load_config
         from clau_decode.db import Database
+
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "test.db"
             # Initialise schema so the route can query the DB
             async with Database(db_path) as db:
                 await db.init_schema()
             app = create_app(load_config(), db_path)
-            async with AsyncClient(transport=ASGITransport(app=app),
-                                   base_url="http://test") as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
                 r = await client.get("/api/analytics/sessions/nonexistent/tokens")
         # Route must exist — 404 (session not found) is acceptable; 404 from
         # missing route would also be 404, but the body distinguishes them.

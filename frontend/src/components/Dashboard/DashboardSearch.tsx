@@ -8,6 +8,7 @@ import { useDebounce } from "../../utils/useDebounce";
 import { useLsSet } from "../../utils/useLsSet";
 import { formatRelative } from "../../utils/formatRelative";
 import { navigateTo } from "../../router";
+import { renderSnippet } from "../../utils/renderSnippet";
 import { ScrollContainer } from "../ScrollContainer";
 
 export function DashboardSearch() {
@@ -216,7 +217,7 @@ export function DashboardSearch() {
                       lineHeight: 1.4,
                       marginBottom: hit.timestamp ? "4px" : 0,
                     }}>
-                      {hit.snippet}
+                      {renderSnippet(hit.snippet)}
                     </div>
                     {hit.timestamp && (
                       <div style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>

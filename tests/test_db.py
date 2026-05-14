@@ -12,6 +12,7 @@ from clau_decode.models import Message, Project, Session, TextBlock
 @pytest.fixture
 async def db():
     from clau_decode.db import Database
+
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "test.db"
         async with Database(db_path) as database:
@@ -106,7 +107,9 @@ class TestSessions:
         assert len(sessions) == 1
         assert sessions[0].id == sample_session.id
 
-    async def test_get_sessions_filtered_by_project(self, db, sample_project, sample_session):
+    async def test_get_sessions_filtered_by_project(
+        self, db, sample_project, sample_session
+    ):
         await db.upsert_project(sample_project)
         await db.upsert_session(sample_session)
         sessions = await db.get_sessions(project_id="proj-test")
@@ -116,7 +119,6 @@ class TestSessions:
 
     async def test_session_mtime_roundtrip(self, db, sample_project, sample_session):
         await db.upsert_project(sample_project)
-        mtime = 1234567890.123
         session_with_mtime = sample_session.model_copy()
         await db.upsert_session(session_with_mtime)
         # mtime tracking is internal — just verify we can get None for missing
@@ -183,7 +185,9 @@ class TestSearch:
 
 
 class TestStats:
-    async def test_stats_counts(self, db, sample_project, sample_session, sample_messages):
+    async def test_stats_counts(
+        self, db, sample_project, sample_session, sample_messages
+    ):
         await db.upsert_project(sample_project)
         await db.upsert_session(sample_session)
         await db.upsert_messages(sample_messages)
@@ -202,6 +206,7 @@ class TestStats:
 class TestUsagePersistence:
     async def test_upsert_message_with_usage(self, db, sample_project, sample_session):
         from clau_decode.models import TokenUsage
+
         await db.upsert_project(sample_project)
         await db.upsert_session(sample_session)
         msg = Message(
@@ -210,8 +215,12 @@ class TestUsagePersistence:
             role="assistant",
             content_blocks=[TextBlock(text="Hi")],
             timestamp=datetime(2026, 1, 1, 10, 0, 5, tzinfo=timezone.utc),
-            usage=TokenUsage(input_tokens=10, output_tokens=5,
-                             cache_creation_input_tokens=100, cache_read_input_tokens=50),
+            usage=TokenUsage(
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_input_tokens=100,
+                cache_read_input_tokens=50,
+            ),
         )
         await db.upsert_messages([msg])
         detail = await db.get_session_detail(sample_session.id)
@@ -222,7 +231,9 @@ class TestUsagePersistence:
         assert stored.usage.cache_creation_input_tokens == 100
         assert stored.usage.cache_read_input_tokens == 50
 
-    async def test_upsert_message_without_usage_returns_none(self, db, sample_project, sample_session):
+    async def test_upsert_message_without_usage_returns_none(
+        self, db, sample_project, sample_session
+    ):
         await db.upsert_project(sample_project)
         await db.upsert_session(sample_session)
         msg = Message(
@@ -243,9 +254,11 @@ class TestPhase0Integration:
         """Parse session_with_usage.jsonl → DB → retrieve, assert tokens preserved."""
         from clau_decode.parser import parse_session
         from clau_decode.models import Project
+
         fixture = Path(__file__).parent / "fixtures" / "session_with_usage.jsonl"
-        project = Project(id="test-proj", display_name="Test",
-                          raw_path="-test", data_source="test")
+        project = Project(
+            id="test-proj", display_name="Test", raw_path="-test", data_source="test"
+        )
         session, messages = parse_session(fixture)
         session.project_id = project.id
         await db.upsert_project(project)
@@ -257,14 +270,24 @@ class TestPhase0Integration:
         assert len(assistant_msgs) == 2
         total_input = sum(m.usage.input_tokens for m in assistant_msgs if m.usage)
         assert total_input == 32  # 12 + 20
-        total_cache_read = sum(m.usage.cache_read_input_tokens for m in assistant_msgs if m.usage)
+        total_cache_read = sum(
+            m.usage.cache_read_input_tokens for m in assistant_msgs if m.usage
+        )
         assert total_cache_read == 50
 
 
 class TestDeleteMessage:
     async def test_delete_removes_message(self, db, sample_messages):
-        project = Project(id="p1", display_name="p", raw_path="/", resolved_path="/", data_source="local")
-        session = Session(id=sample_messages[0].session_id, project_id="p1", file_path="/f.jsonl")
+        project = Project(
+            id="p1",
+            display_name="p",
+            raw_path="/",
+            resolved_path="/",
+            data_source="local",
+        )
+        session = Session(
+            id=sample_messages[0].session_id, project_id="p1", file_path="/f.jsonl"
+        )
         await db.upsert_project(project)
         await db.upsert_session(session)
         await db.upsert_messages(sample_messages[:2])
@@ -274,8 +297,19 @@ class TestDeleteMessage:
         assert all(m.id != target_id for m in detail.messages)
 
     async def test_delete_updates_session_message_count(self, db, sample_messages):
-        project = Project(id="p1", display_name="p", raw_path="/", resolved_path="/", data_source="local")
-        session = Session(id=sample_messages[0].session_id, project_id="p1", file_path="/f.jsonl", title="Test")
+        project = Project(
+            id="p1",
+            display_name="p",
+            raw_path="/",
+            resolved_path="/",
+            data_source="local",
+        )
+        session = Session(
+            id=sample_messages[0].session_id,
+            project_id="p1",
+            file_path="/f.jsonl",
+            title="Test",
+        )
         await db.upsert_project(project)
         await db.upsert_session(session)
         await db.upsert_messages(sample_messages[:2])
@@ -289,8 +323,16 @@ class TestDeleteMessage:
 
 class TestUpdateMessageContent:
     async def test_update_changes_content(self, db, sample_messages):
-        project = Project(id="p1", display_name="p", raw_path="/", resolved_path="/", data_source="local")
-        session = Session(id=sample_messages[0].session_id, project_id="p1", file_path="/f.jsonl")
+        project = Project(
+            id="p1",
+            display_name="p",
+            raw_path="/",
+            resolved_path="/",
+            data_source="local",
+        )
+        session = Session(
+            id=sample_messages[0].session_id, project_id="p1", file_path="/f.jsonl"
+        )
         await db.upsert_project(project)
         await db.upsert_session(session)
         await db.upsert_messages([sample_messages[0]])
@@ -300,13 +342,25 @@ class TestUpdateMessageContent:
         assert detail.messages[0].content_blocks[0].text == "updated content"
 
     async def test_update_nonexistent_is_noop(self, db):
-        await db.update_message_content("nonexistent-0000-0000-0000-000000000000", [TextBlock(text="x")])
+        await db.update_message_content(
+            "nonexistent-0000-0000-0000-000000000000", [TextBlock(text="x")]
+        )
 
 
 class TestGetSessionFilePathForMessage:
     async def test_returns_file_path(self, db, sample_messages):
-        project = Project(id="p1", display_name="p", raw_path="/", resolved_path="/", data_source="local")
-        session = Session(id=sample_messages[0].session_id, project_id="p1", file_path="/sessions/test.jsonl")
+        project = Project(
+            id="p1",
+            display_name="p",
+            raw_path="/",
+            resolved_path="/",
+            data_source="local",
+        )
+        session = Session(
+            id=sample_messages[0].session_id,
+            project_id="p1",
+            file_path="/sessions/test.jsonl",
+        )
         await db.upsert_project(project)
         await db.upsert_session(session)
         await db.upsert_messages([sample_messages[0]])
@@ -314,5 +368,7 @@ class TestGetSessionFilePathForMessage:
         assert path == "/sessions/test.jsonl"
 
     async def test_returns_none_for_unknown_message(self, db):
-        path = await db.get_session_file_path_for_message("unknown-0000-0000-0000-000000000000")
+        path = await db.get_session_file_path_for_message(
+            "unknown-0000-0000-0000-000000000000"
+        )
         assert path is None

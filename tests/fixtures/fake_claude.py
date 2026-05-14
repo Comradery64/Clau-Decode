@@ -51,6 +51,7 @@ the desired ``bin_name`` into a tmp dir and prepending that dir to
 ``$PATH``. The runner then uses ``shutil.which(bin_name)`` to find the
 shim.
 """
+
 from __future__ import annotations
 
 import json

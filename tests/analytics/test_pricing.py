@@ -1,15 +1,15 @@
 """Tests for analytics.pricing — model pricing data and strategies."""
+
 import json
 import time
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 
 class TestModelPricing:
     def test_defaults_to_zero(self):
         from clau_decode.analytics.pricing import ModelPricing
+
         p = ModelPricing()
         assert p.input_per_mtok == Decimal("0")
         assert p.output_per_mtok == Decimal("0")
@@ -19,6 +19,7 @@ class TestModelPricing:
     def test_cost_for_breakdown_exact(self):
         from clau_decode.analytics.models import TokenBreakdown
         from clau_decode.analytics.pricing import ModelPricing
+
         p = ModelPricing(
             input_per_mtok=Decimal("3.00"),
             output_per_mtok=Decimal("15.00"),
@@ -37,6 +38,7 @@ class TestModelPricing:
     def test_cost_is_zero_for_empty_breakdown(self):
         from clau_decode.analytics.models import TokenBreakdown
         from clau_decode.analytics.pricing import ModelPricing
+
         p = ModelPricing(
             input_per_mtok=Decimal("3.00"),
             output_per_mtok=Decimal("15.00"),
@@ -47,7 +49,10 @@ class TestModelPricing:
     def test_cost_scales_correctly_for_small_counts(self):
         from clau_decode.analytics.models import TokenBreakdown
         from clau_decode.analytics.pricing import ModelPricing
-        p = ModelPricing(input_per_mtok=Decimal("3.00"), output_per_mtok=Decimal("15.00"))
+
+        p = ModelPricing(
+            input_per_mtok=Decimal("3.00"), output_per_mtok=Decimal("15.00")
+        )
         bd = TokenBreakdown(input_tokens=1000, output_tokens=1000)
         cost = p.compute_cost(bd)
         # 1000 tokens = 0.001M tokens; 0.001 * (3 + 15) = 0.018
@@ -57,6 +62,7 @@ class TestModelPricing:
 class TestHardcodedPricingStrategy:
     def test_knows_sonnet_46(self):
         from clau_decode.analytics.pricing import HardcodedPricingStrategy
+
         strat = HardcodedPricingStrategy()
         p = strat.get_pricing("claude-sonnet-4-6")
         assert p is not None
@@ -65,6 +71,7 @@ class TestHardcodedPricingStrategy:
 
     def test_knows_haiku_45(self):
         from clau_decode.analytics.pricing import HardcodedPricingStrategy
+
         strat = HardcodedPricingStrategy()
         p = strat.get_pricing("claude-haiku-4-5-20251001")
         assert p is not None
@@ -73,6 +80,7 @@ class TestHardcodedPricingStrategy:
 
     def test_knows_opus_47(self):
         from clau_decode.analytics.pricing import HardcodedPricingStrategy
+
         strat = HardcodedPricingStrategy()
         p = strat.get_pricing("claude-opus-4-7")
         assert p is not None
@@ -81,11 +89,13 @@ class TestHardcodedPricingStrategy:
 
     def test_unknown_model_returns_none(self):
         from clau_decode.analytics.pricing import HardcodedPricingStrategy
+
         strat = HardcodedPricingStrategy()
         assert strat.get_pricing("gpt-4-turbo") is None
 
     def test_prefix_match_for_versioned_models(self):
         from clau_decode.analytics.pricing import HardcodedPricingStrategy
+
         strat = HardcodedPricingStrategy()
         p = strat.get_pricing("claude-sonnet-4-6-20250514")
         assert p is not None
@@ -115,7 +125,9 @@ class TestLiteLLMPricingFetcher:
 
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cls.return_value.__aenter__ = AsyncMock(
+                return_value=mock_client
+            )
             mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_client.get = AsyncMock(return_value=mock_response)
 
@@ -137,7 +149,9 @@ class TestLiteLLMPricingFetcher:
 
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cls.return_value.__aenter__ = AsyncMock(
+                return_value=mock_client
+            )
             mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_client.get = AsyncMock(side_effect=_httpx.RequestError("timeout"))
 
@@ -150,6 +164,7 @@ class TestLiteLLMPricingFetcher:
 class TestCachedPricingStrategy:
     async def test_returns_hardcoded_when_cache_empty(self):
         from clau_decode.analytics.pricing import CachedPricingStrategy
+
         strat = CachedPricingStrategy()
         p = strat.get_pricing("claude-sonnet-4-6")
         assert p is not None
@@ -157,6 +172,7 @@ class TestCachedPricingStrategy:
 
     async def test_live_data_takes_precedence_over_hardcoded(self):
         from clau_decode.analytics.pricing import CachedPricingStrategy, ModelPricing
+
         strat = CachedPricingStrategy()
         strat._cached_data = {
             "claude-sonnet-4-6": ModelPricing(
@@ -171,17 +187,20 @@ class TestCachedPricingStrategy:
 
     async def test_unknown_model_returns_none(self):
         from clau_decode.analytics.pricing import CachedPricingStrategy
+
         strat = CachedPricingStrategy()
         assert strat.get_pricing("unknown-model-xyz") is None
 
     async def test_cache_is_stale_after_ttl(self):
         from clau_decode.analytics.pricing import CachedPricingStrategy
+
         strat = CachedPricingStrategy(ttl_seconds=0)
         strat._cache_fetched_at = time.monotonic() - 1
         assert strat._is_cache_stale()
 
     async def test_cache_is_fresh_within_ttl(self):
         from clau_decode.analytics.pricing import CachedPricingStrategy
+
         strat = CachedPricingStrategy(ttl_seconds=3600)
         strat._cache_fetched_at = time.monotonic()
         assert not strat._is_cache_stale()

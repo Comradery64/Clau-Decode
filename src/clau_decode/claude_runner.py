@@ -81,7 +81,11 @@ def _discover_plugin_dirs(bin_name: str) -> list[str]:
         settings_mtime = _mtime_ns(settings_file) if settings_file.exists() else 0
 
         cached = _PLUGIN_CACHE.get(bin_name)
-        if cached is not None and cached[0] == installed_mtime and cached[1] == settings_mtime:
+        if (
+            cached is not None
+            and cached[0] == installed_mtime
+            and cached[1] == settings_mtime
+        ):
             return cached[2]
 
         try:
@@ -380,10 +384,13 @@ class ClaudeCodeRunner:
             if use_slash:
                 argv.append(text)
             else:
-                argv.extend([
-                    "--input-format", "stream-json",
-                    "--replay-user-messages",
-                ])
+                argv.extend(
+                    [
+                        "--input-format",
+                        "stream-json",
+                        "--replay-user-messages",
+                    ]
+                )
 
             _log.warning(
                 "runner: spawning %s (session %s, cwd=%s, slash=%s)",
@@ -501,9 +508,7 @@ class ClaudeCodeRunner:
             assert state is not None
             mode = state.permission_mode
             quiet = time.monotonic() - state.last_stdout_at
-            quiet_warning = (
-                mode == "default" and quiet >= QUIET_WARN_SECONDS
-            )
+            quiet_warning = mode == "default" and quiet >= QUIET_WARN_SECONDS
             return {
                 "busy": True,
                 "last_error": state.last_error,
@@ -551,7 +556,11 @@ class ClaudeCodeRunner:
                             # Capture synthetic responses (e.g. unknown slash
                             # commands) that don't make it to the JSONL.
                             result_text = evt.get("result")
-                            if isinstance(result_text, str) and result_text and state is not None:
+                            if (
+                                isinstance(result_text, str)
+                                and result_text
+                                and state is not None
+                            ):
                                 state.last_result_text = result_text
                                 state.last_is_error = bool(evt.get("is_error", False))
                 except json.JSONDecodeError:
