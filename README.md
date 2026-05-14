@@ -1,5 +1,3 @@
-https://github.com/user-attachments/assets/6f5a9a09-fbab-467f-82b1-c2e642dc8726
-
 <h1 align="center">Clau-Decode</h1>
 
 <p align="center">
@@ -21,7 +19,7 @@ https://github.com/user-attachments/assets/6f5a9a09-fbab-467f-82b1-c2e642dc8726
   </a>
 </p>
 
-> **Note (Demo):** `<demo gif placeholder — record with VHS later: docs/demo.tape>`
+https://github.com/user-attachments/assets/6f5a9a09-fbab-467f-82b1-c2e642dc8726
 
 ---
 
