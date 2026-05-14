@@ -4,7 +4,7 @@
  */
 
 import { create } from "zustand";
-import type { Profile } from "../api/types";
+import type { HostInfo, Profile } from "../api/types";
 import { getChatIdFromRoute } from "../router";
 
 function initialChatId(): string | null {
@@ -35,6 +35,7 @@ interface AppState {
   resultsExpanded: boolean;
   profiles: Profile[];
   activeProfileId: string | null;
+  hostInfo: HostInfo | null;
 
   selectSession: (id: string | null) => void;
   setPendingScrollMessageId: (id: string | null) => void;
@@ -59,6 +60,7 @@ interface AppState {
   toggleResultsExpanded: () => void;
   setProfiles: (profiles: Profile[]) => void;
   setActiveProfileId: (id: string | null) => void;
+  setHostInfo: (info: HostInfo | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -80,6 +82,7 @@ export const useAppStore = create<AppState>((set) => ({
   resultsExpanded: false,
   profiles: [],
   activeProfileId: null,
+  hostInfo: null,
 
   selectSession: (id) => set({ selectedSessionId: id }),
   setPendingScrollMessageId: (id) => set({ pendingScrollMessageId: id }),
@@ -104,4 +107,5 @@ export const useAppStore = create<AppState>((set) => ({
   toggleResultsExpanded: () => set((s) => ({ resultsExpanded: !s.resultsExpanded })),
   setProfiles: (profiles) => set({ profiles }),
   setActiveProfileId: (id) => set({ activeProfileId: id }),
+  setHostInfo: (info) => set({ hostInfo: info }),
 }));

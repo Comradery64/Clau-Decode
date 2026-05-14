@@ -1,11 +1,8 @@
 """Tests for Phase 8 — CLI & Config Polish."""
+
 from __future__ import annotations
 
-import asyncio
-import tempfile
-from datetime import date, datetime, timezone
-from pathlib import Path
-from unittest.mock import patch
+from datetime import date
 
 import pytest
 
@@ -16,6 +13,7 @@ from clau_decode.config import load_config
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
+
 
 class TestParser:
     def test_subcommands_all_parse(self):
@@ -64,10 +62,18 @@ class TestParser:
         assert args.no_open is True
 
     def test_combined_flags_with_subcommand(self):
-        args = _build_parser().parse_args([
-            "--expose", "--force-refresh", "--since", "20260101",
-            "--enable-edit", "--path", "/tmp/test", "stats",
-        ])
+        args = _build_parser().parse_args(
+            [
+                "--expose",
+                "--force-refresh",
+                "--since",
+                "20260101",
+                "--enable-edit",
+                "--path",
+                "/tmp/test",
+                "stats",
+            ]
+        )
         assert args.expose is True
         assert args.force_refresh is True
         assert args.since == date(2026, 1, 1)
@@ -79,6 +85,7 @@ class TestParser:
 # ---------------------------------------------------------------------------
 # Host resolution
 # ---------------------------------------------------------------------------
+
 
 class TestResolveHost:
     def test_default_is_localhost(self):
@@ -106,6 +113,7 @@ class TestResolveHost:
 # Force-refresh clears mtimes
 # ---------------------------------------------------------------------------
 
+
 class TestForceRefresh:
     @pytest.fixture
     def db_path(self, tmp_path):
@@ -118,10 +126,14 @@ class TestForceRefresh:
 
         async with Database(db_path) as db:
             await db.init_schema()
-            proj = Project(id="p1", display_name="Test", raw_path="-t", data_source="test")
+            proj = Project(
+                id="p1", display_name="Test", raw_path="-t", data_source="test"
+            )
             await db.upsert_project(proj)
             session = Session(
-                id="s1", project_id="p1", file_path="/tmp/test.jsonl",
+                id="s1",
+                project_id="p1",
+                file_path="/tmp/test.jsonl",
                 title="Test Session",
             )
             await db.upsert_session(session, file_mtime=12345.0)
@@ -130,6 +142,7 @@ class TestForceRefresh:
             assert mtime == 12345.0
 
         from clau_decode.cli import _force_refresh
+
         await _force_refresh(db_path)
 
         async with Database(db_path) as db:
@@ -141,9 +154,11 @@ class TestForceRefresh:
 # Subcommand: scan
 # ---------------------------------------------------------------------------
 
+
 class TestScanCommand:
     def test_scan_runs_without_error(self, capsys):
         from clau_decode.cli import _run_scan
+
         config = load_config()
         args = _build_parser().parse_args(["scan"])
         _run_scan(args, config)
@@ -155,9 +170,11 @@ class TestScanCommand:
 # Subcommand: today
 # ---------------------------------------------------------------------------
 
+
 class TestTodayCommand:
     def test_today_runs_without_error(self, capsys):
         from clau_decode.cli import _run_today
+
         config = load_config()
         args = _build_parser().parse_args(["today"])
         _run_today(args, config)
@@ -170,9 +187,11 @@ class TestTodayCommand:
 # Subcommand: stats
 # ---------------------------------------------------------------------------
 
+
 class TestStatsCommand:
     def test_stats_runs_without_error(self, capsys):
         from clau_decode.cli import _run_stats
+
         config = load_config()
         args = _build_parser().parse_args(["stats"])
         _run_stats(args, config)
@@ -184,9 +203,11 @@ class TestStatsCommand:
 # Subcommand: tips
 # ---------------------------------------------------------------------------
 
+
 class TestTipsCommand:
     def test_tips_runs_without_error(self, capsys):
         from clau_decode.cli import _run_tips
+
         config = load_config()
         args = _build_parser().parse_args(["tips"])
         _run_tips(args, config)
@@ -199,10 +220,12 @@ class TestTipsCommand:
 # DB execute/commit helpers
 # ---------------------------------------------------------------------------
 
+
 class TestDbHelpers:
     @pytest.mark.asyncio
     async def test_execute_and_commit(self, tmp_path):
         from clau_decode.db import Database
+
         db_path = tmp_path / "test.db"
         async with Database(db_path) as db:
             await db.init_schema()

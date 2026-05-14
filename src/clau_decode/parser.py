@@ -44,14 +44,13 @@ from .models import (
 # UUID validation pattern
 # ---------------------------------------------------------------------------
 
-_UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-)
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def parse_session(path: Path) -> tuple[Session, list[Message]]:
     """Parse a JSONL session file into a Session + flat message list.
@@ -158,9 +157,15 @@ def parse_session(path: Path) -> tuple[Session, list[Message]]:
                         )
                         messages.append(msg)
                         if timestamp_qa:
-                            if session.started_at is None or timestamp_qa < session.started_at:
+                            if (
+                                session.started_at is None
+                                or timestamp_qa < session.started_at
+                            ):
                                 session.started_at = timestamp_qa
-                            if session.updated_at is None or timestamp_qa > session.updated_at:
+                            if (
+                                session.updated_at is None
+                                or timestamp_qa > session.updated_at
+                            ):
                                 session.updated_at = timestamp_qa
                 continue
 
@@ -212,8 +217,12 @@ def parse_session(path: Path) -> tuple[Session, list[Message]]:
                     msg_usage = TokenUsage(
                         input_tokens=raw_usage.get("input_tokens", 0),
                         output_tokens=raw_usage.get("output_tokens", 0),
-                        cache_creation_input_tokens=raw_usage.get("cache_creation_input_tokens", 0),
-                        cache_read_input_tokens=raw_usage.get("cache_read_input_tokens", 0),
+                        cache_creation_input_tokens=raw_usage.get(
+                            "cache_creation_input_tokens", 0
+                        ),
+                        cache_read_input_tokens=raw_usage.get(
+                            "cache_read_input_tokens", 0
+                        ),
                     )
                 msg = Message(
                     id=uuid,
@@ -272,7 +281,11 @@ def parse_session(path: Path) -> tuple[Session, list[Message]]:
                 for block in m.content_blocks:
                     if isinstance(block, TextBlock) and block.text.strip():
                         # Strip system XML tags before using as title
-                        text = re.sub(r"<[a-z][a-z0-9-]*>[\s\S]*?</[a-z][a-z0-9-]*>", "", block.text).strip()
+                        text = re.sub(
+                            r"<[a-z][a-z0-9-]*>[\s\S]*?</[a-z][a-z0-9-]*>",
+                            "",
+                            block.text,
+                        ).strip()
                         text = text.splitlines()[0].strip() if text else ""
                         if text:
                             session.title = text[:80] + ("…" if len(text) > 80 else "")
@@ -318,9 +331,7 @@ def build_message_tree(messages: list[Message]) -> list[MessageTree]:
     # Sort children by timestamp within each node
     def _sort_node(node: MessageTree) -> None:
         node.children.sort(
-            key=lambda n: n.message.timestamp or datetime.min.replace(
-                tzinfo=None
-            )
+            key=lambda n: n.message.timestamp or datetime.min.replace(tzinfo=None)
         )
         for child in node.children:
             _sort_node(child)
@@ -337,6 +348,7 @@ def build_message_tree(messages: list[Message]) -> list[MessageTree]:
 # ---------------------------------------------------------------------------
 # Internal helpers — implement these, tests cover them individually
 # ---------------------------------------------------------------------------
+
 
 def _session_id_from_content(path: Path) -> str:
     """Scan the first few lines of a JSONL file for a valid UUID sessionId.
@@ -377,22 +389,28 @@ def _parse_content_blocks(raw_content: Any) -> list[ContentBlock]:
         if block_type == "text":
             blocks.append(TextBlock(text=item.get("text", "")))
         elif block_type == "thinking":
-            blocks.append(ThinkingBlock(
-                thinking=item.get("thinking", ""),
-                signature=item.get("signature"),
-            ))
+            blocks.append(
+                ThinkingBlock(
+                    thinking=item.get("thinking", ""),
+                    signature=item.get("signature"),
+                )
+            )
         elif block_type == "tool_use":
-            blocks.append(ToolUseBlock(
-                id=item.get("id", ""),
-                name=item.get("name", ""),
-                input=item.get("input", {}),
-            ))
+            blocks.append(
+                ToolUseBlock(
+                    id=item.get("id", ""),
+                    name=item.get("name", ""),
+                    input=item.get("input", {}),
+                )
+            )
         elif block_type == "tool_result":
-            blocks.append(ToolResultBlock(
-                tool_use_id=item.get("tool_use_id", ""),
-                content=item.get("content"),
-                is_error=item.get("is_error", False),
-            ))
+            blocks.append(
+                ToolResultBlock(
+                    tool_use_id=item.get("tool_use_id", ""),
+                    content=item.get("content"),
+                    is_error=item.get("is_error", False),
+                )
+            )
         elif block_type == "image":
             blocks.append(ImageBlock(source=item.get("source", {})))
         # Unknown types are silently skipped

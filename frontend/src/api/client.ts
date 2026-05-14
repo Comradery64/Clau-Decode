@@ -11,6 +11,7 @@ import type {
   DirListing,
   ExportFormat,
   FileContent,
+  HostInfo,
   FileTouchEntry,
   ModelUsageEntry,
   MutationResult,
@@ -113,6 +114,7 @@ export const api = {
   },
   getStats: () => get<StatsResponse>("/api/stats"),
   getDashboard: () => get<DashboardData>("/api/dashboard"),
+  getHostInfo: () => get<HostInfo>("/api/host-info"),
   getConfig: () => get<AppConfig>("/api/config"),
   updateConfig: (config: AppConfig) => {
     _cachedConfig = config;

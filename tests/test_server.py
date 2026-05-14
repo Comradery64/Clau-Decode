@@ -10,6 +10,7 @@ test is fast and deterministic. For "the request actually reaches the
 spawned subprocess" we go end-to-end via the fake_claude shim (see
 ``tests/test_claude_runner.py`` for the injection contract).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -17,11 +18,10 @@ import json
 import os
 import shutil
 import stat
-import tempfile
 import time
 from pathlib import Path
-from typing import AsyncIterator, Iterator
-from unittest.mock import AsyncMock, MagicMock
+from typing import AsyncIterator
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -36,6 +36,7 @@ FAKE = Path(__file__).parent / "fixtures" / "fake_claude.py"
 # ---------------------------------------------------------------------------
 # Setup helpers
 # ---------------------------------------------------------------------------
+
 
 def _write_shim(dir_: Path, bin_name: str = "claude", extra_argv: str = "") -> Path:
     path = dir_ / bin_name
@@ -78,6 +79,7 @@ async def _seed_session(
 
 def _make_app(db_path: Path, config: AppConfig):
     from clau_decode.server import create_app
+
     return create_app(config, db_path)
 
 
@@ -126,6 +128,7 @@ async def _client(app) -> AsyncClient:
 # /send-message — happy path + validation
 # ---------------------------------------------------------------------------
 
+
 async def test_send_message_returns_ok(env_with_claude, monkeypatch):
     """Happy path: 200 + ``{ok, permission_mode}``. Runner is mocked."""
     e = env_with_claude
@@ -133,6 +136,7 @@ async def test_send_message_returns_ok(env_with_claude, monkeypatch):
     # Mock the runner on the app instance — locate it via the closure cell.
     # Easier: monkeypatch ClaudeCodeRunner.submit before the app reaches it.
     from clau_decode import claude_runner as cr_mod
+
     submit_mock = AsyncMock(return_value=None)
     monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
     monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
@@ -187,6 +191,7 @@ async def test_send_message_rejects_busy(env_with_claude, monkeypatch):
     """is_busy=True → 409."""
     e = env_with_claude
     from clau_decode import claude_runner as cr_mod
+
     monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: True)
     app = _make_app(e["db_path"], AppConfig())
     async with await _client(app) as c:
@@ -215,6 +220,7 @@ async def test_send_message_503_when_bin_missing(env_with_claude, monkeypatch):
 # ---------------------------------------------------------------------------
 # /stop and /runner-status
 # ---------------------------------------------------------------------------
+
 
 async def test_stop_returns_stopped_false_when_idle(env_with_claude):
     """No-op stop returns ``{ok: True, stopped: False}``."""
@@ -256,10 +262,12 @@ async def test_runner_status_reports_busy(env_with_claude, monkeypatch):
 # Permission-mode resolution
 # ---------------------------------------------------------------------------
 
+
 async def test_permission_mode_override_wins(env_with_claude, monkeypatch):
     """Request-body permission_mode beats AppConfig default."""
     e = env_with_claude
     from clau_decode import claude_runner as cr_mod
+
     submit_mock = AsyncMock(return_value=None)
     monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
     monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
@@ -280,6 +288,7 @@ async def test_permission_mode_falls_back_to_config(env_with_claude, monkeypatch
     """Omitted permission_mode → AppConfig.claude_default_permission_mode."""
     e = env_with_claude
     from clau_decode import claude_runner as cr_mod
+
     submit_mock = AsyncMock(return_value=None)
     monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
     monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
@@ -299,6 +308,7 @@ async def test_permission_mode_falls_back_to_dontask(env_with_claude, monkeypatc
     """Both omitted (and AppConfig default is the Pydantic default) → 'dontAsk'."""
     e = env_with_claude
     from clau_decode import claude_runner as cr_mod
+
     submit_mock = AsyncMock(return_value=None)
     monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
     monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
@@ -374,7 +384,10 @@ async def test_slash_command_uses_positional_prompt(env_with_claude, monkeypatch
         "slash command should not use --input-format stream-json"
     )
     # output stays stream-json so SSE rendering still works.
-    assert "--output-format" in argv and argv[argv.index("--output-format") + 1] == "stream-json"
+    assert (
+        "--output-format" in argv
+        and argv[argv.index("--output-format") + 1] == "stream-json"
+    )
 
 
 async def test_regular_message_keeps_stream_json_input(env_with_claude, monkeypatch):
@@ -408,10 +421,12 @@ async def test_regular_message_keeps_stream_json_input(env_with_claude, monkeypa
 # Auto-stop flag plumbing
 # ---------------------------------------------------------------------------
 
+
 async def test_auto_stop_flag_threaded_to_runner(env_with_claude, monkeypatch):
     """AppConfig.claude_auto_stop_quiet_default_turns reaches runner.submit()."""
     e = env_with_claude
     from clau_decode import claude_runner as cr_mod
+
     submit_mock = AsyncMock(return_value=None)
     monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
     monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
