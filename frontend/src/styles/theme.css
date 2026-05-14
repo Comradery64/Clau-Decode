@@ -1,0 +1,446 @@
+/*
+ * Design tokens for Clau-Decode.
+ */
+
+/* Lora's slash glyphs are heavy and stylized — they look out of place in path-like
+   text. Override just U+002F (/) and U+005C (\) with a system sans so paths and
+   branch names read cleanly. */
+@font-face {
+  font-family: "ContentSlashOverride";
+  src: local("HelveticaNeue"), local("Helvetica Neue"),
+       local("Helvetica"), local("Arial"),
+       local("SegoeUI"), local("Segoe UI");
+  unicode-range: U+002F, U+005C;
+  font-display: swap;
+}
+
+:root {
+  /* --- Backgrounds --- */
+  --bg-base: #faf9f5;
+  --bg-sidebar: transparent;
+  --bg-sidebar-hover: #f0eee9;
+  --bg-sidebar-active: #ebe9e3;
+  --bg-user-msg: #f0eee9;
+  --bg-tool-block: #f3f2ed;
+  --bg-tool-result: #f5f4ef;
+  --bg-thinking: #f3f2ed;
+  --bg-code: #f1f0ea;
+  --bg-inline-code: rgba(97, 96, 94, 0.05);
+  --bg-input: #faf9f5;
+  --bg-modal-overlay: rgba(75, 75, 74, 0.15);
+  --bg-modal: #faf9f5;
+  /* Code block — light mode warm beige */
+  --bg-code-block: #f3f2ed;
+  --bg-code-block-header: #f0eee9;
+  --border-code-block: rgba(97, 96, 94, 0.07);
+  --text-code-lang: #95948e;
+  /* Syntax highlighting vars — light mode (dark text on warm bg) */
+  --hljs-base: #2b2b29;
+  --hljs-comment: #8a8a82;
+  --hljs-string: #4f8a4a;
+  --hljs-number: #a8682a;
+  --hljs-keyword: #8b4f8e;
+  --hljs-function: #9e6f1f;
+  --hljs-type: #9e6f1f;
+  --hljs-property: #3f6b78;
+  --hljs-operator: #6e6e68;
+  --hljs-meta: #8b4f8e;
+
+  --search-highlight-bg: rgba(139, 115, 85, 0.08);
+
+  /* --- Borders --- */
+  --border-subtle: rgba(97, 96, 94, 0.08);
+  --border-default: rgba(97, 96, 94, 0.15);
+  --border-strong: rgba(97, 96, 94, 0.24);
+  --border-code: rgba(97, 96, 94, 0.10);
+  --border-accent: #8b7355;
+
+  /* --- Text --- */
+  --text-primary: #484846;
+  --text-secondary: #7e7d79;
+  --text-tertiary: #8c8a83;
+  --text-accent: #8b7355;
+  --text-on-accent: #ffffff;
+  --text-code: #484846;
+  --text-inline-code: #484846;
+  --text-thinking: #8c8a83;
+
+  /* --- Accents --- */
+  --accent-orange: #8b7355;
+  --accent-orange-hover: #7a6548;
+  --accent-orange-subtle: rgba(139, 115, 85, 0.08);
+
+  /* --- Tool blocks --- */
+  --tool-name-color: #484846;
+  --tool-error-bg: #fdf4f3;
+  --tool-error-border: #cb9a99;
+  --tool-error-text: #b95251;
+
+  /* --- Typography --- */
+  --font-ui: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-content: "ContentSlashOverride", "Lora", Georgia, "Times New Roman", serif;
+  --font-mono: "Berkeley Mono", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+
+  /* --- Sizing --- */
+  --sidebar-width: 260px;
+  --header-height: 52px;
+  --message-max-width: 760px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* --- Shadows --- */
+  --shadow-sm: 0 1px 2px rgba(75, 75, 74, 0.03);
+  --shadow-md: 0 4px 12px rgba(75, 75, 74, 0.06);
+  --shadow-lg: 0 8px 32px rgba(75, 75, 74, 0.08);
+
+  /* --- Transitions --- */
+  --transition-fast: 120ms ease;
+  --transition-normal: 200ms ease;
+}
+
+/* ============================================================
+   DARK MODE
+   ============================================================ */
+[data-theme="dark"] {
+  /* --- Backgrounds --- */
+  --bg-base: #262624;
+  --bg-sidebar: transparent;
+  --bg-sidebar-hover: #2f2f2c;
+  --bg-sidebar-active: #35352f;
+  --bg-user-msg: #30302e;
+  --bg-tool-block: #2a2a28;
+  --bg-tool-result: #262624;
+  --bg-thinking: #2a2a28;
+  --bg-code: #1f1e1c;
+  --bg-inline-code: rgba(244, 145, 130, 0.13);
+  --bg-input: #30302e;
+  --bg-modal-overlay: rgba(8, 8, 8, 0.45);
+  --bg-modal: #2a2a28;
+  /* Code block — dark mode stays terminal-dark */
+  --bg-code-block: #1f1e1c;
+  --bg-code-block-header: #262624;
+  --border-code-block: rgba(187, 187, 186, 0.06);
+  --text-code-lang: #8a887f;
+  /* Syntax highlighting vars — dark mode */
+  /* Claude.ai-style dark palette: purple keywords, yellow types/functions,
+     green strings, light-teal properties, warm-amber numbers. */
+  --hljs-base: #d6d6d2;
+  --hljs-comment: #7c7c74;
+  --hljs-string: #a3c98b;
+  --hljs-number: #d9986d;
+  --hljs-keyword: #c39ee0;
+  --hljs-function: #e6c187;
+  --hljs-type: #e6c187;
+  --hljs-property: #b8d4dc;
+  --hljs-operator: #a8a89e;
+  --hljs-meta: #c39ee0;
+  --search-highlight-bg: rgba(217, 119, 6, 0.13);
+
+  /* --- Borders --- */
+  --border-subtle: rgba(164, 162, 154, 0.07);
+  --border-default: rgba(164, 162, 154, 0.13);
+  --border-strong: rgba(164, 162, 154, 0.20);
+  --border-code: rgba(164, 162, 154, 0.06);
+  --border-accent: #d97706;
+
+  /* --- Text --- */
+  --text-primary: #f5f4ed;
+  --text-secondary: #a8a69c;
+  --text-tertiary: #8a887f;
+  --text-accent: #e09a2a;
+  --text-on-accent: #141413;
+  --text-code: #f5f4ed;
+  --text-inline-code: #f08378;
+  --text-thinking: #8a887f;
+
+  /* --- Accents --- */
+  --accent-orange: #d97706;
+  --accent-orange-hover: #f59e0b;
+  --accent-orange-subtle: rgba(217, 119, 6, 0.13);
+
+  /* --- Tool blocks --- */
+  --tool-name-color: #dedcd1;
+  --tool-error-bg: rgba(239, 68, 68, 0.14);
+  --tool-error-border: rgba(239, 68, 68, 0.35);
+  --tool-error-text: #f87171;
+
+  /* --- Shadows --- */
+  --shadow-sm: 0 1px 2px rgba(8, 8, 8, 0.17);
+  --shadow-md: 0 4px 12px rgba(8, 8, 8, 0.24);
+  --shadow-lg: 0 8px 32px rgba(8, 8, 8, 0.35);
+}
+
+/* --- Reset & base --- */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes skeleton-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+@keyframes search-highlight {
+  0%   { background: transparent; }
+  15%  { background: var(--search-highlight-bg); }
+  70%  { background: var(--search-highlight-bg); }
+  100% { background: transparent; }
+}
+
+.turn-anchor[data-highlight="1"] {
+  border-radius: var(--radius-sm);
+  animation: search-highlight 1.8s ease forwards;
+}
+
+/* --- Native scrollbars: hidden entirely, OverlayScrollbars handles all scrolling --- */
+* {
+  scrollbar-width: none;
+}
+::-webkit-scrollbar { width: 0; height: 0; }
+
+/* --- OverlayScrollbars custom theme --- */
+.os-scrollbar {
+  --os-handle-bg: rgba(0, 0, 0, 0.35);
+  --os-handle-bg-hover: rgba(0, 0, 0, 0.55);
+  --os-handle-bg-active: rgba(0, 0, 0, 0.65);
+  --os-size: 8px;
+}
+
+/* Horizontal scrollbar handles in tables and code blocks — color only;
+   visibility is governed by the OverlayScrollbars autoHide policy. */
+.table-wrap .os-scrollbar-horizontal .os-scrollbar-handle,
+.code-block-wrap .os-scrollbar-horizontal .os-scrollbar-handle {
+  background: rgba(0, 0, 0, 0.18);
+}
+.table-wrap .os-scrollbar-horizontal .os-scrollbar-handle:hover,
+.code-block-wrap .os-scrollbar-horizontal .os-scrollbar-handle:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+[data-theme="dark"] .table-wrap .os-scrollbar-horizontal .os-scrollbar-handle,
+[data-theme="dark"] .code-block-wrap .os-scrollbar-horizontal .os-scrollbar-handle {
+  background: rgba(255, 255, 255, 0.15);
+}
+[data-theme="dark"] .table-wrap .os-scrollbar-horizontal .os-scrollbar-handle:hover,
+[data-theme="dark"] .code-block-wrap .os-scrollbar-horizontal .os-scrollbar-handle:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+[data-theme="dark"] .os-scrollbar {
+  --os-handle-bg: rgba(255, 255, 255, 0.22);
+  --os-handle-bg-hover: rgba(255, 255, 255, 0.38);
+  --os-handle-bg-active: rgba(255, 255, 255, 0.48);
+}
+
+.os-scrollbar-handle {
+  border-radius: 10px !important;
+}
+
+/* Fade in 30% slower than the library default (0.15s → 0.2s) */
+.os-scrollbar.os-scrollbar-visible {
+  transition: opacity 0.2s, visibility 0.2s, top 0.2s, right 0.2s, bottom 0.2s, left 0.2s !important;
+}
+
+/* --- Focus visible --- */
+:focus-visible {
+  outline: 2px solid var(--accent-orange);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ============================================================
+   PROSE CONTENT — markdown rendered in assistant messages
+   ============================================================ */
+.prose-content {
+  font-family: var(--font-content);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  overflow-wrap: break-word;
+  word-break: break-word;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.prose-content p { margin: 0 0 14px 0; }
+.prose-content p:last-child { margin-bottom: 0; }
+.prose-content ul, .prose-content ol { margin: 0 0 14px 0; padding-left: 24px; }
+.prose-content li { margin-bottom: 4px; }
+.prose-content ul ul, .prose-content ol ol, .prose-content ul ol, .prose-content ol ul { margin: 2px 0 4px 0; }
+.prose-content li > ul, .prose-content li > ol { margin-bottom: 2px; }
+.prose-content h1 { font-size: 22px; font-weight: 600; margin: 0 0 14px 0; }
+.prose-content h2 { font-size: 18px; font-weight: 600; margin: 0 0 12px 0; }
+.prose-content h3 { font-size: 15px; font-weight: 600; margin: 0 0 10px 0; }
+.prose-content h4 { font-size: 14px; font-weight: 600; margin: 0 0 8px 0; color: var(--text-secondary); }
+.prose-content h5 { font-size: 13px; font-weight: 600; margin: 0 0 6px 0; color: var(--text-secondary); }
+.prose-content h6 { font-size: 12px; font-weight: 600; margin: 0 0 6px 0; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.03em; }
+.prose-content blockquote {
+  margin: 0 0 14px 0;
+  padding: 4px 0 4px 14px;
+  border-left: 3px solid var(--accent-orange);
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.prose-content blockquote p:last-child { margin-bottom: 0; }
+.prose-content .table-wrap { overflow: hidden; border-radius: var(--radius-md); border: 1px solid var(--border-default); margin: 0 0 14px 0; }
+.prose-content table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 14px; }
+.prose-content th, .prose-content td { padding: 8px 12px; border-right: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); text-align: left; white-space: nowrap; }
+.prose-content th:last-child, .prose-content td:last-child { border-right: none; white-space: normal; }
+.prose-content tbody tr:last-child td { border-bottom: none; }
+.prose-content tbody tr:nth-child(even) td { background: var(--bg-tool-block); }
+.prose-content th { background: var(--bg-code); font-weight: 600; }
+.prose-content hr { border: none; border-top: 1px solid var(--border-subtle); margin: 20px 0; }
+
+/* Inline code */
+.prose-content code {
+  background: var(--bg-inline-code);
+  color: inherit;
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  font-size: 0.875em;
+  font-family: var(--font-mono);
+}
+
+/* Block code */
+.prose-content pre {
+  background: var(--bg-code);
+  border: 1px solid var(--border-code);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  overflow-x: auto;
+  max-width: 100%;
+  margin: 0 0 14px 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.prose-content pre code {
+  background: none;
+  color: var(--text-code);
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+.prose-content a { color: var(--accent-orange); text-decoration: none; }
+.prose-content a:hover { text-decoration: underline; }
+
+/* Remove default prose pre styling — CodeBlockWrapper handles it */
+.prose-content pre {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  border-radius: 0;
+}
+
+/* ============================================================
+   SYNTAX HIGHLIGHTING — CSS-variable-driven, adapts to theme.
+   Light mode: dark text on warm beige. Dark mode: light text on dark bg.
+   ============================================================ */
+.hljs { color: var(--hljs-base); background: transparent; }
+
+/* Comments */
+.hljs-comment,
+.hljs-quote { color: var(--hljs-comment); font-style: italic; }
+
+/* String values */
+.hljs-string,
+.hljs-template-literal,
+.hljs-template-tag,
+.hljs-regexp,
+.hljs-addition { color: var(--hljs-string); }
+
+/* Numbers & booleans */
+.hljs-number,
+.hljs-literal { color: var(--hljs-number); }
+
+/* Keywords — control flow, reserved words */
+.hljs-keyword,
+.hljs-operator { color: var(--hljs-keyword); font-weight: 500; }
+
+/* Types & class names */
+.hljs-type,
+.hljs-title.class_,
+.hljs-title.class_.inherited__,
+.hljs-symbol { color: var(--hljs-type); }
+
+/* Function & section titles */
+.hljs-title,
+.hljs-title.function_,
+.hljs-section { color: var(--hljs-function); font-weight: 500; }
+
+/* Object properties, HTML/XML attributes & tag names */
+.hljs-property,
+.hljs-attr,
+.hljs-name,
+.hljs-tag { color: var(--hljs-property); }
+
+/* Built-ins, variables, params — stay close to base */
+.hljs-built_in,
+.hljs-variable,
+.hljs-variable.language_,
+.hljs-template-variable,
+.hljs-subst,
+.hljs-params,
+.hljs-punctuation { color: var(--hljs-base); }
+
+/* Operators & dim punctuation */
+.hljs-operator { color: var(--hljs-operator); }
+
+/* Meta — decorators, preprocessor directives, shebang */
+.hljs-meta,
+.hljs-meta .hljs-keyword { color: var(--hljs-meta); font-style: italic; }
+.hljs-meta .hljs-string { color: var(--hljs-string); font-style: normal; }
+
+/* CSS selectors */
+.hljs-selector-tag { color: var(--hljs-keyword); font-weight: 500; }
+.hljs-selector-class,
+.hljs-selector-id { color: var(--hljs-type); }
+.hljs-selector-attr,
+.hljs-selector-pseudo { color: var(--hljs-property); }
+
+/* Diff */
+.hljs-addition { color: #4ade80; }
+.hljs-deletion { color: #f87171; }
+
+/* Markdown */
+.hljs-bullet,
+.hljs-code { color: var(--hljs-base); }
+.hljs-link { color: var(--hljs-string); text-decoration: underline; }
+.hljs-formula { color: var(--hljs-type); }
+
+/* Misc */
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }
+
+/* Kill browser focus rings — we use custom hover/active states instead */
+:focus { outline: none; }
+
+/* Reveals on hover OR keyboard focus so action affordances are reachable via Tab. */
+.hover-actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+.hover-actions-parent:hover .hover-actions,
+.hover-actions-parent:focus-within .hover-actions,
+.hover-actions:hover,
+.hover-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
