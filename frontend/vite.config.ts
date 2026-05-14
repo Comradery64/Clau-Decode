@@ -9,9 +9,13 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          echarts: ["echarts/core", "echarts/charts", "echarts/components", "echarts/renderers"],
-          react: ["react", "react-dom"],
+        // vite 8 / rolldown requires manualChunks to be a function — the
+        // object form is no longer accepted. This functional form also
+        // works under the older rollup-based vite 5/6/7.
+        manualChunks(id: string) {
+          if (id.includes("node_modules/echarts/")) return "echarts";
+          if (id.includes("node_modules/react/") || id.includes("node_modules/react-dom/")) return "react";
+          return undefined;
         },
       },
     },
