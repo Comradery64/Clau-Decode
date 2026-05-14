@@ -188,9 +188,22 @@ export function FileExplorer() {
         >
           {showEllipsis && rootCrumb && truncatedRootLabel ? (
             <>
-              <Crumb label={truncatedRootLabel} path={rootCrumb.path} onClick={navigateTo} />
+              <Crumb
+                label={truncatedRootLabel}
+                path={rootCrumb.path}
+                onClick={navigateTo}
+                // When the label was truncated, show the original segment name
+                // on hover instead of the path. (When label matches the segment,
+                // the default `path` tooltip is more useful.)
+                title={truncatedRootLabel !== rootCrumb.label ? rootCrumb.label : undefined}
+              />
               <span style={{ opacity: 0.4, padding: "0 2px" }}>/</span>
-              <span style={{ opacity: 0.5 }}>…</span>
+              <span
+                title={breadcrumbs.slice(1, -2).map((bc) => bc.label).join(" / ")}
+                style={{ opacity: 0.5, cursor: "help" }}
+              >
+                …
+              </span>
               <span style={{ opacity: 0.4, padding: "0 2px" }}>/</span>
               {breadcrumbs.slice(-2).map((bc, i) => (
                 <span key={bc.path} style={{ display: "inline-flex", alignItems: "center" }}>
@@ -245,10 +258,20 @@ export function FileExplorer() {
   );
 }
 
-function Crumb({ label, path, onClick }: { label: string; path: string; onClick: (p: string) => void }) {
+function Crumb({ label, path, onClick, title }: {
+  label: string;
+  path: string;
+  onClick: (p: string) => void;
+  // Optional native tooltip — set when the displayed label is a truncated
+  // form of the actual path segment (e.g. "Volu…" for "Volumes"). When
+  // unset, the path itself is shown so users can see what they'd navigate
+  // to without clicking.
+  title?: string;
+}) {
   return (
     <button
       onClick={() => onClick(path)}
+      title={title ?? path}
       style={{
         background: "none",
         border: "none",
