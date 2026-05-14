@@ -127,15 +127,29 @@ export function FileExplorer() {
 
   const navigateTo = (path: string) => setCurrentPath(path);
 
-  // Show only the last 2 segments for a compact breadcrumb
+  // Compact breadcrumb format for deep paths:
+  //   <first-4-chars-of-root>… / … / parent / cwd
+  // The root segment is truncated to 4 chars + ellipsis so very long root
+  // names (e.g. "Volumes") don't dominate the bar. The middle ellipsis
+  // stands in for elided intermediate segments. Parent and cwd are shown
+  // in full — sidebar drag-resize lets the user widen the panel to see
+  // long names without truncation.
   const segments = currentPath ? currentPath.split("/").filter(Boolean) : [];
   const breadcrumbs = segments.map((part, i) => ({
     label: part,
     path: "/" + segments.slice(0, i + 1).join("/"),
     isLast: i === segments.length - 1,
   }));
-  // If more than 3 segments, collapse the middle
+  // Collapse the middle whenever there's a segment between root and the
+  // last-two pair (i.e. more than 3 total segments).
   const showEllipsis = breadcrumbs.length > 3;
+  // Truncate the root label to 4 chars + ellipsis when the original is
+  // longer; leave shorter segments alone.
+  const rootCrumb = breadcrumbs[0];
+  const truncatedRootLabel =
+    rootCrumb && rootCrumb.label.length > 4
+      ? rootCrumb.label.slice(0, 4) + "…"
+      : rootCrumb?.label;
 
   if (!currentPath) {
     return (
@@ -159,22 +173,30 @@ export function FileExplorer() {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "2px",
+            flexWrap: "wrap",
+            rowGap: "2px",
+            columnGap: "2px",
             fontSize: "12px",
             fontFamily: "var(--font-ui)",
             color: "var(--text-tertiary)",
-            overflow: "hidden",
-            whiteSpace: "nowrap",
+            // Allow the breadcrumb to use the panel's full width and wrap
+            // onto additional rows when needed — the sidebar is drag-
+            // resizable, so users can widen the panel to see more of the
+            // parent/cwd labels.
+            wordBreak: "break-word",
           }}
         >
-          {showEllipsis ? (
+          {showEllipsis && rootCrumb && truncatedRootLabel ? (
             <>
-              <Crumb label={breadcrumbs[0].label} path={breadcrumbs[0].path} onClick={navigateTo} />
+              <Crumb label={truncatedRootLabel} path={rootCrumb.path} onClick={navigateTo} />
               <span style={{ opacity: 0.4, padding: "0 2px" }}>/</span>
               <span style={{ opacity: 0.5 }}>…</span>
               <span style={{ opacity: 0.4, padding: "0 2px" }}>/</span>
-              {breadcrumbs.slice(-2).map((bc) => (
-                <CrumbOrTail key={bc.path} bc={bc} onClick={navigateTo} />
+              {breadcrumbs.slice(-2).map((bc, i) => (
+                <span key={bc.path} style={{ display: "inline-flex", alignItems: "center" }}>
+                  {i > 0 && <span style={{ opacity: 0.4, padding: "0 2px" }}>/</span>}
+                  <CrumbOrTail bc={bc} onClick={navigateTo} />
+                </span>
               ))}
             </>
           ) : (

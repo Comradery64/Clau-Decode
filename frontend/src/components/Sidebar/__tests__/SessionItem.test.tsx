@@ -55,7 +55,7 @@ describe("SessionItem", () => {
     expect(el.style.background).toBe("transparent");
   });
 
-  it("truncates long titles via data-testid element", () => {
+  it("renders long titles in full and wraps to multiple lines", () => {
     const longTitle = "A".repeat(100);
     const { container } = render(
       <SessionItem
@@ -66,10 +66,12 @@ describe("SessionItem", () => {
     );
     const titleEl = container.querySelector("[data-testid='session-title']");
     expect(titleEl).toBeTruthy();
+    // Full title text is present — no truncation.
     expect(titleEl?.textContent).toBe(longTitle);
-    // ellipsis overflow style applied
-    expect((titleEl as HTMLElement).style.overflow).toBe("hidden");
-    expect((titleEl as HTMLElement).style.textOverflow).toBe("ellipsis");
+    // Wrap-friendly styles applied (replaces the previous ellipsis cap).
+    const style = (titleEl as HTMLElement).style;
+    expect(style.whiteSpace).toBe("normal");
+    expect(style.overflowWrap).toBe("anywhere");
   });
 
   it("fires onClick when clicked", () => {

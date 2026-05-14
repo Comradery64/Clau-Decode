@@ -319,13 +319,17 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                 data-testid="session-title"
                 style={{
                   flex: 1,
+                  minWidth: 0,
                   fontSize: "14px",
                   color: "var(--text-primary)",
                   fontWeight: isActive ? 500 : 400,
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
                   lineHeight: "1.35",
+                  // Wrap to as many lines as the title needs — the sidebar's
+                  // drag-resize lets users widen it to fit long titles, so
+                  // the previous single-line ellipsis was redundant noise.
+                  whiteSpace: "normal",
+                  overflowWrap: "anywhere",
+                  wordBreak: "break-word",
                 }}
               >
                 {displayTitle}
