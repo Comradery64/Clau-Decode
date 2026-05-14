@@ -43,13 +43,11 @@ secrets.*
 # Session-edit safety backups (created by --enable-edit before each write)
 *.bak.*.jsonl
 
-# --demo mode keeps its config/cache under demo-data/.runtime/ so a demo run
-# can't touch real state. The fixtures themselves under demo-data/projects/
-# DO ship; runtime state must not.
-demo-data/.runtime/
-
-# Generated VHS recordings — produced by demo-reel/pipeline.sh
-demo-reel/output/
+# Demo fixtures, --demo runtime state, and the VHS recording pipeline are
+# local-only — useful for producing screen recordings but not part of the
+# published source. Keep them on disk, just out of git.
+demo-data/
+demo-reel/
 
 # Keep the built static assets — they ship with the package
 !src/clau_decode/static/
