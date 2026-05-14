@@ -28,6 +28,7 @@ SOLID notes:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import shutil
 import subprocess
@@ -1105,6 +1106,36 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 status_code=403, detail="Path outside allowed directories"
             )
         return resolved
+
+    @app.get("/api/host-info")
+    async def host_info(request: Request):
+        """Per-connection metadata for the UI to gate host-side actions.
+
+        ``is_remote_client`` is True when the request did NOT originate from a
+        loopback address on the server box. Used by the frontend to disable
+        actions that run osascript / xdg-open on the SERVER's host (e.g.
+        "Open in terminal", "Reveal in Finder") — those would silently fire
+        on the host machine and confuse a remote viewer.
+
+        Caveat: this can't see through ssh -L / Tailscale forwards. A user
+        tunneling to 127.0.0.1 reads as local to the server, which is the
+        correct behavior — the actions DO run somewhere they can see.
+        """
+        host = request.client.host if request.client else None
+        is_local = False
+        if host:
+            if host == "localhost":
+                is_local = True
+            else:
+                try:
+                    is_local = ipaddress.ip_address(host).is_loopback
+                except ValueError:
+                    is_local = False
+        return {
+            "is_remote_client": not is_local,
+            "platform": sys.platform,
+            "client_host": host,
+        }
 
     @app.get("/api/fs/list")
     async def fs_list(
