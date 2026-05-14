@@ -58,6 +58,7 @@ from .models import (
 # Content block (de)serialization helpers
 # ---------------------------------------------------------------------------
 
+
 def _serialize_content_blocks(blocks: list[ContentBlock]) -> str:
     return json.dumps([b.model_dump() for b in blocks])
 
@@ -100,6 +101,7 @@ def _extract_text_for_fts(blocks: list[ContentBlock]) -> str:
 # Timestamp helpers
 # ---------------------------------------------------------------------------
 
+
 def _dt_to_str(dt: Optional[datetime]) -> Optional[str]:
     if dt is None:
         return None
@@ -118,6 +120,7 @@ def _str_to_dt(s: Optional[str]) -> Optional[datetime]:
 # ---------------------------------------------------------------------------
 # Database class
 # ---------------------------------------------------------------------------
+
 
 class Database:
     """Async SQLite database wrapper.  Use as an async context manager."""
@@ -318,12 +321,16 @@ class Database:
         )
         await self._conn.commit()
 
-    async def get_projects(self, data_sources: Optional[list[str]] = None) -> list[Project]:
+    async def get_projects(
+        self, data_sources: Optional[list[str]] = None
+    ) -> list[Project]:
         assert self._conn is not None
         if data_sources is not None:
             placeholders = ",".join("?" * len(data_sources))
-            query = (f"SELECT * FROM projects WHERE data_source IN ({placeholders}) "
-                     "ORDER BY last_activity_at DESC NULLS LAST")
+            query = (
+                f"SELECT * FROM projects WHERE data_source IN ({placeholders}) "
+                "ORDER BY last_activity_at DESC NULLS LAST"
+            )
             params: tuple = tuple(data_sources)
         else:
             query = "SELECT * FROM projects ORDER BY last_activity_at DESC NULLS LAST"
@@ -386,10 +393,14 @@ class Database:
         )
         await self._conn.commit()
 
-    async def get_sessions(self, project_id: Optional[str] = None, data_sources: Optional[list[str]] = None) -> list[Session]:
+    async def get_sessions(
+        self, project_id: Optional[str] = None, data_sources: Optional[list[str]] = None
+    ) -> list[Session]:
         assert self._conn is not None
-        _lmr = ("(SELECT role FROM messages WHERE session_id = s.id "
-                "ORDER BY timestamp DESC LIMIT 1) AS last_message_role")
+        _lmr = (
+            "(SELECT role FROM messages WHERE session_id = s.id "
+            "ORDER BY timestamp DESC LIMIT 1) AS last_message_role"
+        )
         conditions = ["s.title IS NOT NULL"]
         params: list = []
         if project_id is not None:
@@ -397,7 +408,9 @@ class Database:
             params.append(project_id)
         if data_sources is not None:
             placeholders = ",".join("?" * len(data_sources))
-            conditions.append(f"s.project_id IN (SELECT id FROM projects WHERE data_source IN ({placeholders}))")
+            conditions.append(
+                f"s.project_id IN (SELECT id FROM projects WHERE data_source IN ({placeholders}))"
+            )
             params.extend(data_sources)
         where = " AND ".join(conditions)
         query = f"SELECT s.*, {_lmr} FROM sessions s WHERE {where} ORDER BY s.updated_at DESC"
@@ -575,7 +588,9 @@ class Database:
 
         return b"".join(parts)
 
-    async def get_session_detail(self, session_id: str, message_limit: Optional[int] = None) -> Optional[SessionDetail]:
+    async def get_session_detail(
+        self, session_id: str, message_limit: Optional[int] = None
+    ) -> Optional[SessionDetail]:
         assert self._conn is not None
 
         # Fetch the session row (include last_message_role subquery for consistency)
@@ -601,7 +616,11 @@ class Database:
                 total_count = row[0]
 
         # Fetch messages ordered by timestamp, optionally capped to last N
-        if message_limit is not None and total_count is not None and total_count > message_limit:
+        if (
+            message_limit is not None
+            and total_count is not None
+            and total_count > message_limit
+        ):
             # Fetch last N messages by using a subquery to get the tail
             query = (
                 "SELECT * FROM messages WHERE session_id = ? "
@@ -739,6 +758,17 @@ class Database:
     ) -> list[SearchHit]:
         assert self._conn is not None
 
+        # FTS5 treats `-`, `"`, `:`, etc. as operators. Coerce user input to
+        # space-separated word tokens so queries like "eye-candy" or "a:b" are
+        # interpreted as ordinary terms (AND'd by default), not column filters
+        # or NOT operators. This is a search-quality fix, not a security fix.
+        import re as _re
+
+        sanitized = _re.sub(r"[^\w\s]", " ", query).strip()
+        if not sanitized:
+            return []
+        match_query = sanitized
+
         if project_id is not None:
             sql = """
                 SELECT
@@ -757,7 +787,7 @@ class Database:
                 ORDER BY s.updated_at DESC
                 LIMIT ?
             """
-            params: tuple = (query, project_id, limit)
+            params: tuple = (match_query, project_id, limit)
         else:
             sql = """
                 SELECT
@@ -775,7 +805,7 @@ class Database:
                 ORDER BY s.updated_at DESC
                 LIMIT ?
             """
-            params = (query, limit)
+            params = (match_query, limit)
 
         async with self._conn.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
@@ -885,6 +915,7 @@ class Database:
 # ---------------------------------------------------------------------------
 # Private row → model converters
 # ---------------------------------------------------------------------------
+
 
 def _row_to_session(row: aiosqlite.Row) -> Session:
     return Session(

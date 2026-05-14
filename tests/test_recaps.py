@@ -1,4 +1,5 @@
 """Tests for the recap feature: DB layer + HTTP routes."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +7,6 @@ import json
 import os
 import shutil
 import stat
-import tempfile
 import time
 from pathlib import Path
 from typing import AsyncIterator
@@ -24,6 +24,7 @@ FAKE = Path(__file__).parent / "fixtures" / "fake_claude.py"
 # ---------------------------------------------------------------------------
 # Helpers (mirror the patterns in test_server.py)
 # ---------------------------------------------------------------------------
+
 
 def _write_shim(dir_: Path, bin_name: str = "claude", extra_argv: str = "") -> Path:
     path = dir_ / bin_name
@@ -65,6 +66,7 @@ async def _seed_session(
 
 def _make_app(db_path: Path, config: AppConfig):
     from clau_decode.server import create_app
+
     return create_app(config, db_path)
 
 
@@ -107,6 +109,7 @@ async def recap_env(tmp_path, monkeypatch) -> AsyncIterator[dict]:
 # DB tests
 # ---------------------------------------------------------------------------
 
+
 async def test_db_recap_insert_and_list_roundtrip(tmp_path):
     db_path = tmp_path / "db.sqlite"
     async with Database(db_path) as db:
@@ -148,6 +151,7 @@ async def test_db_recap_dismiss(tmp_path):
 # ---------------------------------------------------------------------------
 # Endpoint: POST /api/sessions/{id}/recap
 # ---------------------------------------------------------------------------
+
 
 async def test_recap_endpoint_generates_and_stores(recap_env):
     e = recap_env
@@ -201,6 +205,7 @@ async def test_recap_endpoint_503_when_bin_missing(recap_env, monkeypatch):
 # Endpoint: GET /api/sessions/{id}/recaps
 # ---------------------------------------------------------------------------
 
+
 async def test_list_recaps_excludes_dismissed_by_default(recap_env):
     e = recap_env
     async with Database(e["db_path"]) as db:
@@ -241,13 +246,12 @@ async def test_list_recaps_includes_when_flagged(recap_env):
 # Endpoint: POST /api/sessions/{id}/recaps/{recap_id}/dismiss
 # ---------------------------------------------------------------------------
 
+
 async def test_dismiss_endpoint_404_when_missing(recap_env):
     e = recap_env
     app = _make_app(e["db_path"], AppConfig())
     async with await _client(app) as c:
-        r = await c.post(
-            f"/api/sessions/{e['session_id']}/recaps/99999/dismiss"
-        )
+        r = await c.post(f"/api/sessions/{e['session_id']}/recaps/99999/dismiss")
     assert r.status_code == 404
 
 
@@ -257,9 +261,7 @@ async def test_dismiss_endpoint_happy_path(recap_env):
         rid = await db.insert_recap(e["session_id"], "dismiss me", None)
     app = _make_app(e["db_path"], AppConfig())
     async with await _client(app) as c:
-        r = await c.post(
-            f"/api/sessions/{e['session_id']}/recaps/{rid}/dismiss"
-        )
+        r = await c.post(f"/api/sessions/{e['session_id']}/recaps/{rid}/dismiss")
     assert r.status_code == 200
     assert r.json() == {"ok": True, "dismissed": True}
 
@@ -267,6 +269,7 @@ async def test_dismiss_endpoint_happy_path(recap_env):
 # ---------------------------------------------------------------------------
 # Argv verification — recap uses --model haiku + --fork-session + --no-session-persistence
 # ---------------------------------------------------------------------------
+
 
 async def test_recap_uses_haiku_in_argv(recap_env, monkeypatch):
     e = recap_env

@@ -7,9 +7,9 @@ Coverage targets:
   db.py      — migration idempotency, search, stats edge cases
   scanner.py — full scan via /api/refresh with real directory fixture
 """
+
 from __future__ import annotations
 
-import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -35,6 +35,7 @@ USAGE_SESSION_ID = "cccccccc-0000-0000-0000-000000000003"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _seed_db(db_path: Path) -> None:
     """Parse both fixtures and upsert into DB."""
     async with Database(db_path) as db:
@@ -56,12 +57,14 @@ async def _seed_db(db_path: Path) -> None:
 def _make_app(db_path: Path, config: AppConfig | None = None):
     from clau_decode.config import load_config
     from clau_decode.server import create_app
+
     return create_app(config or load_config(), db_path)
 
 
 # ---------------------------------------------------------------------------
 # Shared fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 async def client_seeded():
@@ -94,6 +97,7 @@ async def client_empty():
 # Health
 # ---------------------------------------------------------------------------
 
+
 class TestHealth:
     async def test_returns_ok(self, client_empty):
         r = await client_empty.get("/api/health")
@@ -105,6 +109,7 @@ class TestHealth:
 # Config
 # ---------------------------------------------------------------------------
 
+
 class TestConfig:
     async def test_get_config_returns_app_config(self, client_empty):
         r = await client_empty.get("/api/config")
@@ -115,8 +120,12 @@ class TestConfig:
         assert "theme" in data
 
     async def test_put_config_updates_and_returns(self, client_empty):
-        new_cfg = {"data_paths": ["/tmp/test"], "theme": "dark",
-                   "auto_open_browser": False, "port": 9999}
+        new_cfg = {
+            "data_paths": ["/tmp/test"],
+            "theme": "dark",
+            "auto_open_browser": False,
+            "port": 9999,
+        }
         with patch("clau_decode.server.save_config"):
             r = await client_empty.put("/api/config", json=new_cfg)
         assert r.status_code == 200
@@ -131,6 +140,7 @@ class TestConfig:
 # ---------------------------------------------------------------------------
 # Projects
 # ---------------------------------------------------------------------------
+
 
 class TestProjects:
     async def test_get_projects_returns_list(self, client_seeded):
@@ -160,6 +170,7 @@ class TestProjects:
 # ---------------------------------------------------------------------------
 # Sessions
 # ---------------------------------------------------------------------------
+
 
 class TestSessions:
     async def test_get_session_returns_detail(self, client_seeded):
@@ -196,14 +207,16 @@ class TestSessions:
 # Search
 # ---------------------------------------------------------------------------
 
+
 class TestSearch:
     async def test_search_finds_content(self, client_seeded):
         r = await client_seeded.get("/api/search?q=Python")
         assert r.status_code == 200
         hits = r.json()
         assert len(hits) >= 1
-        assert any("Python" in h["snippet"] or "python" in h["snippet"].lower()
-                   for h in hits)
+        assert any(
+            "Python" in h["snippet"] or "python" in h["snippet"].lower() for h in hits
+        )
 
     async def test_search_no_results(self, client_seeded):
         r = await client_seeded.get("/api/search?q=xyzzy_nonexistent_42")
@@ -236,6 +249,7 @@ class TestSearch:
 # Stats
 # ---------------------------------------------------------------------------
 
+
 class TestStats:
     async def test_stats_with_data(self, client_seeded):
         r = await client_seeded.get("/api/stats")
@@ -258,6 +272,7 @@ class TestStats:
 # ---------------------------------------------------------------------------
 # Refresh (exercises do_scan)
 # ---------------------------------------------------------------------------
+
 
 class TestRefresh:
     async def test_refresh_empty_paths_returns_ok(self, client_empty):
@@ -297,6 +312,7 @@ class TestRefresh:
 # Reveal
 # ---------------------------------------------------------------------------
 
+
 class TestReveal:
     async def test_reveal_unknown_session_returns_404(self, client_seeded):
         r = await client_seeded.post("/api/sessions/nonexistent/reveal")
@@ -313,9 +329,7 @@ class TestReveal:
         with patch("clau_decode.server.Path") as mock_path_cls:
             mock_instance = mock_path_cls.return_value
             mock_instance.exists.return_value = False
-            r = await client_seeded.post(
-                f"/api/sessions/{SIMPLE_SESSION_ID}/reveal"
-            )
+            r = await client_seeded.post(f"/api/sessions/{SIMPLE_SESSION_ID}/reveal")
         # Either 404 (file not found branch) or 200 (real file found) is valid
         assert r.status_code in (200, 404)
 
@@ -324,6 +338,7 @@ class TestReveal:
 # Analytics — tokens
 # ---------------------------------------------------------------------------
 
+
 class TestAnalyticsTokens:
     async def test_tokens_for_usage_session(self, client_seeded):
         r = await client_seeded.get(
@@ -331,8 +346,8 @@ class TestAnalyticsTokens:
         )
         assert r.status_code == 200
         data = r.json()
-        assert data["input_tokens"] == 32     # 12 + 20
-        assert data["output_tokens"] == 5     # 3 + 2
+        assert data["input_tokens"] == 32  # 12 + 20
+        assert data["output_tokens"] == 5  # 3 + 2
         assert data["cache_creation_tokens"] == 100
         assert data["cache_read_tokens"] == 50
         assert data["total"] == 187
@@ -349,9 +364,7 @@ class TestAnalyticsTokens:
         assert "total" in data
 
     async def test_tokens_unknown_session_returns_404(self, client_seeded):
-        r = await client_seeded.get(
-            "/api/analytics/sessions/nonexistent/tokens"
-        )
+        r = await client_seeded.get("/api/analytics/sessions/nonexistent/tokens")
         assert r.status_code == 404
         assert r.json()["detail"] == "Session not found"
 
@@ -360,14 +373,21 @@ class TestAnalyticsTokens:
             f"/api/analytics/sessions/{USAGE_SESSION_ID}/tokens"
         )
         data = r.json()
-        for key in ("session_id", "input_tokens", "output_tokens",
-                    "cache_creation_tokens", "cache_read_tokens", "total"):
+        for key in (
+            "session_id",
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_tokens",
+            "cache_read_tokens",
+            "total",
+        ):
             assert key in data
 
 
 # ---------------------------------------------------------------------------
 # Analytics — prompts
 # ---------------------------------------------------------------------------
+
 
 class TestAnalyticsPrompts:
     async def test_prompts_for_usage_session(self, client_seeded):
@@ -385,15 +405,19 @@ class TestAnalyticsPrompts:
             f"/api/analytics/sessions/{USAGE_SESSION_ID}/prompts"
         )
         p = r.json()[0]
-        for key in ("user_message_id", "assistant_message_id",
-                    "input_tokens", "output_tokens",
-                    "cache_creation_tokens", "cache_read_tokens", "total"):
+        for key in (
+            "user_message_id",
+            "assistant_message_id",
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_tokens",
+            "cache_read_tokens",
+            "total",
+        ):
             assert key in p
 
     async def test_prompts_unknown_session_returns_404(self, client_seeded):
-        r = await client_seeded.get(
-            "/api/analytics/sessions/nonexistent/prompts"
-        )
+        r = await client_seeded.get("/api/analytics/sessions/nonexistent/prompts")
         assert r.status_code == 404
 
     async def test_prompts_cache_heavy_ranked_first(self, client_seeded):
@@ -410,6 +434,7 @@ class TestAnalyticsPrompts:
 # Analytics — daily
 # ---------------------------------------------------------------------------
 
+
 class TestAnalyticsDaily:
     async def test_daily_returns_list(self, client_seeded):
         r = await client_seeded.get("/api/analytics/daily")
@@ -423,9 +448,16 @@ class TestAnalyticsDaily:
         buckets = r.json()
         assert len(buckets) > 0
         b = buckets[0]
-        for key in ("day", "input_tokens", "output_tokens",
-                    "cache_creation_tokens", "cache_read_tokens",
-                    "total", "prompt_count", "session_count"):
+        for key in (
+            "day",
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_tokens",
+            "cache_read_tokens",
+            "total",
+            "prompt_count",
+            "session_count",
+        ):
             assert key in b
 
     async def test_daily_day_is_iso_format(self, client_seeded):
@@ -433,6 +465,7 @@ class TestAnalyticsDaily:
         for b in r.json():
             # Must be parseable as ISO date YYYY-MM-DD
             from datetime import date
+
             date.fromisoformat(b["day"])
 
     async def test_daily_chronologically_ordered(self, client_seeded):
@@ -449,6 +482,7 @@ class TestAnalyticsDaily:
 # ---------------------------------------------------------------------------
 # Sessions — flat endpoint
 # ---------------------------------------------------------------------------
+
 
 class TestAllSessions:
     async def test_get_all_sessions_returns_both(self, client_seeded):
@@ -470,54 +504,69 @@ class TestAllSessions:
 # Analytics — cost
 # ---------------------------------------------------------------------------
 
+
 class TestAnalyticsCost:
     async def test_cost_for_usage_session(self, client_seeded):
-        r = await client_seeded.get(
-            f"/api/analytics/sessions/{USAGE_SESSION_ID}/cost"
-        )
+        r = await client_seeded.get(f"/api/analytics/sessions/{USAGE_SESSION_ID}/cost")
         assert r.status_code == 200
         data = r.json()
         assert data["session_id"] == USAGE_SESSION_ID
-        assert data["model"] == "claude-sonnet-4-6"
+        assert len(data["models"]) >= 1
+        assert data["models"][0]["model"] == "claude-sonnet-4-6"
         assert data["total_usd"] > 0
         assert data["pricing_known"] is True
         assert data["pricing_source"] in ("live", "hardcoded")
 
     async def test_cost_response_shape(self, client_seeded):
-        r = await client_seeded.get(
-            f"/api/analytics/sessions/{USAGE_SESSION_ID}/cost"
-        )
+        r = await client_seeded.get(f"/api/analytics/sessions/{USAGE_SESSION_ID}/cost")
         data = r.json()
-        for key in ("session_id", "model", "input_usd", "output_usd",
-                    "cache_write_usd", "cache_read_usd", "total_usd",
-                    "pricing_known", "pricing_source"):
-            assert key in data, f"missing key: {key}"
+        for key in (
+            "session_id",
+            "models",
+            "total_usd",
+            "pricing_known",
+            "pricing_source",
+        ):
+            assert key in data, f"missing top-level key: {key}"
+        assert isinstance(data["models"], list) and len(data["models"]) >= 1
+        for key in (
+            "model",
+            "input_usd",
+            "output_usd",
+            "cache_write_usd",
+            "cache_read_usd",
+            "total_usd",
+            "pricing_known",
+        ):
+            assert key in data["models"][0], f"missing per-model key: {key}"
 
     async def test_cost_total_equals_sum_of_parts(self, client_seeded):
-        r = await client_seeded.get(
-            f"/api/analytics/sessions/{USAGE_SESSION_ID}/cost"
-        )
+        r = await client_seeded.get(f"/api/analytics/sessions/{USAGE_SESSION_ID}/cost")
         data = r.json()
-        expected = (
-            data["input_usd"] + data["output_usd"]
-            + data["cache_write_usd"] + data["cache_read_usd"]
-        )
-        assert abs(data["total_usd"] - expected) < 1e-9
+        # Per-model: each model's total equals the sum of its component fields.
+        for entry in data["models"]:
+            expected = (
+                entry["input_usd"]
+                + entry["output_usd"]
+                + entry["cache_write_usd"]
+                + entry["cache_read_usd"]
+            )
+            assert abs(entry["total_usd"] - expected) < 1e-9
+        # Top-level: aggregate total equals the sum of per-model totals.
+        per_model_sum = sum(entry["total_usd"] for entry in data["models"])
+        assert abs(data["total_usd"] - per_model_sum) < 1e-9
 
     async def test_cost_unknown_session_returns_404(self, client_seeded):
-        r = await client_seeded.get(
-            "/api/analytics/sessions/nonexistent/cost"
-        )
+        r = await client_seeded.get("/api/analytics/sessions/nonexistent/cost")
         assert r.status_code == 404
         assert r.json()["detail"] == "Session not found"
 
     async def test_cost_simple_session_has_sonnet_pricing(self, client_seeded):
-        r = await client_seeded.get(
-            f"/api/analytics/sessions/{SIMPLE_SESSION_ID}/cost"
-        )
+        r = await client_seeded.get(f"/api/analytics/sessions/{SIMPLE_SESSION_ID}/cost")
         assert r.status_code == 200
         data = r.json()
-        assert data["model"] == "claude-sonnet-4-6"
+        assert len(data["models"]) >= 1
+        assert data["models"][0]["model"] == "claude-sonnet-4-6"
         assert data["pricing_known"] is True
         assert data["total_usd"] > 0
 
@@ -525,6 +574,7 @@ class TestAnalyticsCost:
 # ---------------------------------------------------------------------------
 # Pricing table
 # ---------------------------------------------------------------------------
+
 
 class TestPricingTable:
     async def test_pricing_returns_200(self, client_empty):
@@ -547,8 +597,13 @@ class TestPricingTable:
     async def test_pricing_model_entry_shape(self, client_empty):
         r = await client_empty.get("/api/pricing")
         entry = r.json()["models"][0]
-        for key in ("model", "input_per_mtok", "output_per_mtok",
-                    "cache_write_per_mtok", "cache_read_per_mtok"):
+        for key in (
+            "model",
+            "input_per_mtok",
+            "output_per_mtok",
+            "cache_write_per_mtok",
+            "cache_read_per_mtok",
+        ):
             assert key in entry, f"missing key: {key}"
 
     async def test_pricing_rates_are_positive(self, client_empty):
@@ -561,6 +616,7 @@ class TestPricingTable:
 # ---------------------------------------------------------------------------
 # Events (SSE — verify route exists and streams)
 # ---------------------------------------------------------------------------
+
 
 class TestEvents:
     def test_events_route_registered(self):
@@ -582,6 +638,7 @@ class TestEvents:
 # SSE payload contract
 # ---------------------------------------------------------------------------
 
+
 class TestSSEPayloadContract:
     """Lock down the shape of the SSE event payload.
 
@@ -599,7 +656,10 @@ class TestSSEPayloadContract:
     def _payload(self, path=None):
         import json
         from clau_decode.server import _sse_event_data
-        raw = _sse_event_data(path or Path("/home/user/.claude/projects/-foo/abc.jsonl"))
+
+        raw = _sse_event_data(
+            path or Path("/home/user/.claude/projects/-foo/abc.jsonl")
+        )
         return json.loads(raw)
 
     def test_type_field_is_refresh(self):
@@ -618,11 +678,13 @@ class TestSSEPayloadContract:
     def test_pathlib_path_is_accepted(self):
         """Passing a raw Path (not pre-stringified) must not raise."""
         from clau_decode.server import _sse_event_data
+
         result = _sse_event_data(Path("/some/file.jsonl"))
         assert isinstance(result, str)
 
     def test_string_path_is_also_accepted(self):
         from clau_decode.server import _sse_event_data
+
         result = _sse_event_data("/some/file.jsonl")
         assert isinstance(result, str)
 
@@ -659,6 +721,7 @@ async def edit_client():
             await db.upsert_messages(messages)
 
         from clau_decode.models import AppConfig as _AppConfig
+
         config = _AppConfig(edit_enabled=True)
         app = _make_app(db_path, config)
         async with AsyncClient(
@@ -744,10 +807,11 @@ class TestMessageMutations:
         await client.delete(f"/api/messages/{SIMPLE_USER_MSG_ID}")
         backup = list(tmp_path.glob("*.bak.*.jsonl"))[0]
         import json as _json
+
         uuids = {
-            _json.loads(l).get("uuid")
-            for l in backup.read_text().splitlines()
-            if l.strip()
+            _json.loads(line).get("uuid")
+            for line in backup.read_text().splitlines()
+            if line.strip()
         } - {None}
         assert SIMPLE_USER_MSG_ID in uuids
 
@@ -773,9 +837,11 @@ class TestMessageMutations:
         )
         backup = list(tmp_path.glob("*.bak.*.jsonl"))[0]
         import json as _json
+
         original_found = any(
-            original_text in _json.dumps(_json.loads(l))
-            for l in backup.read_text().splitlines() if l.strip()
+            original_text in _json.dumps(_json.loads(line))
+            for line in backup.read_text().splitlines()
+            if line.strip()
         )
         assert original_found
 

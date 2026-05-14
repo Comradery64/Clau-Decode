@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to clau-decode will be documented in this file.
+All notable changes to Clau-Decode will be documented in this file.
 
 The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the project is in the 0.x series, breaking changes may land in any minor release; we'll call them out clearly.
 
@@ -41,5 +41,5 @@ Initial public release.
 
 - License changed from MIT to [FSL-1.1-Apache-2.0](LICENSE). All prior unreleased history was developed under MIT; the 0.1.0 release and everything after it ship under FSL-1.1-Apache-2.0, which converts to Apache 2.0 two years after each release.
 
-[Unreleased]: https://github.com/Comradery64/clau-decode/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Comradery64/clau-decode/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Comradery64/Clau-Decode/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Comradery64/Clau-Decode/releases/tag/v0.1.0

@@ -14,6 +14,7 @@ This is the simplest injection we can do without touching the runner's
 ``bin_name`` resolution code, and it keeps the spawn signature
 identical to what production uses.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -21,7 +22,6 @@ import json
 import os
 import shutil
 import stat
-import tempfile
 import time
 from pathlib import Path
 from typing import Iterator
@@ -37,6 +37,7 @@ FAKE = Path(__file__).parent / "fixtures" / "fake_claude.py"
 # ---------------------------------------------------------------------------
 # Shim helpers
 # ---------------------------------------------------------------------------
+
 
 def _write_shim(dir_: Path, bin_name: str = "claude", extra_argv: str = "") -> Path:
     """Create an executable shim that execs ``fake_claude.py`` with extra args."""
@@ -69,7 +70,9 @@ async def runner() -> ClaudeCodeRunner:
         await r.shutdown()
 
 
-async def _await_session_done(runner: ClaudeCodeRunner, sid: str, *, timeout: float = 5.0) -> None:
+async def _await_session_done(
+    runner: ClaudeCodeRunner, sid: str, *, timeout: float = 5.0
+) -> None:
     """Block until the runner reports the session is no longer busy."""
     deadline = time.monotonic() + timeout
     while runner.is_busy(sid):
@@ -82,8 +85,10 @@ async def _await_session_done(runner: ClaudeCodeRunner, sid: str, *, timeout: fl
 # Unknown-slash pattern detection (drives auto-fallback)
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_slash_pattern_detection():
     from clau_decode.claude_runner import _looks_like_unknown_slash
+
     # zai/claude synthetic rejection phrases
     assert _looks_like_unknown_slash("/btw isn't available in this environment.")
     assert _looks_like_unknown_slash("/foo is not available in this environment.")
@@ -99,6 +104,7 @@ def test_unknown_slash_pattern_detection():
 # ---------------------------------------------------------------------------
 # Submit path / basic plumbing
 # ---------------------------------------------------------------------------
+
 
 async def test_submit_writes_ndjson_to_stdin(shim_path, runner, tmp_path):
     """The runner writes a single NDJSON line in the documented shape."""
@@ -193,10 +199,20 @@ async def test_concurrent_submits_parallel_across_sessions(shim_path, runner, tm
     # same moment. Wall-clock comparisons are flaky under coverage + cold
     # Python interpreter startup (each fake_claude subprocess pays an
     # ~80–150ms tax).
-    await runner.submit("sess-1", cwd=str(tmp_path), bin_name="claude",
-                        text="a", permission_mode="dontAsk")
-    await runner.submit("sess-2", cwd=str(tmp_path), bin_name="claude",
-                        text="b", permission_mode="dontAsk")
+    await runner.submit(
+        "sess-1",
+        cwd=str(tmp_path),
+        bin_name="claude",
+        text="a",
+        permission_mode="dontAsk",
+    )
+    await runner.submit(
+        "sess-2",
+        cwd=str(tmp_path),
+        bin_name="claude",
+        text="b",
+        permission_mode="dontAsk",
+    )
     assert runner.is_busy("sess-1") and runner.is_busy("sess-2"), (
         "both sessions should be live in parallel after sequential submits"
     )
@@ -215,6 +231,7 @@ async def test_concurrent_submits_parallel_across_sessions(shim_path, runner, tm
 # ---------------------------------------------------------------------------
 # Lifecycle: stop / shutdown
 # ---------------------------------------------------------------------------
+
 
 async def test_stop_terminates_inflight_turn(shim_path, runner, tmp_path):
     """stop() SIGINTs an active subprocess; is_busy goes False."""
@@ -245,10 +262,12 @@ async def test_shutdown_cleans_all(shim_path, tmp_path):
     os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
 
     r = ClaudeCodeRunner()
-    await r.submit("s-a", cwd=str(tmp_path), bin_name="claude",
-                   text="a", permission_mode="dontAsk")
-    await r.submit("s-b", cwd=str(tmp_path), bin_name="claude",
-                   text="b", permission_mode="dontAsk")
+    await r.submit(
+        "s-a", cwd=str(tmp_path), bin_name="claude", text="a", permission_mode="dontAsk"
+    )
+    await r.submit(
+        "s-b", cwd=str(tmp_path), bin_name="claude", text="b", permission_mode="dontAsk"
+    )
     assert r.is_busy("s-a") and r.is_busy("s-b")
     await r.shutdown()
     assert r.is_busy("s-a") is False
@@ -258,6 +277,7 @@ async def test_shutdown_cleans_all(shim_path, tmp_path):
 # ---------------------------------------------------------------------------
 # Stdout drain robustness
 # ---------------------------------------------------------------------------
+
 
 async def test_stdout_drain_doesnt_block_on_long_output(shim_path, runner, tmp_path):
     """Long stream-json output doesn't deadlock the runner."""
@@ -282,6 +302,7 @@ async def test_stdout_drain_doesnt_block_on_long_output(shim_path, runner, tmp_p
 # ---------------------------------------------------------------------------
 # Quiet-turn watchdog
 # ---------------------------------------------------------------------------
+
 
 async def test_quiet_age_tracks_last_stdout_line(shim_path, runner, tmp_path):
     """quiet_age resets whenever a new stdout line arrives."""
@@ -317,7 +338,9 @@ async def test_quiet_age_tracks_last_stdout_line(shim_path, runner, tmp_path):
     await _await_session_done(runner, "sess-q")
 
 
-async def test_quiet_warning_only_for_default_mode(shim_path, runner, tmp_path, monkeypatch):
+async def test_quiet_warning_only_for_default_mode(
+    shim_path, runner, tmp_path, monkeypatch
+):
     """A long quiet period in `dontAsk` never trips quiet_warning."""
     monkeypatch.setattr(cr_mod, "QUIET_WARN_SECONDS", 0.1)
     bin_dir = tmp_path / "bin_silent"
@@ -342,7 +365,9 @@ async def test_quiet_warning_only_for_default_mode(shim_path, runner, tmp_path, 
     await _await_session_done(runner, "sess-nodef")
 
 
-async def test_quiet_warning_triggers_at_threshold(shim_path, runner, tmp_path, monkeypatch):
+async def test_quiet_warning_triggers_at_threshold(
+    shim_path, runner, tmp_path, monkeypatch
+):
     """default-mode + quiet stdout beyond threshold → quiet_warning True."""
     monkeypatch.setattr(cr_mod, "QUIET_WARN_SECONDS", 0.2)
     bin_dir = tmp_path / "bin_silent"
@@ -384,13 +409,17 @@ async def test_auto_stop_off_by_default(shim_path, runner, tmp_path, monkeypatch
     )
     # Wait clearly past the (monkeypatched) auto-stop threshold.
     await asyncio.sleep(0.6)
-    assert runner.is_busy("sess-noauto"), "runner killed turn despite auto_stop_quiet_default=False"
+    assert runner.is_busy("sess-noauto"), (
+        "runner killed turn despite auto_stop_quiet_default=False"
+    )
     assert runner.status_snapshot("sess-noauto")["last_error"] is None
     await runner.stop("sess-noauto")
     await _await_session_done(runner, "sess-noauto")
 
 
-async def test_auto_stop_on_kills_quiet_default_turn(shim_path, runner, tmp_path, monkeypatch):
+async def test_auto_stop_on_kills_quiet_default_turn(
+    shim_path, runner, tmp_path, monkeypatch
+):
     """auto_stop_quiet_default=True → runner SIGINTs the quiet turn; last_error set."""
     monkeypatch.setattr(cr_mod, "QUIET_AUTOSTOP_SECONDS", 0.2)
 

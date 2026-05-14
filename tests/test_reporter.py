@@ -1,4 +1,5 @@
 """Tests for reporter.py — JSON and Markdown export."""
+
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -15,13 +16,22 @@ def _make_session_detail(
 ) -> SessionDetail:
     if messages is None:
         messages = [
-            Message(id="u1", session_id="s1", role="user",
-                    content_blocks=[TextBlock(text="Hello")],
-                    timestamp=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)),
-            Message(id="a1", session_id="s1", role="assistant", model=model,
-                    content_blocks=[TextBlock(text="Hi there")],
-                    timestamp=datetime(2026, 1, 1, 10, 0, 5, tzinfo=timezone.utc),
-                    usage=TokenUsage(input_tokens=10, output_tokens=5)),
+            Message(
+                id="u1",
+                session_id="s1",
+                role="user",
+                content_blocks=[TextBlock(text="Hello")],
+                timestamp=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+            ),
+            Message(
+                id="a1",
+                session_id="s1",
+                role="assistant",
+                model=model,
+                content_blocks=[TextBlock(text="Hi there")],
+                timestamp=datetime(2026, 1, 1, 10, 0, 5, tzinfo=timezone.utc),
+                usage=TokenUsage(input_tokens=10, output_tokens=5),
+            ),
         ]
     return SessionDetail(
         id="s1",
@@ -59,6 +69,7 @@ def _make_cost() -> SessionCost:
 class TestExportJson:
     def test_basic_export_structure(self):
         from clau_decode.reporter import export_json
+
         detail = _make_session_detail()
         result = export_json(detail)
 
@@ -73,6 +84,7 @@ class TestExportJson:
 
     def test_messages_include_text_and_usage(self):
         from clau_decode.reporter import export_json
+
         detail = _make_session_detail()
         result = export_json(detail)
 
@@ -89,6 +101,7 @@ class TestExportJson:
 
     def test_export_with_cost(self):
         from clau_decode.reporter import export_json
+
         detail = _make_session_detail()
         cost = _make_cost()
         result = export_json(detail, cost=cost)
@@ -100,18 +113,27 @@ class TestExportJson:
 
     def test_export_without_cost_has_no_cost_key(self):
         from clau_decode.reporter import export_json
+
         detail = _make_session_detail()
         result = export_json(detail)
         assert "cost" not in result
 
     def test_export_with_prompts(self):
         from clau_decode.reporter import export_json
+
         detail = _make_session_detail()
         prompts = [
-            {"user_message_id": "u1", "assistant_message_id": "a1",
-             "breakdown": {"input_tokens": 10, "output_tokens": 5,
-                           "cache_creation_tokens": 0, "cache_read_tokens": 0,
-                           "total": 15}},
+            {
+                "user_message_id": "u1",
+                "assistant_message_id": "a1",
+                "breakdown": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "total": 15,
+                },
+            },
         ]
         result = export_json(detail, prompts=prompts)
         assert "prompts" in result
@@ -121,6 +143,7 @@ class TestExportJson:
     def test_export_serializable_to_json(self):
         import json
         from clau_decode.reporter import export_json
+
         detail = _make_session_detail()
         cost = _make_cost()
         result = export_json(detail, cost=cost)
@@ -133,6 +156,7 @@ class TestExportJson:
 class TestExportMarkdown:
     def test_basic_markdown_has_title_and_summary(self):
         from clau_decode.reporter import export_markdown
+
         detail = _make_session_detail()
         md = export_markdown(detail)
 
@@ -144,6 +168,7 @@ class TestExportMarkdown:
 
     def test_markdown_includes_token_breakdown(self):
         from clau_decode.reporter import export_markdown
+
         detail = _make_session_detail()
         md = export_markdown(detail)
 
@@ -152,6 +177,7 @@ class TestExportMarkdown:
 
     def test_markdown_with_cost(self):
         from clau_decode.reporter import export_markdown
+
         detail = _make_session_detail()
         cost = _make_cost()
         md = export_markdown(detail, cost=cost)
@@ -161,6 +187,7 @@ class TestExportMarkdown:
 
     def test_markdown_with_pricing_table(self):
         from clau_decode.reporter import export_markdown
+
         detail = _make_session_detail()
         pricing = ModelPricing(
             input_per_mtok=Decimal("3.00"),
@@ -178,10 +205,16 @@ class TestExportMarkdown:
 
     def test_markdown_with_model_usage(self):
         from clau_decode.reporter import export_markdown
+
         detail = _make_session_detail()
         usage = [
-            {"model": "claude-sonnet-4-6", "message_count": 5,
-             "input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
+            {
+                "model": "claude-sonnet-4-6",
+                "message_count": 5,
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+            },
         ]
         md = export_markdown(detail, all_models_usage=usage)
 
@@ -191,12 +224,20 @@ class TestExportMarkdown:
 
     def test_markdown_with_prompts(self):
         from clau_decode.reporter import export_markdown
+
         detail = _make_session_detail()
         prompts = [
-            {"user_message_id": "u1", "assistant_message_id": "a1",
-             "breakdown": {"input_tokens": 10, "output_tokens": 5,
-                           "cache_creation_tokens": 0, "cache_read_tokens": 0,
-                           "total": 15}},
+            {
+                "user_message_id": "u1",
+                "assistant_message_id": "a1",
+                "breakdown": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "total": 15,
+                },
+            },
         ]
         md = export_markdown(detail, prompts=prompts)
 
@@ -204,6 +245,7 @@ class TestExportMarkdown:
 
     def test_markdown_conversation_log(self):
         from clau_decode.reporter import export_markdown
+
         detail = _make_session_detail()
         md = export_markdown(detail)
 
@@ -215,11 +257,21 @@ class TestExportMarkdown:
 
     def test_markdown_meta_messages_excluded(self):
         from clau_decode.reporter import export_markdown
+
         messages = [
-            Message(id="meta1", session_id="s1", role="user", is_meta=True,
-                    content_blocks=[TextBlock(text="system prompt")]),
-            Message(id="u1", session_id="s1", role="user",
-                    content_blocks=[TextBlock(text="real message")]),
+            Message(
+                id="meta1",
+                session_id="s1",
+                role="user",
+                is_meta=True,
+                content_blocks=[TextBlock(text="system prompt")],
+            ),
+            Message(
+                id="u1",
+                session_id="s1",
+                role="user",
+                content_blocks=[TextBlock(text="real message")],
+            ),
         ]
         detail = _make_session_detail(messages=messages)
         md = export_markdown(detail)
@@ -248,25 +300,29 @@ class TestExportRoutes:
 
     async def test_json_export_route_404(self):
         async with await self._make_client() as client:
-            r = await client.get("/api/sessions/nonexistent/export", params={"format": "json"})
+            r = await client.get(
+                "/api/sessions/nonexistent/export", params={"format": "json"}
+            )
             assert r.status_code == 404
 
     async def test_markdown_export_route_404(self):
         async with await self._make_client() as client:
-            r = await client.get("/api/sessions/nonexistent/export", params={"format": "md"})
+            r = await client.get(
+                "/api/sessions/nonexistent/export", params={"format": "md"}
+            )
             assert r.status_code == 404
 
     async def test_export_route_invalid_format(self):
         async with await self._make_client() as client:
-            r = await client.get("/api/sessions/nonexistent/export", params={"format": "csv"})
+            r = await client.get(
+                "/api/sessions/nonexistent/export", params={"format": "csv"}
+            )
             assert r.status_code == 400
 
     async def test_json_export_seeded_session(self):
         """Export a real seeded session as JSON and verify structure."""
-        import json
         from pathlib import Path
         import tempfile
-        import shutil
         from httpx import AsyncClient, ASGITransport
         from clau_decode.server import create_app
         from clau_decode.config import AppConfig
@@ -280,8 +336,12 @@ class TestExportRoutes:
 
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "test.db"
-            project = Project(id="test-proj", display_name="Test",
-                              raw_path="-test", data_source="test")
+            project = Project(
+                id="test-proj",
+                display_name="Test",
+                raw_path="-test",
+                data_source="test",
+            )
             session, messages = parse_session(USAGE_JSONL)
             session.project_id = project.id
             async with Database(db_path) as db:
@@ -290,10 +350,13 @@ class TestExportRoutes:
                 await db.upsert_session(session)
                 await db.upsert_messages(messages)
             app = create_app(AppConfig(), db_path)
-            async with AsyncClient(transport=ASGITransport(app=app),
-                                   base_url="http://test") as client:
-                r = await client.get(f"/api/sessions/{USAGE_SESSION_ID}/export",
-                                     params={"format": "json"})
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                r = await client.get(
+                    f"/api/sessions/{USAGE_SESSION_ID}/export",
+                    params={"format": "json"},
+                )
             assert r.status_code == 200
             assert "application/json" in r.headers["content-type"]
             assert "attachment" in r.headers.get("content-disposition", "")
@@ -321,8 +384,12 @@ class TestExportRoutes:
 
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "test.db"
-            project = Project(id="test-proj", display_name="Test",
-                              raw_path="-test", data_source="test")
+            project = Project(
+                id="test-proj",
+                display_name="Test",
+                raw_path="-test",
+                data_source="test",
+            )
             session, messages = parse_session(USAGE_JSONL)
             session.project_id = project.id
             async with Database(db_path) as db:
@@ -331,10 +398,12 @@ class TestExportRoutes:
                 await db.upsert_session(session)
                 await db.upsert_messages(messages)
             app = create_app(AppConfig(), db_path)
-            async with AsyncClient(transport=ASGITransport(app=app),
-                                   base_url="http://test") as client:
-                r = await client.get(f"/api/sessions/{USAGE_SESSION_ID}/export",
-                                     params={"format": "md"})
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                r = await client.get(
+                    f"/api/sessions/{USAGE_SESSION_ID}/export", params={"format": "md"}
+                )
             assert r.status_code == 200
             assert "text/markdown" in r.headers["content-type"]
             assert "attachment" in r.headers.get("content-disposition", "")

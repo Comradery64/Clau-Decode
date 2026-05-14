@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import threading
 import time
 import webbrowser
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from pathlib import Path
 
 import uvicorn
@@ -65,7 +66,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Bind to 0.0.0.0 (accessible on your local network). "
-             "Use with caution — anyone on the same network can view your data.",
+        "Use with caution — anyone on the same network can view your data.",
     )
     parser.add_argument(
         "--no-open",
@@ -94,6 +95,16 @@ def _build_parser() -> argparse.ArgumentParser:
         type=lambda s: datetime.strptime(s, "%Y%m%d").date(),
         metavar="YYYYMMDD",
         help="Only include sessions on or after this date",
+    )
+    parser.add_argument(
+        "--demo",
+        nargs="?",
+        const="__AUTO__",
+        default=None,
+        metavar="PATH",
+        help="Launch in isolated demo mode. Ignores your real config and cache; "
+        "scans only the given demo dir (defaults to ./demo-data). Useful for "
+        "screen recordings.",
     )
 
     subparsers = parser.add_subparsers(dest="command")
@@ -154,6 +165,7 @@ def _run_dashboard(args: argparse.Namespace, config) -> None:
 
         def _open_browser() -> None:
             import urllib.request
+
             for _ in range(30):
                 time.sleep(0.5)
                 try:
@@ -172,6 +184,7 @@ def _run_dashboard(args: argparse.Namespace, config) -> None:
 async def _force_refresh(db_path: Path) -> None:
     """Clear all stored mtimes so the next scan re-parses every file."""
     from .db import Database
+
     async with Database(db_path) as db:
         await db.init_schema()
         await db.execute("UPDATE sessions SET file_mtime = NULL")
@@ -183,7 +196,6 @@ async def _do_scan(db_path: Path, config) -> int:
     from .db import Database
     from .scanner import scan_paths
     from .parser import parse_session
-    from .scanner import build_project_from_dir
 
     count = 0
     scan_paths_list = config.get_all_scan_paths()
@@ -263,7 +275,6 @@ def _run_today(args: argparse.Namespace, config) -> None:
     # Cost estimate
     pricing = CachedPricingStrategy()
     asyncio.run(pricing.refresh())
-    from .analytics.cost import CostEngine
     engine = CostEngine(pricing)
     cost = engine.compute("claude-sonnet-4-6", bd)
     print(f"  Est. cost (Sonnet): ${float(cost.total_usd):.4f}")
@@ -300,8 +311,10 @@ def _run_stats(args: argparse.Namespace, config) -> None:
     models = ModelUsageScanner().scan(messages)
     print("\n=== Model Usage ===")
     for m in models:
-        print(f"  {m['model']}: {m['message_count']} messages, "
-              f"{m['input_tokens']:,} input, {m['output_tokens']:,} output")
+        print(
+            f"  {m['model']}: {m['message_count']} messages, "
+            f"{m['input_tokens']:,} input, {m['output_tokens']:,} output"
+        )
 
     tools = ToolUsageScanner().scan(messages)
     print("\n=== Tool Usage ===")
@@ -312,7 +325,12 @@ def _run_stats(args: argparse.Namespace, config) -> None:
 def _run_tips(args: argparse.Namespace, config) -> None:
     """Print optimization tips."""
     from .db import Database
-    from .analytics.tips import TipRegistry, RepeatedFileReadRule, OversizedToolResultRule, LowCacheHitRule
+    from .analytics.tips import (
+        TipRegistry,
+        RepeatedFileReadRule,
+        OversizedToolResultRule,
+        LowCacheHitRule,
+    )
 
     db_path = get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -346,12 +364,56 @@ def _run_tips(args: argparse.Namespace, config) -> None:
             print(f"    {t.detail}")
 
 
+def _apply_demo_mode(args: argparse.Namespace) -> None:
+    """Isolate config + cache + scan path so a demo launch can't pick up real state.
+
+    Must run before ``load_config`` and before any ``get_db_path``/``get_config_path``
+    call — those functions read ``XDG_CONFIG_HOME`` and ``XDG_CACHE_HOME`` at call
+    time, so overriding the env vars here is enough to redirect every consumer
+    (load_config, save_config, get_db_path) for the lifetime of the process.
+    """
+    if args.demo == "__AUTO__":
+        demo_path = Path.cwd() / "demo-data"
+    else:
+        demo_path = Path(args.demo).expanduser().resolve()
+
+    if not demo_path.exists() or not (demo_path / "projects").is_dir():
+        print(
+            f"--demo: '{demo_path}' is not a valid demo dir. "
+            "Expected a directory containing a 'projects/' subdirectory.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    runtime = demo_path / ".runtime"
+    os.environ["XDG_CONFIG_HOME"] = str(runtime / "config")
+    os.environ["XDG_CACHE_HOME"] = str(runtime / "cache")
+    args.paths = [str(demo_path)]
+
+    print(f"Demo mode: scanning {demo_path} (runtime state at {runtime})")
+
+
 def main() -> None:
     """Entry point registered in pyproject.toml [project.scripts]."""
     parser = _build_parser()
     args = parser.parse_args()
 
+    if args.demo is not None:
+        _apply_demo_mode(args)
+
     config = load_config(extra_paths=args.paths, port=args.port)
+
+    if args.demo is not None:
+        # Replace (not append) so neither the default '~/.claude' fallback nor
+        # any leftover profile entries can leak real session data into the demo.
+        config = config.model_copy(
+            update={
+                "data_paths": args.paths,
+                "profiles": [],
+                "active_profile_id": None,
+            }
+        )
+
     if args.enable_edit:
         config = config.model_copy(update={"edit_enabled": True})
 

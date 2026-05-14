@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { Session } from "../../api/types";
 import { api } from "../../api/client";
+import { useAppStore } from "../../store";
 import { prefetch } from "../../api/sessionCache";
 import { lsGetMap, lsPutMap, LS } from "../../utils/localStorage";
 import { emit } from "../../utils/events";
@@ -82,6 +83,13 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
 
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const displayTitle = customTitle ?? session.title ?? "Untitled";
+  // Host-side actions (Open in terminal, Reveal in Finder) only make sense
+  // when the client is connecting from the same machine the server runs on.
+  // For a remote viewer over the network, these would fire silently on the
+  // SERVER's host and confuse the user. Treat unknown host info as local so
+  // we don't disable the buttons during the boot fetch.
+  const hostInfo = useAppStore((s) => s.hostInfo);
+  const remoteClient = hostInfo?.is_remote_client === true;
 
   // Bell — shown when the assistant's last message is awaiting a human reply AND the
   // session has been updated since the user last viewed it. Read state is a map
@@ -198,17 +206,24 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
         },
         { kind: "separator" as const },
         {
-          label: "Reveal in Finder",
+          label: remoteClient ? "Reveal in Finder (host-only)" : "Reveal in Finder",
           icon: <IconFolder />,
-          action: () => api.revealSession(session.id).catch(() => {}),
+          action: remoteClient
+            ? () => {}
+            : () => api.revealSession(session.id).catch(() => {}),
+          disabled: remoteClient,
         },
         {
-          label: session.is_fork ? "Open in terminal (fork — not resumable)" : "Open in terminal",
+          label: session.is_fork
+            ? "Open in terminal (fork — not resumable)"
+            : remoteClient
+            ? "Open in terminal (host-only)"
+            : "Open in terminal",
           icon: <IconTerminal />,
-          action: session.is_fork
+          action: session.is_fork || remoteClient
             ? () => {}
             : () => api.openTerminal(session.id).catch(() => {}),
-          disabled: session.is_fork,
+          disabled: session.is_fork || remoteClient,
         },
       ],
     },
@@ -237,6 +252,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
         onMouseEnter={() => { setHovered(true); prefetch(session.id, api.getSession); }}
         onMouseLeave={() => setHovered(false)}
         style={{
+          position: "relative",
           display: "flex",
           alignItems: "center",
           padding: 0,
@@ -280,7 +296,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                 alignItems: "center",
                 flex: 1,
                 minWidth: 0,
-                padding: "5px 0 5px 12px",
+                padding: "5px 12px",
                 gap: "4px",
                 background: "none",
                 border: "none",
@@ -322,8 +338,11 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                     flexShrink: 0,
                     display: "flex",
                     color: "var(--accent-orange)",
-                    opacity: bellState === "fading" ? 0 : 1,
-                    transition: "opacity 450ms ease",
+                    opacity:
+                      bellState === "fading" || hovered || isActive || menuOpen
+                        ? 0
+                        : 1,
+                    transition: "opacity var(--transition-fast)",
                   }}
                 >
                   <IconBell />
@@ -337,8 +356,10 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
               onClick={openMenu}
               className={isActive || menuOpen ? "" : "hover-actions"}
               style={{
-                flexShrink: 0,
-                marginRight: "8px",
+                position: "absolute",
+                right: "8px",
+                top: "50%",
+                transform: "translateY(-50%)",
                 color: menuOpen ? "var(--text-primary)" : "var(--text-tertiary)",
                 fontSize: "14px",
                 lineHeight: 1,

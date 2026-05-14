@@ -10,6 +10,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 class TestParseSession:
     def test_returns_session_and_messages(self):
         from clau_decode.parser import parse_session
+
         session, messages = parse_session(FIXTURES / "simple_session.jsonl")
         assert session is not None
         assert isinstance(messages, list)
@@ -17,21 +18,25 @@ class TestParseSession:
 
     def test_session_id_from_filename(self):
         from clau_decode.parser import parse_session
+
         session, _ = parse_session(FIXTURES / "simple_session.jsonl")
         assert session.id == "aaaaaaaa-0000-0000-0000-000000000001"
 
     def test_session_title_from_custom_title_record(self):
         from clau_decode.parser import parse_session
+
         session, _ = parse_session(FIXTURES / "simple_session.jsonl")
         assert session.title == "test-session-fixture"
 
     def test_session_model_from_first_assistant_message(self):
         from clau_decode.parser import parse_session
+
         session, _ = parse_session(FIXTURES / "simple_session.jsonl")
         assert session.model == "claude-sonnet-4-6"
 
     def test_session_timestamps(self):
         from clau_decode.parser import parse_session
+
         session, _ = parse_session(FIXTURES / "simple_session.jsonl")
         assert session.started_at is not None
         assert session.updated_at is not None
@@ -39,22 +44,26 @@ class TestParseSession:
 
     def test_session_cwd_and_git_branch(self):
         from clau_decode.parser import parse_session
+
         session, _ = parse_session(FIXTURES / "simple_session.jsonl")
         assert session.cwd == "/home/user/project"
         assert session.git_branch == "main"
 
     def test_session_permission_mode(self):
         from clau_decode.parser import parse_session
+
         session, _ = parse_session(FIXTURES / "simple_session.jsonl")
         assert session.permission_mode == "default"
 
     def test_message_count(self):
         from clau_decode.parser import parse_session
+
         session, messages = parse_session(FIXTURES / "simple_session.jsonl")
         assert session.message_count == len(messages)
 
     def test_user_message_count_excludes_meta(self):
         from clau_decode.parser import parse_session
+
         _, messages = parse_session(FIXTURES / "simple_session.jsonl")
         non_meta_user = [m for m in messages if m.role == "user" and not m.is_meta]
         # Only 2 real user prompts in the fixture (not the tool_result meta message)
@@ -62,19 +71,24 @@ class TestParseSession:
 
     def test_file_not_found_raises(self):
         from clau_decode.parser import parse_session
+
         with pytest.raises(FileNotFoundError):
             parse_session(FIXTURES / "nonexistent.jsonl")
 
     def test_non_uuid_filename_raises(self):
         from clau_decode.parser import parse_session
+
         with pytest.raises(ValueError):
-            parse_session(FIXTURES / "simple_session.jsonl".replace("simple_session", "bad-name"))
+            parse_session(
+                FIXTURES / "simple_session.jsonl".replace("simple_session", "bad-name")
+            )
 
 
 class TestMessageContent:
     def test_text_content_block(self):
         from clau_decode.parser import parse_session
         from clau_decode.models import TextBlock
+
         _, messages = parse_session(FIXTURES / "simple_session.jsonl")
         assistant_msgs = [m for m in messages if m.role == "assistant"]
         first = assistant_msgs[0]
@@ -83,6 +97,7 @@ class TestMessageContent:
     def test_thinking_content_block(self):
         from clau_decode.parser import parse_session
         from clau_decode.models import ThinkingBlock
+
         _, messages = parse_session(FIXTURES / "simple_session.jsonl")
         assistant_msgs = [m for m in messages if m.role == "assistant"]
         has_thinking = any(
@@ -95,10 +110,10 @@ class TestMessageContent:
     def test_tool_use_content_block(self):
         from clau_decode.parser import parse_session
         from clau_decode.models import ToolUseBlock
+
         _, messages = parse_session(FIXTURES / "simple_session.jsonl")
         tool_use_blocks = [
-            b for m in messages for b in m.content_blocks
-            if isinstance(b, ToolUseBlock)
+            b for m in messages for b in m.content_blocks if isinstance(b, ToolUseBlock)
         ]
         assert len(tool_use_blocks) == 1
         assert tool_use_blocks[0].name == "Read"
@@ -106,9 +121,12 @@ class TestMessageContent:
     def test_tool_result_content_block(self):
         from clau_decode.parser import parse_session
         from clau_decode.models import ToolResultBlock
+
         _, messages = parse_session(FIXTURES / "simple_session.jsonl")
         tool_result_blocks = [
-            b for m in messages for b in m.content_blocks
+            b
+            for m in messages
+            for b in m.content_blocks
             if isinstance(b, ToolResultBlock)
         ]
         assert len(tool_result_blocks) == 1
@@ -117,6 +135,7 @@ class TestMessageContent:
     def test_string_content_becomes_text_block(self):
         from clau_decode.parser import _parse_content_blocks
         from clau_decode.models import TextBlock
+
         blocks = _parse_content_blocks("Hello world")
         assert len(blocks) == 1
         assert isinstance(blocks[0], TextBlock)
@@ -126,6 +145,7 @@ class TestMessageContent:
 class TestBuildMessageTree:
     def test_root_messages_have_no_parent(self):
         from clau_decode.parser import parse_session, build_message_tree
+
         _, messages = parse_session(FIXTURES / "simple_session.jsonl")
         tree = build_message_tree(messages)
         for node in tree:
@@ -133,6 +153,7 @@ class TestBuildMessageTree:
 
     def test_sidechain_messages_are_children(self):
         from clau_decode.parser import parse_session, build_message_tree
+
         _, messages = parse_session(FIXTURES / "sidechain_session.jsonl")
         tree = build_message_tree(messages)
         # Sidechain messages should NOT be at the root level
@@ -142,33 +163,36 @@ class TestBuildMessageTree:
 
     def test_tree_preserves_order(self):
         from clau_decode.parser import parse_session, build_message_tree
+
         _, messages = parse_session(FIXTURES / "simple_session.jsonl")
         tree = build_message_tree(messages)
-        timestamps = [
-            node.message.timestamp for node in tree if node.message.timestamp
-        ]
+        timestamps = [node.message.timestamp for node in tree if node.message.timestamp]
         assert timestamps == sorted(timestamps)
 
 
 class TestHelpers:
     def test_unmangle_project_id(self):
         from clau_decode.parser import _unmangle_project_id
+
         assert _unmangle_project_id("-Volumes-SD-Work-foo") == "Volumes/SD/Work/foo"
         assert _unmangle_project_id("-Users-alan-project") == "Users/alan/project"
 
     def test_unmangle_preserves_non_leading_hyphens(self):
         from clau_decode.parser import _unmangle_project_id
+
         # Directory names with double hyphens indicate literal hyphens in the path
         result = _unmangle_project_id("-Volumes-SD-Work-my--project")
         assert "my-project" in result
 
     def test_derive_session_id_valid(self):
         from clau_decode.parser import _derive_session_id
+
         p = Path("aaaaaaaa-0000-0000-0000-000000000001.jsonl")
         assert _derive_session_id(p) == "aaaaaaaa-0000-0000-0000-000000000001"
 
     def test_derive_session_id_invalid_raises(self):
         from clau_decode.parser import _derive_session_id
+
         with pytest.raises(ValueError):
             _derive_session_id(Path("not-a-uuid.jsonl"))
 
@@ -176,6 +200,7 @@ class TestHelpers:
 class TestTokenUsage:
     def test_token_usage_model_defaults(self):
         from clau_decode.models import TokenUsage
+
         u = TokenUsage()
         assert u.input_tokens == 0
         assert u.output_tokens == 0
@@ -184,14 +209,20 @@ class TestTokenUsage:
 
     def test_message_has_usage_field(self):
         from clau_decode.models import Message, TokenUsage
+
         msg = Message(id="x", session_id="s", role="assistant")
         assert msg.usage is None
-        msg2 = Message(id="x", session_id="s", role="assistant",
-                       usage=TokenUsage(input_tokens=10, output_tokens=5))
+        msg2 = Message(
+            id="x",
+            session_id="s",
+            role="assistant",
+            usage=TokenUsage(input_tokens=10, output_tokens=5),
+        )
         assert msg2.usage.input_tokens == 10
 
     def test_parser_extracts_usage_from_assistant(self):
         from clau_decode.parser import parse_session
+
         _, messages = parse_session(FIXTURES / "session_with_usage.jsonl")
         assistant_msgs = [m for m in messages if m.role == "assistant"]
         assert len(assistant_msgs) == 2
@@ -204,6 +235,7 @@ class TestTokenUsage:
 
     def test_parser_extracts_cache_usage(self):
         from clau_decode.parser import parse_session
+
         _, messages = parse_session(FIXTURES / "session_with_usage.jsonl")
         assistant_msgs = [m for m in messages if m.role == "assistant"]
         second = assistant_msgs[1]
@@ -215,12 +247,14 @@ class TestTokenUsage:
 
     def test_parser_usage_is_none_for_user_messages(self):
         from clau_decode.parser import parse_session
+
         _, messages = parse_session(FIXTURES / "session_with_usage.jsonl")
         user_msgs = [m for m in messages if m.role == "user"]
         assert all(m.usage is None for m in user_msgs)
 
     def test_parser_usage_is_none_when_absent(self):
         from clau_decode.parser import parse_session
+
         _, messages = parse_session(FIXTURES / "simple_session.jsonl")
         # User messages never carry usage regardless of fixture content
         user_msgs = [m for m in messages if m.role == "user"]

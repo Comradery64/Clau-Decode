@@ -166,6 +166,16 @@ export interface AppConfig {
   claude_recap_idle_minutes: number;
 }
 
+export interface HostInfo {
+  // True when the request did NOT originate from a loopback address.
+  // Used to gate UI actions that run on the SERVER's host (osascript,
+  // Finder/Terminal launches, etc.).
+  is_remote_client: boolean;
+  // Server's platform — informs whether host-side actions are even supported.
+  platform: "darwin" | "linux" | "win32" | string;
+  client_host: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Recap
 // ---------------------------------------------------------------------------

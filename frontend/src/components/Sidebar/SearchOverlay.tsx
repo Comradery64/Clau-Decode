@@ -8,6 +8,7 @@ import { formatRelativeDate } from "./SessionItem";
 import { LS } from "../../utils/localStorage";
 import { useDebounce } from "../../utils/useDebounce";
 import { useLsSet } from "../../utils/useLsSet";
+import { renderSnippet } from "../../utils/renderSnippet";
 import { ScrollContainer } from "../ScrollContainer";
 
 export default function SearchOverlay() {
@@ -291,7 +292,7 @@ export default function SearchOverlay() {
                     marginBottom: "4px",
                   }}
                 >
-                  {hit.snippet}
+                  {renderSnippet(hit.snippet)}
                 </div>
                 {/* Date */}
                 {hit.timestamp && (

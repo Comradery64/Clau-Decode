@@ -1,12 +1,12 @@
-<h1 align="center">clau-decode</h1>
+<h1 align="center">Clau-Decode</h1>
 
 <p align="center">
   <em>Browse, search, and analyze your AI coding assistant chat history — entirely local, entirely private.</em>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Comradery64/clau-decode/actions/workflows/ci.yml">
-    <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Comradery64/clau-decode/ci.yml?branch=main&label=CI&style=flat-square">
+  <a href="https://github.com/Comradery64/Clau-Decode/actions/workflows/ci.yml">
+    <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Comradery64/Clau-Decode/ci.yml?branch=main&label=CI&style=flat-square">
   </a>
   <a href="LICENSE">
     <img alt="License" src="https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue?style=flat-square">
@@ -14,20 +14,32 @@
   <a href="pyproject.toml">
     <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square">
   </a>
-  <a href="https://github.com/Comradery64/clau-decode/blob/main/CHANGELOG.md">
+  <a href="https://github.com/Comradery64/Clau-Decode/blob/main/CHANGELOG.md">
     <img alt="Changelog" src="https://img.shields.io/badge/changelog-keep--a--changelog-orange?style=flat-square">
   </a>
 </p>
 
-> **Note (Demo):** `<demo gif placeholder — record with VHS later: docs/demo.tape>`
+<p align="center">
+  <video
+    src="https://github.com/user-attachments/assets/6f5a9a09-fbab-467f-82b1-c2e642dc8726"
+    poster="https://github.com/Comradery64/Clau-Decode/raw/main/docs/demo-poster.jpg"
+    controls
+    muted
+    playsinline
+    width="820">
+    <a href="https://github.com/user-attachments/assets/6f5a9a09-fbab-467f-82b1-c2e642dc8726">
+      <img src="https://github.com/Comradery64/Clau-Decode/raw/main/docs/demo-poster.jpg" alt="Clau-Decode demo — click to play" width="820">
+    </a>
+  </video>
+</p>
 
 ---
 
-## Why clau-decode?
+## Why Clau-Decode?
 
 Your AI coding assistant writes a small mountain of JSONL session files into
 `~/.claude/projects/` — useful, but unreadable and impossible to search by hand.
-clau-decode reads those files locally, indexes them into SQLite, and serves a
+Clau-Decode reads those files locally, indexes them into SQLite, and serves a
 fast browser UI with full-text search, conversation rendering, analytics, and a
 recap engine.
 
@@ -188,7 +200,7 @@ full rescan, or run `clau-decode --force-refresh`.
 
 ## Architecture
 
-clau-decode is a local-first FastAPI server that scans your AI coding
+Clau-Decode is a local-first FastAPI server that scans your AI coding
 assistant's JSONL session files into a SQLite index, serves a React +
 TypeScript SPA, and optionally drives the Claude CLI in stream-json mode for
 in-app sessions.
@@ -198,8 +210,8 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for a system diagram and deeper notes.
 ## Development
 
 ```bash
-git clone https://github.com/Comradery64/clau-decode
-cd clau-decode
+git clone https://github.com/Comradery64/Clau-Decode
+cd Clau-Decode
 
 # Install backend deps + build the frontend
 make dev
