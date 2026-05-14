@@ -1,0 +1,111 @@
+/**
+ * Zustand global store — app-level state only.
+ * Data fetching lives in components/hooks via the api client.
+ */
+
+import { create } from "zustand";
+import type { HostInfo, Profile } from "../api/types";
+import { getChatIdFromRoute } from "../router";
+
+function initialChatId(): string | null {
+  if (typeof window === "undefined") return null;
+  const h = window.location.hash.replace(/^#/, "") || "/";
+  return getChatIdFromRoute(h.startsWith("/chat/") ? (h as `/chat/${string}`) : "/");
+}
+
+export type SessionSortOrder = "recent" | "oldest" | "alpha";
+export type SidebarMode = "chat" | "folder";
+
+interface AppState {
+  selectedSessionId: string | null;
+  selectedProjectId: string | null;
+  pendingScrollMessageId: string | null;
+  searchQuery: string;
+  isSearchOpen: boolean;
+  isSettingsOpen: boolean;
+  isHelpOpen: boolean;
+  isShortcutsOpen: boolean;
+  sidebarCollapsed: boolean;
+  sidebarMode: SidebarMode;
+  fileExplorerRoot: string | null;
+  viewingFilePath: string | null;
+  sessionSortOrder: SessionSortOrder;
+  showParentFolder: boolean;
+  blocksExpanded: boolean;
+  resultsExpanded: boolean;
+  profiles: Profile[];
+  activeProfileId: string | null;
+  hostInfo: HostInfo | null;
+
+  selectSession: (id: string | null) => void;
+  setPendingScrollMessageId: (id: string | null) => void;
+  selectProject: (id: string | null) => void;
+  setSearchQuery: (q: string) => void;
+  openSearch: () => void;
+  closeSearch: () => void;
+  openSettings: () => void;
+  closeSettings: () => void;
+  openHelp: () => void;
+  closeHelp: () => void;
+  openShortcuts: () => void;
+  closeShortcuts: () => void;
+  toggleSidebar: () => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
+  setSidebarMode: (mode: SidebarMode) => void;
+  setFileExplorerRoot: (path: string | null) => void;
+  setViewingFilePath: (path: string | null) => void;
+  setSessionSortOrder: (order: SessionSortOrder) => void;
+  setShowParentFolder: (show: boolean) => void;
+  toggleBlocksExpanded: () => void;
+  toggleResultsExpanded: () => void;
+  setProfiles: (profiles: Profile[]) => void;
+  setActiveProfileId: (id: string | null) => void;
+  setHostInfo: (info: HostInfo | null) => void;
+}
+
+export const useAppStore = create<AppState>((set) => ({
+  selectedSessionId: initialChatId(),
+  selectedProjectId: null,
+  pendingScrollMessageId: null,
+  searchQuery: "",
+  isSearchOpen: false,
+  isSettingsOpen: false,
+  isHelpOpen: false,
+  isShortcutsOpen: false,
+  sidebarCollapsed: false,
+  sidebarMode: "chat",
+  fileExplorerRoot: null,
+  viewingFilePath: null,
+  sessionSortOrder: "recent",
+  showParentFolder: false,
+  blocksExpanded: false,
+  resultsExpanded: false,
+  profiles: [],
+  activeProfileId: null,
+  hostInfo: null,
+
+  selectSession: (id) => set({ selectedSessionId: id }),
+  setPendingScrollMessageId: (id) => set({ pendingScrollMessageId: id }),
+  selectProject: (id) => set({ selectedProjectId: id }),
+  setSearchQuery: (q) => set({ searchQuery: q }),
+  openSearch: () => set({ isSearchOpen: true }),
+  closeSearch: () => set({ isSearchOpen: false, searchQuery: "" }),
+  openSettings: () => set({ isSettingsOpen: true }),
+  closeSettings: () => set({ isSettingsOpen: false }),
+  openHelp: () => set({ isHelpOpen: true }),
+  closeHelp: () => set({ isHelpOpen: false }),
+  openShortcuts: () => set({ isShortcutsOpen: true }),
+  closeShortcuts: () => set({ isShortcutsOpen: false }),
+  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+  setSidebarMode: (mode) => set({ sidebarMode: mode }),
+  setFileExplorerRoot: (path) => set({ fileExplorerRoot: path }),
+  setViewingFilePath: (path) => set({ viewingFilePath: path }),
+  setSessionSortOrder: (order) => set({ sessionSortOrder: order }),
+  setShowParentFolder: (show) => set({ showParentFolder: show }),
+  toggleBlocksExpanded: () => set((s) => ({ blocksExpanded: !s.blocksExpanded })),
+  toggleResultsExpanded: () => set((s) => ({ resultsExpanded: !s.resultsExpanded })),
+  setProfiles: (profiles) => set({ profiles }),
+  setActiveProfileId: (id) => set({ activeProfileId: id }),
+  setHostInfo: (info) => set({ hostInfo: info }),
+}));
