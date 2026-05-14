@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import React from "react";
 import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
 import type { Project, Session } from "../../api/types";
@@ -13,6 +13,21 @@ import { SidebarHeader } from "./SidebarHeader";
 import { ProjectGroup } from "./ProjectGroup";
 import { SessionItem } from "./SessionItem";
 import { FileExplorer } from "./FileExplorer";
+
+const SIDEBAR_WIDTH_STORAGE_KEY = "clau-decode:sidebar-width";
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 480;
+const SIDEBAR_DEFAULT_WIDTH = 260;
+// Keep at least this much room for the main pane (chat / dashboard).
+const SIDEBAR_MIN_MAIN_PANE = 480;
+
+function loadStoredSidebarWidth(): number {
+  if (typeof window === "undefined") return SIDEBAR_DEFAULT_WIDTH;
+  const raw = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+  const n = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(n)) return SIDEBAR_DEFAULT_WIDTH;
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(n, SIDEBAR_MAX_WIDTH));
+}
 
 function IconSearch() {
   return (
@@ -384,6 +399,56 @@ export default function Sidebar() {
 
   const showFlat = sessionSortOrder !== "alpha";
 
+  // Sidebar width — drag-resizable from the right edge, persisted across sessions.
+  // Collapsed state always overrides to 52px; this state only governs expanded width.
+  const [sidebarWidth, setSidebarWidth] = useState<number>(loadStoredSidebarWidth);
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
+  const [resizingSidebar, setResizingSidebar] = useState(false);
+
+  // Clamp stored width into a sane range for the current viewport. Runs on
+  // mount and on window resize so dragging the browser narrow can't strand
+  // the sidebar wider than the available space.
+  useEffect(() => {
+    const clamp = () => {
+      const maxByViewport = Math.max(
+        SIDEBAR_MIN_WIDTH,
+        Math.min(SIDEBAR_MAX_WIDTH, window.innerWidth - SIDEBAR_MIN_MAIN_PANE),
+      );
+      setSidebarWidth((w) => Math.max(SIDEBAR_MIN_WIDTH, Math.min(w, maxByViewport)));
+    };
+    clamp();
+    window.addEventListener("resize", clamp);
+    return () => window.removeEventListener("resize", clamp);
+  }, []);
+
+  const startSidebarResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = sidebarWidthRef.current;
+    setResizingSidebar(true);
+    // Disable text-selection while dragging so the cursor doesn't grab text.
+    document.body.style.userSelect = "none";
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      const maxByViewport = Math.max(
+        SIDEBAR_MIN_WIDTH,
+        Math.min(SIDEBAR_MAX_WIDTH, window.innerWidth - SIDEBAR_MIN_MAIN_PANE),
+      );
+      const next = Math.max(SIDEBAR_MIN_WIDTH, Math.min(startWidth + dx, maxByViewport));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      setResizingSidebar(false);
+      document.body.style.userSelect = "";
+      window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidthRef.current));
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
+
   const handleSelectSession = (session: Session) => {
     selectProject(session.project_id);
     setFileExplorerRoot(session.cwd);
@@ -522,7 +587,7 @@ export default function Sidebar() {
     <aside
       aria-label="Navigation"
       style={{
-        width: sidebarCollapsed ? "52px" : "var(--sidebar-width)",
+        width: sidebarCollapsed ? "52px" : `${sidebarWidth}px`,
         height: "100vh",
         display: "flex",
         flexDirection: "column",
@@ -530,11 +595,42 @@ export default function Sidebar() {
         borderRight: "1px solid var(--border-subtle)",
         flexShrink: 0,
         overflow: "hidden",
-        // Synced with FileViewer's width transition so the chat body's
-        // remaining flex space changes at a single, predictable rate.
-        transition: "width 180ms ease-out",
+        position: "relative",
+        // Animate width changes from collapse/expand, but not while actively
+        // dragging — the drag handler sets width every mousemove and a CSS
+        // transition would make it feel laggy.
+        transition: resizingSidebar ? "none" : "width 180ms ease-out",
       }}
     >
+      {/* Drag handle on the right edge — only when expanded.
+          6px wide hit target; a 1px line on the inside edge brightens on
+          hover/drag for visual feedback. */}
+      {!sidebarCollapsed && (
+        <div
+          onMouseDown={startSidebarResize}
+          title="Drag to resize"
+          aria-label="Resize sidebar"
+          role="separator"
+          aria-orientation="vertical"
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            right: 0,
+            width: "6px",
+            cursor: "col-resize",
+            zIndex: 10,
+            background: resizingSidebar ? "var(--accent-orange)" : "transparent",
+            transition: "background 0.12s",
+          }}
+          onMouseEnter={(e) => {
+            if (!resizingSidebar) e.currentTarget.style.background = "var(--border-default)";
+          }}
+          onMouseLeave={(e) => {
+            if (!resizingSidebar) e.currentTarget.style.background = "transparent";
+          }}
+        />
+      )}
       <SidebarHeader collapsed={sidebarCollapsed} />
 
       {/* Nav items */}
