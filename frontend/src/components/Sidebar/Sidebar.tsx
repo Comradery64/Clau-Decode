@@ -16,17 +16,17 @@ import { FileExplorer } from "./FileExplorer";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "clau-decode:sidebar-width";
 const SIDEBAR_MIN_WIDTH = 200;
-const SIDEBAR_MAX_WIDTH = 480;
 const SIDEBAR_DEFAULT_WIDTH = 260;
-// Keep at least this much room for the main pane (chat / dashboard).
-const SIDEBAR_MIN_MAIN_PANE = 480;
+// Keep at least this much room for the main pane (chat / dashboard) so the
+// sidebar can't be dragged to cover the whole viewport.
+const SIDEBAR_MIN_MAIN_PANE = 360;
 
 function loadStoredSidebarWidth(): number {
   if (typeof window === "undefined") return SIDEBAR_DEFAULT_WIDTH;
   const raw = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
   const n = raw ? Number(raw) : NaN;
   if (!Number.isFinite(n)) return SIDEBAR_DEFAULT_WIDTH;
-  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(n, SIDEBAR_MAX_WIDTH));
+  return Math.max(SIDEBAR_MIN_WIDTH, n);
 }
 
 function IconSearch() {
@@ -411,10 +411,8 @@ export default function Sidebar() {
   // the sidebar wider than the available space.
   useEffect(() => {
     const clamp = () => {
-      const maxByViewport = Math.max(
-        SIDEBAR_MIN_WIDTH,
-        Math.min(SIDEBAR_MAX_WIDTH, window.innerWidth - SIDEBAR_MIN_MAIN_PANE),
-      );
+      // Only viewport-derived cap: leave room for the main pane.
+      const maxByViewport = Math.max(SIDEBAR_MIN_WIDTH, window.innerWidth - SIDEBAR_MIN_MAIN_PANE);
       setSidebarWidth((w) => Math.max(SIDEBAR_MIN_WIDTH, Math.min(w, maxByViewport)));
     };
     clamp();
@@ -431,10 +429,8 @@ export default function Sidebar() {
     document.body.style.userSelect = "none";
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - startX;
-      const maxByViewport = Math.max(
-        SIDEBAR_MIN_WIDTH,
-        Math.min(SIDEBAR_MAX_WIDTH, window.innerWidth - SIDEBAR_MIN_MAIN_PANE),
-      );
+      // Only viewport-derived cap: leave room for the main pane.
+      const maxByViewport = Math.max(SIDEBAR_MIN_WIDTH, window.innerWidth - SIDEBAR_MIN_MAIN_PANE);
       const next = Math.max(SIDEBAR_MIN_WIDTH, Math.min(startWidth + dx, maxByViewport));
       setSidebarWidth(next);
     };
