@@ -251,6 +251,59 @@ process in [`SECURITY.md`](SECURITY.md) — do **not** open a public issue.
 - [`SECURITY.md`](SECURITY.md) — responsible disclosure
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes
 
+## Acknowledgements
+
+Clau-Decode is **inspired by, and built around the file format of, [Claude](https://www.anthropic.com/claude) and Claude Code from [Anthropic](https://www.anthropic.com/)**. This project is not affiliated with, endorsed by, or sponsored by Anthropic, PBC. *Claude* and *Claude Code* are trademarks of Anthropic, PBC; all references in this project are nominative.
+
+> *A personal note from the author* — I didn't write the code in this repository or build any of the underlying tools. I sat at my computer, typed into it, and kept asking it for more. The projects, products, and people below did the real work that made Clau-Decode possible:
+
+**Backend (Python)**
+
+- [FastAPI](https://fastapi.tiangolo.com/) — HTTP API framework
+- [Uvicorn](https://www.uvicorn.org/) — ASGI server
+- [Pydantic](https://docs.pydantic.dev/) — data validation and settings
+- [aiosqlite](https://github.com/omnilib/aiosqlite) — async SQLite driver
+- [SQLite](https://www.sqlite.org/) — embedded database, including the [FTS5](https://www.sqlite.org/fts5.html) full-text search extension
+- [watchfiles](https://github.com/samuelcolvin/watchfiles) — filesystem change notifications
+- [anyio](https://github.com/agronholm/anyio) and [httpx](https://www.python-httpx.org/) — async primitives and HTTP client
+- [Hatch](https://hatch.pypa.io/) and [hatch-vcs](https://github.com/ofek/hatch-vcs) — packaging and version management
+- [uv](https://docs.astral.sh/uv/) — Python project and tool runner
+- [pytest](https://docs.pytest.org/), [pytest-asyncio](https://github.com/pytest-dev/pytest-asyncio), and [pytest-cov](https://github.com/pytest-dev/pytest-cov) — testing
+
+**Frontend (Web)**
+
+- [React](https://react.dev/) and [React DOM](https://react.dev/reference/react-dom) — UI runtime
+- [TypeScript](https://www.typescriptlang.org/) — typed JavaScript
+- [Vite](https://vitejs.dev/) — bundler / dev server
+- [Vitest](https://vitest.dev/) and [@testing-library](https://testing-library.com/) — unit / component testing
+- [Zustand](https://github.com/pmndrs/zustand) — state management
+- [react-markdown](https://github.com/remarkjs/react-markdown), [remark-gfm](https://github.com/remarkjs/remark-gfm), and [rehype-highlight](https://github.com/rehypejs/rehype-highlight) — Markdown rendering and code highlighting
+- [highlight.js](https://highlightjs.org/) — syntax highlighter behind rehype-highlight
+- [Apache ECharts](https://echarts.apache.org/) — analytics charts
+- [OverlayScrollbars](https://kingsora.github.io/OverlayScrollbars/) — custom scrollbars
+- [clsx](https://github.com/lukeed/clsx) — conditional class names
+- [Node.js](https://nodejs.org/) and [npm](https://www.npmjs.com/) — JS runtime and package manager
+
+**Demo reel pipeline**
+
+- [VHS](https://github.com/charmbracelet/vhs) — terminal recording as code (with [ttyd](https://github.com/tsl0922/ttyd) under the hood)
+- [chafa](https://hpjansson.org/chafa/) — image-to-ANSI rendering, used to embed pixel-art into the terminal welcome banner
+- [ImageMagick](https://imagemagick.org/) — image autocrop and text-on-color rendering for the outro card
+- [FFmpeg](https://ffmpeg.org/) — video concat, audio mixing, sidechain ducking, and final mux
+- [testreel](https://github.com/greentfrapp/testreel) — programmatic Chromium recording for the web-app segment
+- [Playwright](https://playwright.dev/) — browser automation underlying testreel
+- [tmux](https://github.com/tmux/tmux) — terminal multiplexer (optional, for multi-pane VHS scenes)
+- Methodology reference: [saas-product-demo-video](https://github.com/noamdorr/saas-product-demo-video) — the SaaS demo-reel skill that inspired our soundtrack-splice and beat-alignment approach
+
+**Tooling and platforms**
+
+- [Homebrew](https://brew.sh/) — package management for the demo-reel toolchain on macOS
+- [GitHub Actions](https://github.com/features/actions) — CI / type-check / test runners
+- [Ruff](https://docs.astral.sh/ruff/) and [pre-commit](https://pre-commit.com/) — code style and pre-commit hooks
+- [Editorconfig](https://editorconfig.org/) — consistent indentation across editors
+
+Every project listed above is independently licensed by its respective authors; check each project's repository for terms. If we've missed an attribution, please [open an issue](https://github.com/Comradery64/Clau-Decode/issues).
+
 ## License
 
 This project is licensed under the **Functional Source License, Version 1.1,
