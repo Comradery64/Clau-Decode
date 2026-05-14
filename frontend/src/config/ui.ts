@@ -1,0 +1,18 @@
+export const SCROLL = {
+  NEAR_BOTTOM_PX: 80,
+  SNAP_THRESHOLD_PX: 24,
+  SNAP_TIMEOUT_MS: 5000,
+  SEARCH_HIGHLIGHT_MS: 1800,
+} as const;
+
+export const SSE = {
+  DEAD_SESSION_MS: 5 * 60_000,
+  WATCHDOG_MS: 2 * 60_000,
+} as const;
+
+export const STREAMING = {
+  ELAPSED_TICK_MS: 1000,
+  THINKING_CYCLE_MS: 3000,
+  TIP_CYCLE_MS: 9000,
+  DOT_PULSE_MS: 400,
+} as const;

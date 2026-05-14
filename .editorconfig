@@ -1,0 +1,30 @@
+# EditorConfig — https://editorconfig.org
+# Keeps indentation and line endings consistent across editors.
+# Soft style hint: aim for 80–100 char lines in prose and code where reasonable;
+# no hard max-line-length is enforced here (let ruff/prettier handle that).
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Python — 4-space indent per PEP 8
+[*.py]
+indent_size = 4
+
+# TypeScript / React / styles / JSON / YAML / Markdown — 2-space indent
+[*.{ts,tsx,js,jsx,css,scss,json,yml,yaml,md}]
+indent_size = 2
+
+# Markdown often relies on trailing whitespace for hard line breaks
+[*.md]
+trim_trailing_whitespace = false
+
+# Makefiles require literal tabs for recipe lines
+[Makefile]
+indent_style = tab
