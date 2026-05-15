@@ -628,7 +628,7 @@ export default function Sidebar() {
         flexShrink: 0,
         overflow: "hidden",
         position: "relative",
-        transition: resizingSidebar ? "none" : "width 180ms ease-out",
+        transition: resizingSidebar ? "none" : "width 352ms cubic-bezier(0.0, 0.9, 0.1, 1.0)",
       }}
     >
       {/* Drag handle — always visible so you can expand from collapsed. */}
