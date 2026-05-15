@@ -246,6 +246,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         async with Database(db_path) as db:
             await db.init_schema()
             await db.reset_xml_title_mtimes()
+            await db.reset_truncated_titles()
             await db.migrate_project_id_v2()
 
         async def _background_scan() -> None:

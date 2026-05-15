@@ -277,6 +277,19 @@ class Database:
             await self._conn.commit()
         return len(bad_ids)
 
+    async def reset_truncated_titles(self) -> int:
+        """Clear file_mtime for all sessions so titles get re-parsed.
+
+        The 80-char title cap was removed; this forces a full re-scan so
+        every session picks up the full title.
+        """
+        assert self._conn is not None
+        cursor = await self._conn.execute(
+            "UPDATE sessions SET file_mtime = NULL"
+        )
+        await self._conn.commit()
+        return cursor.rowcount
+
     async def migrate_project_id_v2(self) -> None:
         """Mark the project ID v2 migration as done.
 
