@@ -43,6 +43,8 @@ Clau-Decode reads those files locally, indexes them into SQLite, and serves a
 fast browser UI with full-text search, conversation rendering, analytics, and a
 recap engine.
 
+<img width="1280" height="720" alt="image" src="https://github.com/user-attachments/assets/a384b0d8-cc88-4fc8-9ee5-8e8b3c6eb3e8" />
+
 ## Features
 
 ### Session browser
