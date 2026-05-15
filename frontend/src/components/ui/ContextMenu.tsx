@@ -64,6 +64,8 @@ export function ContextMenu({
 
   // Flip menu upward when anchor is near the bottom of the viewport
   const flipUp = anchorRect.bottom + 4 + 180 > window.innerHeight;
+  // Flip left+up when the menu would bleed past the left edge of the viewport
+  const flipLeft = anchorRect.right < 210;
 
   // Flip submenu upward when it would extend below the viewport
   useLayoutEffect(() => {
@@ -119,10 +121,12 @@ export function ContextMenu({
         ref={menuRef}
         style={{
           position: "fixed",
-          ...(flipUp
+          ...(flipUp || flipLeft
             ? { bottom: window.innerHeight - anchorRect.top + 4 }
             : { top: anchorRect.bottom + 4 }),
-          right,
+          ...(flipLeft
+            ? { left: anchorRect.left }
+            : { right }),
           minWidth: "210px",
           background: "var(--bg-modal)",
           border: "1px solid var(--border-subtle)",
@@ -219,10 +223,12 @@ export function ContextMenu({
           ref={submenuRef}
           style={{
             position: "fixed",
-            ...(flipUp || submenuFlip
+            ...(flipUp || flipLeft || submenuFlip
               ? { bottom: window.innerHeight - moreRect.bottom }
               : { top: moreRect.top }),
-            left: moreRect.right - 4,
+            ...(flipLeft
+              ? { left: moreRect.left }
+              : { left: moreRect.right - 4 }),
             minWidth: "210px",
             background: "var(--bg-modal)",
             border: "1px solid var(--border-subtle)",
