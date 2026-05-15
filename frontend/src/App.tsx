@@ -114,7 +114,7 @@ export default function App() {
       }
 
       const ctrl = e.metaKey || e.ctrlKey;
-      if (!ctrl) return;
+      if (!ctrl || e.repeat) return;
 
       // Skip readline-style Ctrl shortcuts when focus is in a text input
       const tag = (e.target as HTMLElement)?.tagName;
@@ -124,11 +124,12 @@ export default function App() {
         if (inText) return;
         e.preventDefault();
         useAppStore.getState().openSearch();
-      } else if (e.metaKey && e.key === "e") {
-        // Cmd+E — toggle show-all-content (no "show more" truncation)
-        // Ctrl+E is reserved for readline end-of-line in text inputs
+      } else if (e.key.toLowerCase() === "e" && e.metaKey) {
         e.preventDefault();
         useAppStore.getState().toggleResultsExpanded();
+      } else if (e.key.toLowerCase() === "b" && e.metaKey) {
+        e.preventDefault();
+        useAppStore.getState().toggleSidebar();
       } else if (e.shiftKey && e.key === ",") {
         e.preventDefault();
         useAppStore.getState().openSettings();
