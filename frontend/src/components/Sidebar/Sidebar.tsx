@@ -16,6 +16,8 @@ import { FileExplorer } from "./FileExplorer";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "clau-decode:sidebar-width";
 const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_COLLAPSED_WIDTH = 52;
+const SIDEBAR_SNAP_THRESHOLD = 130; // within this many px of collapsed, snap
 const SIDEBAR_DEFAULT_WIDTH = 260;
 // Keep at least this much room for the main pane (chat / dashboard) so the
 // sidebar can't be dragged to cover the whole viewport.
@@ -85,6 +87,7 @@ function NavItem({
   active,
   onClick,
   collapsed,
+  fade,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -92,6 +95,7 @@ function NavItem({
   active?: boolean;
   onClick?: () => void;
   collapsed?: boolean;
+  fade?: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
   return (
@@ -119,8 +123,9 @@ function NavItem({
         fontFamily: "var(--font-ui)",
         fontWeight: active ? 500 : 400,
         textAlign: "left",
-        transition: "background var(--transition-fast), color var(--transition-fast)",
+        transition: "background var(--transition-fast), color var(--transition-fast), opacity 293ms ease",
         margin: "1px 6px",
+        opacity: fade ? 0 : undefined,
         overflow: "hidden",
         whiteSpace: "nowrap",
       }}
@@ -131,7 +136,7 @@ function NavItem({
         overflow: "hidden",
         whiteSpace: "nowrap",
         opacity: collapsed ? 0 : 1,
-        transition: "opacity 200ms ease",
+        transition: "opacity 293ms ease",
       }}>{label}</span>
       {shortcut && (
         <kbd style={{
@@ -139,7 +144,7 @@ function NavItem({
           color: "var(--text-tertiary)",
           fontFamily: "var(--font-ui)",
           opacity: collapsed ? 0 : 1,
-          transition: "opacity 200ms ease",
+          transition: "opacity 293ms ease",
         }}>
           {shortcut}
         </kbd>
@@ -178,6 +183,10 @@ function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (collapsed) setMenuOpen(false);
+  }, [collapsed]);
 
   const switchProfile = async (id: string | null) => {
     try {
@@ -255,7 +264,7 @@ function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
           textAlign: "left",
           overflow: "hidden",
           opacity: collapsed ? 0 : 1,
-          transition: "opacity 200ms ease",
+          transition: "opacity 293ms ease",
           whiteSpace: "nowrap",
         }}>
           <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{displayName}</div>
@@ -406,6 +415,10 @@ export default function Sidebar() {
   sidebarWidthRef.current = sidebarWidth;
   const [resizingSidebar, setResizingSidebar] = useState(false);
 
+  // When dragging narrow, treat components as collapsed so text fades but icons stay
+  const fadeCollapsed = resizingSidebar && sidebarWidth < 141;
+  const textCollapsed = sidebarCollapsed || fadeCollapsed;
+
   // Clamp stored width into a sane range for the current viewport. Runs on
   // mount and on window resize so dragging the browser narrow can't strand
   // the sidebar wider than the available space.
@@ -423,27 +436,44 @@ export default function Sidebar() {
   const startSidebarResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
-    const startWidth = sidebarWidthRef.current;
+    const wasCollapsed = sidebarCollapsed;
+    const startWidth = wasCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidthRef.current;
+    const storedExpanded = loadStoredSidebarWidth();
     setResizingSidebar(true);
-    // Disable text-selection while dragging so the cursor doesn't grab text.
+    if (wasCollapsed) {
+      setSidebarWidth(SIDEBAR_COLLAPSED_WIDTH);
+    }
     document.body.style.userSelect = "none";
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - startX;
-      // Only viewport-derived cap: leave room for the main pane.
       const maxByViewport = Math.max(SIDEBAR_MIN_WIDTH, window.innerWidth - SIDEBAR_MIN_MAIN_PANE);
-      const next = Math.max(SIDEBAR_MIN_WIDTH, Math.min(startWidth + dx, maxByViewport));
-      setSidebarWidth(next);
+      const anchor = wasCollapsed ? SIDEBAR_COLLAPSED_WIDTH : startWidth;
+      const raw = Math.max(SIDEBAR_COLLAPSED_WIDTH, Math.min(anchor + dx, maxByViewport));
+      setSidebarWidth(raw);
+      // Uncollapse only once the user drags past the snap threshold
+      if (wasCollapsed && raw >= SIDEBAR_SNAP_THRESHOLD) {
+        useAppStore.getState().setSidebarCollapsed(false);
+      }
     };
     const onUp = () => {
-      setResizingSidebar(false);
+      const final = sidebarWidthRef.current;
+      if (final < SIDEBAR_SNAP_THRESHOLD) {
+        useAppStore.getState().setSidebarCollapsed(true);
+        setResizingSidebar(false);
+        setSidebarWidth(storedExpanded);
+      } else {
+        useAppStore.getState().setSidebarCollapsed(false);
+        window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(final));
+        setSidebarWidth(final);
+        setResizingSidebar(false);
+      }
       document.body.style.userSelect = "";
-      window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidthRef.current));
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
     };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
-  }, []);
+  }, [sidebarCollapsed]);
 
   const handleSelectSession = (session: Session) => {
     selectProject(session.project_id);
@@ -583,7 +613,7 @@ export default function Sidebar() {
     <aside
       aria-label="Navigation"
       style={{
-        width: sidebarCollapsed ? "52px" : `${sidebarWidth}px`,
+        width: sidebarCollapsed && !resizingSidebar ? `${SIDEBAR_COLLAPSED_WIDTH}px` : `${Math.max(SIDEBAR_COLLAPSED_WIDTH, sidebarWidth)}px`,
         height: "100vh",
         display: "flex",
         flexDirection: "column",
@@ -592,46 +622,39 @@ export default function Sidebar() {
         flexShrink: 0,
         overflow: "hidden",
         position: "relative",
-        // Animate width changes from collapse/expand, but not while actively
-        // dragging — the drag handler sets width every mousemove and a CSS
-        // transition would make it feel laggy.
         transition: resizingSidebar ? "none" : "width 180ms ease-out",
       }}
     >
-      {/* Drag handle on the right edge — only when expanded.
-          6px wide hit target; a 1px line on the inside edge brightens on
-          hover/drag for visual feedback. */}
-      {!sidebarCollapsed && (
-        <div
-          onMouseDown={startSidebarResize}
-          title="Drag to resize"
-          aria-label="Resize sidebar"
-          role="separator"
-          aria-orientation="vertical"
-          style={{
-            position: "absolute",
-            top: 0,
-            bottom: 0,
-            right: 0,
-            width: "6px",
-            cursor: "col-resize",
-            zIndex: 10,
-            background: resizingSidebar ? "var(--accent-orange)" : "transparent",
-            transition: "background 0.12s",
-          }}
-          onMouseEnter={(e) => {
-            if (!resizingSidebar) e.currentTarget.style.background = "var(--border-default)";
-          }}
-          onMouseLeave={(e) => {
-            if (!resizingSidebar) e.currentTarget.style.background = "transparent";
-          }}
-        />
-      )}
-      <SidebarHeader collapsed={sidebarCollapsed} />
+      {/* Drag handle — always visible so you can expand from collapsed. */}
+      <div
+        onMouseDown={startSidebarResize}
+        title="Drag to resize"
+        aria-label="Resize sidebar"
+        role="separator"
+        aria-orientation="vertical"
+        style={{
+          position: "absolute",
+          top: 0,
+          bottom: 0,
+          right: 0,
+          width: "4px",
+          cursor: "col-resize",
+          zIndex: 10,
+          background: resizingSidebar ? "var(--border-default)" : "transparent",
+          transition: "background 0.12s",
+        }}
+        onMouseEnter={(e) => {
+          if (!resizingSidebar) e.currentTarget.style.background = "var(--border-default)";
+        }}
+        onMouseLeave={(e) => {
+          if (!resizingSidebar) e.currentTarget.style.background = "transparent";
+        }}
+      />
+      <SidebarHeader collapsed={textCollapsed} />
 
       {/* Nav items */}
       <div style={{ padding: "6px 0 4px", flexShrink: 0 }}>
-        <NavItem collapsed={sidebarCollapsed} icon={<IconSearch />} label="Search" shortcut="⌘K" onClick={openSearch} />
+        <NavItem collapsed={textCollapsed} icon={<IconSearch />} label="Search" shortcut="⌘K" onClick={openSearch} />
 
         {/* Starred section — only shown when there are starred sessions */}
         {!sidebarCollapsed && starredSessions.length > 0 && (
@@ -676,11 +699,12 @@ export default function Sidebar() {
         )}
 
         <NavItem
-          collapsed={sidebarCollapsed}
+          collapsed={textCollapsed}
           icon={<IconChats />}
           label="Archive"
           active={showArchive}
           onClick={() => setShowArchive((v) => !v)}
+          fade={textCollapsed}
         />
       </div>
 
@@ -696,6 +720,8 @@ export default function Sidebar() {
           flex: 1,
           padding: sidebarMode === "folder" ? "0" : "8px 0",
           display: sidebarCollapsed ? "none" : undefined,
+          opacity: textCollapsed ? 0 : 1,
+          transition: "opacity 293ms ease",
         }}
       >
         {sidebarMode === "folder" ? (
@@ -786,7 +812,7 @@ export default function Sidebar() {
 
       {sidebarCollapsed && <div style={{ flex: 1 }} />}
 
-      <SidebarFooter collapsed={sidebarCollapsed} />
+      <SidebarFooter collapsed={textCollapsed} />
     </aside>
   );
 }

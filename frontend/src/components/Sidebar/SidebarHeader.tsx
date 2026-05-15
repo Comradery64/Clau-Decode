@@ -104,7 +104,7 @@ export function SidebarHeader({ collapsed }: { collapsed?: boolean }) {
             whiteSpace: "nowrap",
             overflow: "hidden",
             opacity: collapsed ? 0 : 1,
-            transition: "opacity 200ms ease",
+            transition: "opacity 293ms ease",
             background: "none",
             border: "none",
             cursor: "pointer",
