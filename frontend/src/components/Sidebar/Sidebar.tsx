@@ -123,7 +123,7 @@ function NavItem({
         fontFamily: "var(--font-ui)",
         fontWeight: active ? 500 : 400,
         textAlign: "left",
-        transition: "background var(--transition-fast), color var(--transition-fast), opacity 293ms ease",
+        transition: "background var(--transition-fast), color var(--transition-fast), opacity 352ms ease",
         margin: "1px 6px",
         opacity: fade ? 0 : undefined,
         overflow: "hidden",
@@ -136,7 +136,7 @@ function NavItem({
         overflow: "hidden",
         whiteSpace: "nowrap",
         opacity: collapsed ? 0 : 1,
-        transition: "opacity 293ms ease",
+        transition: "opacity 352ms ease",
       }}>{label}</span>
       {shortcut && (
         <kbd style={{
@@ -144,7 +144,7 @@ function NavItem({
           color: "var(--text-tertiary)",
           fontFamily: "var(--font-ui)",
           opacity: collapsed ? 0 : 1,
-          transition: "opacity 293ms ease",
+          transition: "opacity 352ms ease",
         }}>
           {shortcut}
         </kbd>
@@ -264,7 +264,7 @@ function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
           textAlign: "left",
           overflow: "hidden",
           opacity: collapsed ? 0 : 1,
-          transition: "opacity 293ms ease",
+          transition: "opacity 352ms ease",
           whiteSpace: "nowrap",
         }}>
           <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{displayName}</div>
@@ -721,7 +721,7 @@ export default function Sidebar() {
           padding: sidebarMode === "folder" ? "0" : "8px 0",
           display: sidebarCollapsed ? "none" : undefined,
           opacity: textCollapsed ? 0 : 1,
-          transition: "opacity 293ms ease",
+          transition: "opacity 352ms ease",
         }}
       >
         {sidebarMode === "folder" ? (
