@@ -232,6 +232,30 @@ export function ChatInput({
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
       e.preventDefault();
       handleStash();
+      return;
+    }
+    if (e.ctrlKey && !e.metaKey) {
+      const ta = e.currentTarget;
+      const pos = ta.selectionStart;
+      if (e.key === "e") {
+        // Ctrl+E — move cursor to end of line
+        e.preventDefault();
+        const lineEnd = ta.value.indexOf("\n", pos);
+        const target = lineEnd === -1 ? ta.value.length : lineEnd;
+        ta.setSelectionRange(target, target);
+        return;
+      }
+      if (e.key === "k") {
+        // Ctrl+K — delete from cursor to end of line
+        e.preventDefault();
+        const lineEnd = ta.value.indexOf("\n", pos);
+        const target = lineEnd === -1 ? ta.value.length : lineEnd;
+        const next = ta.value.substring(0, pos) + ta.value.substring(target);
+        setInput(next);
+        // Restore cursor on next tick after React re-renders
+        requestAnimationFrame(() => ta.setSelectionRange(pos, pos));
+        return;
+      }
     }
   };
 

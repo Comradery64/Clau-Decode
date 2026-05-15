@@ -43,6 +43,17 @@ Clau-Decode reads those files locally, indexes them into SQLite, and serves a
 fast browser UI with full-text search, conversation rendering, analytics, and a
 recap engine.
 
+## Quickstart
+
+```bash
+git clone https://github.com/Comradery64/Clau-Decode.git
+cd Clau-Decode
+pip install -e .           # or: uv sync
+clau-decode                 # opens http://localhost:4242
+```
+
+Requires Python 3.10+. The wheel ships the pre-built frontend, so **no Node.js is needed** — only for development. All data stays on your machine — no telemetry.
+
 ## Features
 
 ### Session browser
@@ -108,36 +119,6 @@ recap engine.
 ### Themes
 - Light, dark, and system theme
 - Dark mode is tuned for long sessions — neutral surfaces, accent reserved for primary actions and live signals
-
-## Quickstart
-
-```bash
-pip install clau-decode    # or: uv tool install clau-decode
-clau-decode                 # opens http://localhost:4242
-```
-
-Requires Python 3.10+. All data stays on your machine — no telemetry.
-
-## Installation
-
-```bash
-pip install clau-decode
-```
-
-Or with [`uv`](https://docs.astral.sh/uv/) (recommended for isolated CLI installs):
-
-```bash
-uv tool install clau-decode
-```
-
-Or with [`pipx`](https://pipx.pypa.io/):
-
-```bash
-pipx install clau-decode
-```
-
-The wheel ships the pre-built frontend, so **no Node.js is needed at install
-time** — only at development time.
 
 ## Usage
 
@@ -255,7 +236,7 @@ process in [`SECURITY.md`](SECURITY.md) — do **not** open a public issue.
 
 Clau-Decode is **inspired by, and built around the file format of, [Claude](https://www.anthropic.com/claude) and Claude Code from [Anthropic](https://www.anthropic.com/)**. This project is not affiliated with, endorsed by, or sponsored by Anthropic, PBC. *Claude* and *Claude Code* are trademarks of Anthropic, PBC; all references in this project are nominative.
 
-> *A personal note from the author* — I didn't write the code in this repository or build any of the underlying tools. I sat at my computer, typed into it, and kept asking it for more. The actual line-by-line authoring was done by AI coding assistants — Anthropic's [Claude](https://www.anthropic.com/claude) (Sonnet and Opus) and [Z.ai](https://z.ai/)'s GLM-5.1, with the latter doing a substantial share of the heavy lifting alongside them. They aren't in the lists below because they aren't open-source projects, but they deserve named credit here. The projects, products, and people below did the rest of the real work that made Clau-Decode possible:
+> *A personal note from the author* — I didn't write the code in this repository or build any of the underlying tools. I sat at my computer, typed into it, and kept asking it for more. The actual line-by-line authoring was done by AI coding assistants — Anthropic's [Claude](https://www.anthropic.com/claude) (Sonnet and Opus) and [Z.ai](https://z.ai/)'s GLM-5.1, with the latter doing a substantial share of the heavy lifting alongside them. They aren't in the lists below because they're AI models rather than libraries, but they deserve named credit here. The projects, products, and people below did the rest of the real work that made Clau-Decode possible:
 
 **Backend (Python)**
 
