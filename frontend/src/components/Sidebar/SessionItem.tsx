@@ -296,7 +296,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                 alignItems: "center",
                 flex: 1,
                 minWidth: 0,
-                padding: "5px 12px",
+                padding: "5px 8px 5px 12px",
                 gap: "4px",
                 background: "none",
                 border: "none",
@@ -325,10 +325,6 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                   color: "var(--text-primary)",
                   fontWeight: isActive ? 500 : 400,
                   lineHeight: "1.35",
-                  // Single line — users widen the sidebar (drag handle on the
-                  // right edge) to fit long titles in full. When the panel is
-                  // narrower than the title, ellipsis truncates and the
-                  // title-attribute tooltip reveals the full text on hover.
                   whiteSpace: "nowrap",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
@@ -337,6 +333,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                 {displayTitle}
               </span>
 
+              {/* Bell — right side, after title */}
               {bellState !== "hidden" && (
                 <span
                   aria-label="Awaiting your reply"
@@ -363,30 +360,24 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
               className={isActive || menuOpen ? "" : "hover-actions"}
               style={{
                 position: "absolute",
-                right: "8px",
-                top: "50%",
-                transform: "translateY(-50%)",
+                right: "0",
+                top: 0,
+                bottom: 0,
                 color: menuOpen ? "var(--text-primary)" : "var(--text-tertiary)",
                 fontSize: "14px",
-                lineHeight: 1,
-                padding: "2px 5px",
-                borderRadius: "var(--radius-sm)",
+                lineHeight: "30px",
+                padding: "0 8px",
                 letterSpacing: "1px",
-                background: menuOpen ? "var(--bg-sidebar-hover)" : "none",
+                background: isActive
+                  ? "var(--bg-sidebar-active)"
+                  : hovered || menuOpen
+                  ? "var(--bg-sidebar-hover)"
+                  : "var(--bg-sidebar)",
                 border: "none",
                 cursor: "pointer",
                 outline: "none",
                 fontFamily: "var(--font-ui)",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-sidebar-hover)";
-                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
-              }}
-              onMouseLeave={(e) => {
-                if (!menuOpen) {
-                  (e.currentTarget as HTMLButtonElement).style.background = "none";
-                  (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)";
-                }
+                transition: "background var(--transition-fast)",
               }}
               aria-label="Session options"
             >
