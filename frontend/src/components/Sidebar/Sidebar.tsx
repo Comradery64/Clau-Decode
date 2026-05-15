@@ -424,8 +424,14 @@ export default function Sidebar() {
   // the sidebar wider than the available space.
   useEffect(() => {
     const clamp = () => {
+      const vw = window.innerWidth;
+      // Auto-collapse when the window is too narrow for both sidebar + main pane.
+      if (vw < SIDEBAR_COLLAPSED_WIDTH + SIDEBAR_MIN_MAIN_PANE) {
+        useAppStore.getState().setSidebarCollapsed(true);
+        return;
+      }
       // Only viewport-derived cap: leave room for the main pane.
-      const maxByViewport = Math.max(SIDEBAR_MIN_WIDTH, window.innerWidth - SIDEBAR_MIN_MAIN_PANE);
+      const maxByViewport = Math.max(SIDEBAR_MIN_WIDTH, vw - SIDEBAR_MIN_MAIN_PANE);
       setSidebarWidth((w) => Math.max(SIDEBAR_MIN_WIDTH, Math.min(w, maxByViewport)));
     };
     clamp();

@@ -159,7 +159,7 @@ export default function App() {
             and session each time the user toggles. The Sidebar reads
             sidebarCollapsed itself and hides via display:none. */}
         <Sidebar />
-        <div style={{ flex: 1, display: "flex", minWidth: 0, overflow: "hidden" }}>
+        <div style={{ flex: 1, display: "flex", minWidth: 200, overflow: "hidden" }}>
           <ErrorBoundary>
             {route === "/analytics" ? <AnalyticsPanel /> : chatIdFromUrl ? <ChatView /> : <Dashboard />}
           </ErrorBoundary>
