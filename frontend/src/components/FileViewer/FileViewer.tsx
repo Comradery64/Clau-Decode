@@ -333,8 +333,7 @@ export function FileViewer() {
         transition: resizing ? "none" : "opacity 180ms ease-out",
       }}
     >
-      {/* Resize handle on the left edge. 6px wide hit target with a 1px visual
-          line that brightens on hover/drag. */}
+      {/* Resize handle on the left edge. */}
       <div
         onMouseDown={startResize}
         title="Drag to resize"
@@ -343,10 +342,10 @@ export function FileViewer() {
           top: 0,
           bottom: 0,
           left: 0,
-          width: "6px",
+          width: "4px",
           cursor: "col-resize",
           zIndex: 2,
-          background: resizing ? "var(--accent-orange)" : "transparent",
+          background: resizing ? "var(--border-default)" : "transparent",
           transition: "background 0.12s",
         }}
         onMouseEnter={(e) => {
