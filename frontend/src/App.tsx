@@ -131,6 +131,9 @@ export default function App() {
         if (inText) return;
         e.preventDefault();
         useAppStore.getState().openSearch();
+      } else if (e.key.toLowerCase() === "e" && e.metaKey && e.shiftKey) {
+        e.preventDefault();
+        useAppStore.getState().toggleExplorer();
       } else if (e.key.toLowerCase() === "e" && e.metaKey) {
         e.preventDefault();
         useAppStore.getState().toggleResultsExpanded();

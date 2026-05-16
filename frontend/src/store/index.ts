@@ -50,6 +50,7 @@ interface AppState {
   openShortcuts: () => void;
   closeShortcuts: () => void;
   toggleSidebar: () => void;
+  toggleExplorer: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setSidebarMode: (mode: SidebarMode) => void;
   setFileExplorerRoot: (path: string | null) => void;
@@ -97,6 +98,15 @@ export const useAppStore = create<AppState>((set) => ({
   openShortcuts: () => set({ isShortcutsOpen: true }),
   closeShortcuts: () => set({ isShortcutsOpen: false }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  toggleExplorer: () =>
+    set((s) => {
+      // Explorer is "visible" when sidebar is expanded AND mode === "folder".
+      // Toggle that visibility: expand + folder, or fall back to chat.
+      const explorerVisible = !s.sidebarCollapsed && s.sidebarMode === "folder";
+      return explorerVisible
+        ? { sidebarMode: "chat" as const }
+        : { sidebarCollapsed: false, sidebarMode: "folder" as const };
+    }),
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
   setSidebarMode: (mode) => set({ sidebarMode: mode }),
   setFileExplorerRoot: (path) => set({ fileExplorerRoot: path }),
