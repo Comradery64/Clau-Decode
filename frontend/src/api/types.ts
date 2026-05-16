@@ -195,6 +195,18 @@ export interface ProfilesResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Runner status — mirrors ClaudeCodeRunner.status_snapshot
+// ---------------------------------------------------------------------------
+
+export interface RunnerStatus {
+  busy: boolean;
+  last_error: string | null;
+  permission_mode: PermissionMode | null;
+  quiet_age_seconds: number | null;
+  quiet_warning: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Stats
 // ---------------------------------------------------------------------------
 

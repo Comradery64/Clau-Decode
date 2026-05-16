@@ -13,6 +13,7 @@ import { SidebarHeader } from "./SidebarHeader";
 import { ProjectGroup } from "./ProjectGroup";
 import { SessionItem } from "./SessionItem";
 import { FileExplorer } from "./FileExplorer";
+import { useRunnerStatuses } from "./hooks/useRunnerStatuses";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "clau-decode:sidebar-width";
 const SIDEBAR_MIN_WIDTH = 200;
@@ -606,6 +607,18 @@ export default function Sidebar() {
     return filtered;
   }, [flatSessions, sessionSortOrder, showArchive, archived]);
 
+  // Issue #12 — poll runner-status for sessions visible in the flat list
+  // (recents / archive) and the starred section. Project groups poll their
+  // own sessions separately so we don't have to predict expansion here.
+  // Two coalesced timers worst case; far better than per-item polling.
+  const visibleFlatIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of sortedFlatSessions) ids.add(s.id);
+    for (const s of starredSessions) ids.add(s.id);
+    return [...ids];
+  }, [sortedFlatSessions, starredSessions]);
+  const runnerStatuses = useRunnerStatuses(visibleFlatIds);
+
   const toggleProject = (projectId: string) => {
     setExpandedProjects((prev) => {
       const next = new Set(prev);
@@ -699,6 +712,7 @@ export default function Sidebar() {
                 session={session}
                 isActive={selectedSessionId === session.id}
                 onClick={() => handleSelectSession(session)}
+                runnerStatus={runnerStatuses.get(session.id)}
               />
             ))}
           </div>
@@ -782,6 +796,7 @@ export default function Sidebar() {
                       session={session}
                       isActive={selectedSessionId === session.id}
                       onClick={() => handleSelectSession(session)}
+                      runnerStatus={runnerStatuses.get(session.id)}
                     />
                   ))}
                   {!recentsCollapsed && !flatLoading && sortedFlatSessions.length === 0 && (

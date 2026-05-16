@@ -23,6 +23,7 @@ import type {
   PromptCostEntry,
   PromptStatsResponse,
   Recap,
+  RunnerStatus,
   SearchHit,
   Session,
   SessionCostResponse,
@@ -204,13 +205,7 @@ export const api = {
       {},
     ),
   getRunnerStatus: (sessionId: string) =>
-    get<{
-      busy: boolean;
-      last_error: string | null;
-      permission_mode: PermissionMode | null;
-      quiet_age_seconds: number | null;
-      quiet_warning: boolean;
-    }>(`/api/sessions/${encodeURIComponent(sessionId)}/runner-status`),
+    get<RunnerStatus>(`/api/sessions/${encodeURIComponent(sessionId)}/runner-status`),
 
   // Recaps
   generateRecap: (sessionId: string) =>

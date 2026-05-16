@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { Session } from "../../api/types";
+import type { RunnerStatus, Session } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
 import { prefetch } from "../../api/sessionCache";
@@ -66,9 +66,16 @@ interface SessionItemProps {
   session: Session;
   isActive: boolean;
   onClick: () => void;
+  /**
+   * Live runner status for this session — populated by the Sidebar's shared
+   * polling hook (issue #12). Undefined means "not yet polled" or "no Headless
+   * runner managed by clau-decode" (e.g. session driven by external CLI).
+   * Kept as a prop so SessionItem stays presentational and unit-testable.
+   */
+  runnerStatus?: RunnerStatus;
 }
 
-export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
+export function SessionItem({ session, isActive, onClick, runnerStatus }: SessionItemProps) {
   const [hovered, setHovered] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null);
@@ -350,6 +357,41 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                 >
                   <IconBell />
                 </span>
+              )}
+
+              {/* Busy marker — pulses while the Headless runner subprocess
+                  is alive (issue #12). Quiet-warning shifts the colour to
+                  warn after the watchdog window so the user knows the
+                  process is alive but not producing output. */}
+              {runnerStatus?.busy && (
+                <span
+                  data-testid="runner-busy-marker"
+                  data-quiet-warning={runnerStatus.quiet_warning ? "true" : "false"}
+                  aria-label={
+                    runnerStatus.quiet_warning
+                      ? `Running, quiet for ${Math.round(runnerStatus.quiet_age_seconds ?? 0)}s`
+                      : "Running"
+                  }
+                  title={
+                    runnerStatus.quiet_warning && runnerStatus.quiet_age_seconds != null
+                      ? `Running — quiet for ${Math.round(runnerStatus.quiet_age_seconds)}s`
+                      : "Running"
+                  }
+                  style={{
+                    flexShrink: 0,
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "50%",
+                    background: runnerStatus.quiet_warning
+                      ? "var(--accent-orange)"
+                      : "var(--accent-green, #2ea043)",
+                    boxShadow: runnerStatus.quiet_warning
+                      ? "0 0 0 0 var(--accent-orange)"
+                      : "0 0 0 0 var(--accent-green, #2ea043)",
+                    animation: "clau-runner-pulse 1.6s ease-out infinite",
+                    marginRight: "2px",
+                  }}
+                />
               )}
             </button>
 
