@@ -121,7 +121,7 @@
   /* Code block — dark mode stays terminal-dark */
   --bg-code-block: #1f1e1c;
   --bg-code-block-header: #262624;
-  --border-code-block: rgba(187, 187, 186, 0.06);
+  --border-code-block: rgba(187, 187, 186, 0.22);
   --text-code-lang: #8a887f;
   /* Syntax highlighting vars — dark mode */
   /* Claude.ai-style dark palette: purple keywords, yellow types/functions,
