@@ -35,6 +35,7 @@ import subprocess
 import sys
 from collections import OrderedDict
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -131,11 +132,26 @@ class _SendMessageRequest(BaseModel):
 
 
 class _NewSessionRequest(BaseModel):
-    # All optional — the defaults are "last-used cwd" + AppConfig permission mode
-    # + a benign opening prompt that just gets the JSONL written.
+    # All optional — defaults are "last-used cwd" + AppConfig permission mode.
+    # No initial_message: brand-new sessions stay empty until the user types
+    # their first message (see issue #9 fix — auto-greeting was wrong).
     cwd: str | None = None
     permission_mode: str | None = None
-    initial_message: str | None = None
+
+
+@dataclass(frozen=True)
+class _PendingSession:
+    """Metadata for a session that's been minted but not yet materialised.
+
+    Lives in a small in-memory map (``app.state.pending_sessions``) keyed by
+    session id. Entries are created by ``POST /api/sessions/new`` and consumed
+    by the first ``POST /api/sessions/{id}/send-message``; nothing else touches
+    them, so we don't need a TTL — server restarts wipe the map.
+    """
+
+    cwd: str
+    permission_mode: str
+    bin_name: str
 
 
 class _SessionTitleRequest(BaseModel):
@@ -308,6 +324,13 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     # Session-detail responses are megabytes of JSON for old chats; gzip cuts
     # transfer time by ~10x. minimum_size avoids overhead for tiny payloads.
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+    # Pending-session map (issue #9 fix): /api/sessions/new mints metadata into
+    # this dict; the first /send-message for that id consumes the entry and
+    # spawns the CLI with --session-id. Guarded by an asyncio lock so two
+    # concurrent send-messages for the same fresh id can't both claim it.
+    app.state.pending_sessions = {}
+    app.state.pending_sessions_lock = asyncio.Lock()
 
     # LRU cache of pre-serialized SessionDetail responses, keyed by session id
     # with file mtime as the validation token. A hit skips the SQL fetch,
@@ -901,19 +924,21 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
 
     @app.post("/api/sessions/new")
     async def new_session(req: _NewSessionRequest):
-        """Start a brand-new Claude session (issue #9 — "New Task" button).
+        """Mint metadata for a brand-new Claude session (issue #9).
 
-        Mints a fresh UUID, spawns the CLI headless with ``--session-id <uuid>``
-        (not ``--resume``), and returns the new id so the frontend can navigate
-        to ``/chat/<uuid>`` and pick the session up via the watcher → SSE pipeline
-        as soon as the JSONL lands on disk.
+        This endpoint is a PURE METADATA MINT — it does NOT spawn the CLI and
+        does NOT write any JSONL on disk. It stashes a ``_PendingSession`` in
+        ``app.state.pending_sessions`` keyed by the new uuid. The user's first
+        real ``/send-message`` for that id is what materialises the session
+        via ``claude --session-id`` (see send-message route).
 
-        Defaults (all overridable in the request body):
+        Why no spawn here: an auto-greeting that materialises the JSONL would
+        appear as the user's first turn in the conversation, which is wrong.
+        A new session must land empty.
+
+        Defaults (all overridable):
           * ``cwd`` — last-used cwd from the most-recent indexed session.
-          * ``permission_mode`` — ``AppConfig.claude_default_permission_mode``
-            (the same default as the existing send-message runner).
-          * ``initial_message`` — a tiny opening prompt that just materialises
-            the JSONL. The user's real first turn goes through send-message.
+          * ``permission_mode`` — ``AppConfig.claude_default_permission_mode``.
         """
         import uuid
 
@@ -944,8 +969,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
 
         # We default to plain `claude` for new sessions — the binary that
         # writes the JSONL determines which data_path the session shows up
-        # under, and `claude` is the conventional default. (Profile-aware
-        # binary selection is a follow-up — see the issue for context.)
+        # under, and `claude` is the conventional default. We validate the
+        # bin up front so the caller learns about a missing CLI now rather
+        # than only on their first message.
         bin_name = "claude"
         if shutil.which(bin_name) is None:
             raise HTTPException(
@@ -958,18 +984,12 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             or "dontAsk"
         )
         new_id = str(uuid.uuid4())
-        initial = (req.initial_message or "Hi! I'm ready when you are.").strip()
-        if not initial:
-            initial = "Hi! I'm ready when you are."
-
-        await _runner.submit(
-            new_id,
-            cwd=cwd,
-            bin_name=bin_name,
-            text=initial,
-            permission_mode=permission_mode,
-            new_session=True,
-        )
+        async with app.state.pending_sessions_lock:
+            app.state.pending_sessions[new_id] = _PendingSession(
+                cwd=cwd,
+                permission_mode=permission_mode,
+                bin_name=bin_name,
+            )
         return {
             "session_id": new_id,
             "cwd": cwd,
@@ -984,7 +1004,47 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         async with Database(db_path) as db:
             detail = await db.get_session_detail(session_id)
         if detail is None:
-            raise HTTPException(status_code=404, detail="Session not found")
+            # Existing session row absent — check the pending-session map (issue #9):
+            # a brand-new session minted by /api/sessions/new lives only here until
+            # its first user message lands. Pop atomically so we can't double-spawn
+            # if two clients send concurrently.
+            pending: _PendingSession | None = None
+            async with app.state.pending_sessions_lock:
+                pending = app.state.pending_sessions.pop(session_id, None)
+            if pending is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            if not Path(pending.cwd).is_dir():
+                # Cwd vanished between mint and first message — restore the entry so
+                # a retry after the user fixes their disk doesn't lose the id.
+                async with app.state.pending_sessions_lock:
+                    app.state.pending_sessions[session_id] = pending
+                raise HTTPException(
+                    status_code=404, detail=f"Directory not found: {pending.cwd}"
+                )
+            if shutil.which(pending.bin_name) is None:
+                async with app.state.pending_sessions_lock:
+                    app.state.pending_sessions[session_id] = pending
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"{pending.bin_name} not found on PATH",
+                )
+            permission_mode = req.permission_mode or pending.permission_mode
+            result = await _runner.submit(
+                session_id,
+                cwd=pending.cwd,
+                bin_name=pending.bin_name,
+                text=text,
+                permission_mode=permission_mode,
+                new_session=True,
+                auto_stop_quiet_default=_state[
+                    "config"
+                ].claude_auto_stop_quiet_default_turns,
+            )
+            response: dict = {"ok": True, "permission_mode": permission_mode}
+            if result is not None:
+                response["result_text"] = result.get("result_text")
+                response["is_error"] = bool(result.get("is_error"))
+            return response
         if detail.is_fork:
             raise HTTPException(
                 status_code=422,

@@ -2,9 +2,12 @@
  * "New Task" entry point — issue #9.
  *
  * Sits in the sidebar header next to the collapse + mode-switch buttons.
- * Click (or Cmd+Shift+O) POSTs to /api/sessions/new and navigates to the
- * freshly-minted session route. The watcher → SSE pipeline picks up the
- * JSONL the CLI writes and the ChatView fills in as it arrives.
+ * Click (or Cmd+Shift+O) POSTs to /api/sessions/new — a pure metadata mint:
+ * the backend assigns a fresh uuid but does NOT spawn the CLI and does NOT
+ * write any JSONL. We navigate the user to /chat/<id> immediately; the
+ * session stays empty until the user submits their first message, and that
+ * submission is what materialises the JSONL via `claude --session-id`. The
+ * watcher → SSE pipeline indexes it the moment it appears.
  *
  * The startNewSession helper is exported so unit tests can drive it
  * without going through the DOM.
