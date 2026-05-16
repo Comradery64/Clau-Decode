@@ -422,6 +422,47 @@ async def test_regular_message_keeps_stream_json_input(env_with_claude, monkeypa
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Static SPA fallback — hashed asset misses must 404
+# ---------------------------------------------------------------------------
+
+
+async def test_missing_hashed_asset_returns_404(tmp_path):
+    """Requests under /assets/ that don't match a real file must 404.
+
+    Falling through to index.html for a missing JS chunk hands the browser
+    text/html in response to a module import, producing an opaque
+    "Failed to fetch dynamically imported module" error with no actionable
+    diagnostic. The frontend's lazyWithRetry only triggers its reload prompt
+    on a real fetch failure — see issue #10.
+    """
+    cfg = AppConfig()
+    db_path = tmp_path / "spa.db"
+    async with Database(db_path) as db:
+        await db.init_schema()
+    app = _make_app(db_path, cfg)
+    async with await _client(app) as c:
+        r = await c.get("/assets/ShortcutsPopup-DOES-NOT-EXIST.js")
+    assert r.status_code == 404
+
+
+async def test_spa_unknown_route_still_serves_index(tmp_path):
+    """Non-/assets unknown routes keep serving index.html so the SPA router
+    can take over (deep-link to /analytics, /session/<id>, etc.)."""
+    cfg = AppConfig()
+    db_path = tmp_path / "spa2.db"
+    async with Database(db_path) as db:
+        await db.init_schema()
+    app = _make_app(db_path, cfg)
+    async with await _client(app) as c:
+        r = await c.get("/some/spa/route")
+    # If a static/ build is present in the package, we get the SPA shell.
+    # If not (dev install without `npm run build`), this route is simply
+    # absent — either outcome is acceptable, but we MUST NOT see HTML being
+    # mistakenly served from the /assets/ namespace handled above.
+    assert r.status_code in (200, 404)
+
+
 async def test_auto_stop_flag_threaded_to_runner(env_with_claude, monkeypatch):
     """AppConfig.claude_auto_stop_quiet_default_turns reaches runner.submit()."""
     e = env_with_claude

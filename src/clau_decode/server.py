@@ -1251,6 +1251,14 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             candidate = static_dir / full_path
             if full_path and candidate.exists() and candidate.is_file():
                 return _FileResponse(str(candidate))
+            # Hashed asset misses must 404, NOT fall through to index.html.
+            # Otherwise a browser holding a stale chunk hash (e.g. after a
+            # rebuild) gets text/html for an /assets/<old-hash>.js request
+            # and throws "Failed to fetch dynamically imported module" with
+            # no actionable error — see frontend lazyWithRetry which only
+            # triggers its reload prompt on a real fetch failure.
+            if full_path.startswith("assets/"):
+                raise HTTPException(status_code=404)
             index = static_dir / "index.html"
             return _FileResponse(
                 str(index),

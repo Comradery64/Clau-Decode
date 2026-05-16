@@ -4,6 +4,7 @@ import { api, createEventSource, getConfigCached } from "./api/client";
 import { useRoute, getChatIdFromRoute } from "./router";
 import { emit } from "./utils/events";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { lazyWithRetry } from "./utils/lazyWithRetry";
 
 function applyTheme(theme: string) {
   if (theme === "dark") {
@@ -23,15 +24,17 @@ const chatViewImport = () => import("./components/ChatView/ChatView");
 const searchOverlayImport = () => import("./components/Sidebar/SearchOverlay");
 const settingsModalImport = () => import("./components/Settings/SettingsModal");
 
-const Sidebar = React.lazy(() => import("./components/Sidebar/Sidebar"));
-const ChatView = React.lazy(chatViewImport);
-const AnalyticsPanel = React.lazy(() => import("./components/Analytics/AnalyticsPanel"));
-const Dashboard = React.lazy(() => import("./components/Dashboard/Dashboard"));
-const SettingsModal = React.lazy(settingsModalImport);
-const SearchOverlay = React.lazy(searchOverlayImport);
-const HelpPopup = React.lazy(() => import("./components/Sidebar/HelpPopup"));
-const ShortcutsPopup = React.lazy(() => import("./components/Sidebar/ShortcutsPopup"));
-const FileViewer = React.lazy(() => import("./components/FileViewer/FileViewer"));
+// lazyWithRetry: when a code-split chunk 404s (stale hash after a rebuild),
+// render a reload prompt in-place instead of crashing the whole ErrorBoundary.
+const Sidebar = lazyWithRetry(() => import("./components/Sidebar/Sidebar"));
+const ChatView = lazyWithRetry(chatViewImport);
+const AnalyticsPanel = lazyWithRetry(() => import("./components/Analytics/AnalyticsPanel"));
+const Dashboard = lazyWithRetry(() => import("./components/Dashboard/Dashboard"));
+const SettingsModal = lazyWithRetry(settingsModalImport);
+const SearchOverlay = lazyWithRetry(searchOverlayImport);
+const HelpPopup = lazyWithRetry(() => import("./components/Sidebar/HelpPopup"));
+const ShortcutsPopup = lazyWithRetry(() => import("./components/Sidebar/ShortcutsPopup"));
+const FileViewer = lazyWithRetry(() => import("./components/FileViewer/FileViewer"));
 
 export default function App() {
   // Five individual selectors instead of `useAppStore()` without a selector —
