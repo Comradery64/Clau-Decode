@@ -1,5 +1,6 @@
 import { useAppStore } from "../../store";
 import { navigateTo } from "../../router";
+import { NewTaskButton } from "./NewTaskButton";
 
 function IconSidebarCollapse() {
   return (
@@ -115,6 +116,7 @@ export function SidebarHeader({ collapsed }: { collapsed?: boolean }) {
           Clau-Decode
         </button>
         <div style={{ display: "flex", alignItems: "center" }}>
+          {!collapsed && <NewTaskButton />}
           {!collapsed && (
             <HeaderBtn
               label={sidebarMode === "chat" ? "File explorer" : "Session list"}

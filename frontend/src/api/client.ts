@@ -229,6 +229,18 @@ export const api = {
       `/api/sessions/${encodeURIComponent(sessionId)}/title`,
       { title },
     ),
+
+  // Start a brand-new Claude Code session (issue #9 — "New Task").
+  // Backend mints the UUID + spawns the CLI with --session-id; the JSONL
+  // lands on disk, the watcher → SSE pipeline picks it up, and the caller
+  // navigates to /chat/<session_id>.
+  newSession: (
+    opts?: { cwd?: string; permission_mode?: PermissionMode; initial_message?: string },
+  ) =>
+    post<{ session_id: string; cwd: string; permission_mode: PermissionMode }>(
+      "/api/sessions/new",
+      opts ?? {},
+    ),
 };
 
 /** Handlers for the SSE event types we know about (issue #11). */

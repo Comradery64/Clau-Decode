@@ -167,6 +167,7 @@ class ClaudeCodeRunner:
         text: str,
         permission_mode: str,
         auto_stop_quiet_default: bool = False,
+        new_session: bool = False,
     ) -> Optional[dict]:
         is_slash_command = text.lstrip().startswith("/")
 
@@ -178,6 +179,7 @@ class ClaudeCodeRunner:
             permission_mode=permission_mode,
             auto_stop_quiet_default=auto_stop_quiet_default,
             use_slash=is_slash_command,
+            new_session=new_session,
         )
 
         if not is_slash_command:
@@ -212,6 +214,7 @@ class ClaudeCodeRunner:
                 permission_mode=permission_mode,
                 auto_stop_quiet_default=auto_stop_quiet_default,
                 use_slash=False,
+                new_session=False,
             )
             # The text-mode response will arrive via JSONL → SSE like any
             # normal turn — don't surface the rejection text.
@@ -350,6 +353,7 @@ class ClaudeCodeRunner:
         permission_mode: str,
         auto_stop_quiet_default: bool,
         use_slash: bool,
+        new_session: bool = False,
     ) -> _RunnerState:
         lock = self._locks.setdefault(session_id, asyncio.Lock())
         async with lock:
@@ -364,11 +368,16 @@ class ClaudeCodeRunner:
                     session_id,
                 )
 
+            # new_session=True mints a fresh session id on the CLI side
+            # (--session-id <uuid> instead of --resume <uuid>). --resume against
+            # a non-existent id would fail; --session-id creates the JSONL so the
+            # watcher → SSE pipeline indexes it the moment it lands on disk.
+            resume_flag = "--session-id" if new_session else "--resume"
             argv: list[str] = [
                 bin_name,
                 "--print",
                 "--verbose",  # required when --output-format=stream-json is paired with --print
-                "--resume",
+                resume_flag,
                 session_id,
                 "--permission-mode",
                 permission_mode,

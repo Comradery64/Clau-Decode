@@ -480,3 +480,147 @@ async def test_auto_stop_flag_threaded_to_runner(env_with_claude, monkeypatch):
         )
     assert r.status_code == 200
     assert submit_mock.await_args.kwargs["auto_stop_quiet_default"] is True
+
+
+# ---------------------------------------------------------------------------
+# POST /api/sessions/new — issue #9 "New Task" button + Cmd+Shift+O
+# ---------------------------------------------------------------------------
+
+
+async def test_new_session_returns_fresh_uuid(env_with_claude, monkeypatch):
+    """POST /api/sessions/new returns a new uuid + the chosen cwd."""
+    e = env_with_claude
+    from clau_decode import claude_runner as cr_mod
+
+    submit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post("/api/sessions/new", json={"cwd": e["cwd"]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "session_id" in body
+    assert body["session_id"] != e["session_id"]  # NOT the seeded session
+    # UUIDv4 shape (8-4-4-4-12 hex)
+    import re
+    assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", body["session_id"])
+    assert body["cwd"] == e["cwd"]
+    assert body["permission_mode"] == "dontAsk"
+    submit_mock.assert_awaited_once()
+
+
+async def test_new_session_defaults_cwd_to_last_used(env_with_claude, monkeypatch):
+    """When no cwd is given, default to the most-recent session's cwd."""
+    e = env_with_claude
+    from clau_decode import claude_runner as cr_mod
+
+    submit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post("/api/sessions/new", json={})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["cwd"] == e["cwd"]  # falls back to the seeded session's cwd
+
+
+async def test_new_session_passes_new_session_flag_to_runner(env_with_claude, monkeypatch):
+    """The runner is told to mint a fresh session (new_session=True)."""
+    e = env_with_claude
+    from clau_decode import claude_runner as cr_mod
+
+    submit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post("/api/sessions/new", json={"cwd": e["cwd"]})
+    assert r.status_code == 200, r.text
+    kwargs = submit_mock.await_args.kwargs
+    args = submit_mock.await_args.args
+    assert kwargs["new_session"] is True
+    # session_id is the first positional arg on submit()
+    assert args[0] == r.json()["session_id"]
+    assert kwargs["cwd"] == e["cwd"]
+
+
+async def test_new_session_rejects_unknown_cwd(env_with_claude, monkeypatch):
+    """A cwd that doesn't exist on disk → 404, no runner spawn."""
+    e = env_with_claude
+    from clau_decode import claude_runner as cr_mod
+
+    submit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post(
+            "/api/sessions/new", json={"cwd": "/definitely/not/a/real/path"}
+        )
+    assert r.status_code == 404
+    submit_mock.assert_not_awaited()
+
+
+async def test_new_session_503_when_bin_missing(env_with_claude, monkeypatch):
+    """When claude is not on PATH → 503."""
+    e = env_with_claude
+    monkeypatch.setenv("PATH", "/nonexistent-dir")
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post("/api/sessions/new", json={"cwd": e["cwd"]})
+    assert r.status_code == 503
+
+
+async def test_new_session_permission_mode_override(env_with_claude, monkeypatch):
+    """Body permission_mode beats the AppConfig default."""
+    e = env_with_claude
+    from clau_decode import claude_runner as cr_mod
+
+    submit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post(
+            "/api/sessions/new",
+            json={"cwd": e["cwd"], "permission_mode": "acceptEdits"},
+        )
+    assert r.status_code == 200, r.text
+    assert r.json()["permission_mode"] == "acceptEdits"
+    assert submit_mock.await_args.kwargs["permission_mode"] == "acceptEdits"
+
+
+async def test_new_session_passes_session_id_flag_to_argv(env_with_claude, monkeypatch):
+    """End-to-end: argv contains --session-id <new uuid> and NOT --resume.
+
+    Verifies the spawn shape that materialises a fresh JSONL on disk so the
+    watcher → SSE pipeline can index the session the moment it appears.
+    """
+    e = env_with_claude
+    capture = e["bin_dir"].parent / "argv_new.json"
+    bin_dir2 = e["bin_dir"].parent / "bin_capture_new"
+    bin_dir2.mkdir()
+    _write_shim(bin_dir2, extra_argv=f"--capture-argv {capture}")
+    monkeypatch.setenv("PATH", f"{bin_dir2}{os.pathsep}{os.environ['PATH']}")
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post("/api/sessions/new", json={"cwd": e["cwd"]})
+        assert r.status_code == 200, r.text
+        new_id = r.json()["session_id"]
+
+    deadline = time.monotonic() + 5.0
+    while not capture.exists() and time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+    assert capture.exists(), "fake_claude never wrote argv capture file"
+    argv = json.loads(capture.read_text())
+    assert "--session-id" in argv
+    assert argv[argv.index("--session-id") + 1] == new_id
+    # Brand-new sessions don't --resume; that would fail against a non-existent id.
+    assert "--resume" not in argv

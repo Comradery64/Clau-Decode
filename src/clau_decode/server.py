@@ -130,6 +130,14 @@ class _SendMessageRequest(BaseModel):
     permission_mode: str | None = None
 
 
+class _NewSessionRequest(BaseModel):
+    # All optional — the defaults are "last-used cwd" + AppConfig permission mode
+    # + a benign opening prompt that just gets the JSONL written.
+    cwd: str | None = None
+    permission_mode: str | None = None
+    initial_message: str | None = None
+
+
 class _SessionTitleRequest(BaseModel):
     # Pydantic enforces "must be string or null"; non-string/non-null bodies
     # (e.g. ``{"title": 123}``) produce 422 automatically. Empty / whitespace
@@ -890,6 +898,83 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     # -----------------------------------------------------------------------
     # Headless runner — send/stop/status
     # -----------------------------------------------------------------------
+
+    @app.post("/api/sessions/new")
+    async def new_session(req: _NewSessionRequest):
+        """Start a brand-new Claude session (issue #9 — "New Task" button).
+
+        Mints a fresh UUID, spawns the CLI headless with ``--session-id <uuid>``
+        (not ``--resume``), and returns the new id so the frontend can navigate
+        to ``/chat/<uuid>`` and pick the session up via the watcher → SSE pipeline
+        as soon as the JSONL lands on disk.
+
+        Defaults (all overridable in the request body):
+          * ``cwd`` — last-used cwd from the most-recent indexed session.
+          * ``permission_mode`` — ``AppConfig.claude_default_permission_mode``
+            (the same default as the existing send-message runner).
+          * ``initial_message`` — a tiny opening prompt that just materialises
+            the JSONL. The user's real first turn goes through send-message.
+        """
+        import uuid
+
+        # Resolve cwd default → last-used session's cwd. Query directly
+        # (not via get_sessions) because we want to fall back to any session
+        # with a cwd on disk, including untitled ones.
+        cwd = req.cwd
+        if not cwd:
+            async with Database(db_path) as db:
+                assert db._conn is not None
+                async with db._conn.execute(
+                    "SELECT cwd FROM sessions WHERE cwd IS NOT NULL "
+                    "ORDER BY updated_at DESC"
+                ) as cursor:
+                    rows = await cursor.fetchall()
+            for row in rows:
+                candidate = row["cwd"]
+                if candidate and Path(candidate).is_dir():
+                    cwd = candidate
+                    break
+        if not cwd:
+            raise HTTPException(
+                status_code=400,
+                detail="cwd is required and no prior session cwd is available",
+            )
+        if not Path(cwd).is_dir():
+            raise HTTPException(status_code=404, detail=f"Directory not found: {cwd}")
+
+        # We default to plain `claude` for new sessions — the binary that
+        # writes the JSONL determines which data_path the session shows up
+        # under, and `claude` is the conventional default. (Profile-aware
+        # binary selection is a follow-up — see the issue for context.)
+        bin_name = "claude"
+        if shutil.which(bin_name) is None:
+            raise HTTPException(
+                status_code=503, detail=f"{bin_name} not found on PATH"
+            )
+
+        permission_mode = (
+            req.permission_mode
+            or _state["config"].claude_default_permission_mode
+            or "dontAsk"
+        )
+        new_id = str(uuid.uuid4())
+        initial = (req.initial_message or "Hi! I'm ready when you are.").strip()
+        if not initial:
+            initial = "Hi! I'm ready when you are."
+
+        await _runner.submit(
+            new_id,
+            cwd=cwd,
+            bin_name=bin_name,
+            text=initial,
+            permission_mode=permission_mode,
+            new_session=True,
+        )
+        return {
+            "session_id": new_id,
+            "cwd": cwd,
+            "permission_mode": permission_mode,
+        }
 
     @app.post("/api/sessions/{session_id}/send-message")
     async def send_message(session_id: str, req: _SendMessageRequest):
