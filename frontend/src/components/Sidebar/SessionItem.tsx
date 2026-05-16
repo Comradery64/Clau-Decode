@@ -4,7 +4,7 @@ import { api } from "../../api/client";
 import { useAppStore } from "../../store";
 import { prefetch } from "../../api/sessionCache";
 import { lsGetMap, lsPutMap, LS } from "../../utils/localStorage";
-import { emit } from "../../utils/events";
+import { emit, on } from "../../utils/events";
 import { useLsSet } from "../../utils/useLsSet";
 import { formatRelativeBucket } from "../../utils/formatRelative";
 import { IconStar, IconRename, IconArchive, IconCopy, IconTerminal, IconFolder, IconBell } from "../ui/icons";
@@ -84,9 +84,45 @@ export function SessionItem({ session, isActive, onClick, runnerStatus }: Sessio
   const archived = useLsSet(LS.ARCHIVED, "archive");
   const isStarred = starred.has(session.id);
   const isArchived = archived.has(session.id);
+  // Issue #11: server-side custom_title is the source of truth; localStorage
+  // is just a write-through cache for offline resilience + flash-of-stale
+  // prevention before the first /api/sessions response.
   const [customTitle, setCustomTitle] = useState<string | null>(
-    () => lsGetMap(LS.RENAMED)[session.id] ?? null
+    () => session.custom_title ?? lsGetMap(LS.RENAMED)[session.id] ?? null
   );
+
+  // When the server-side override is present, reconcile to it and refresh
+  // the cache. When null, we *don't* preemptively clear the cache — it may
+  // be a legitimate cached rename made offline or before the API existed.
+  // Explicit clears flow through the "rename" bus (see effect below) where
+  // we trust the empty payload as authoritative.
+  useEffect(() => {
+    if (session.custom_title) {
+      setCustomTitle(session.custom_title);
+      const m = lsGetMap(LS.RENAMED);
+      if (m[session.id] !== session.custom_title) {
+        m[session.id] = session.custom_title;
+        lsPutMap(LS.RENAMED, m);
+      }
+    }
+  }, [session.id, session.custom_title]);
+
+  // SSE-driven rename reconciliation: another client (or our own write)
+  // emits "rename" on the bus → update in-memory state and the cache.
+  useEffect(() => {
+    return on("rename", ({ id, title }) => {
+      if (id !== session.id) return;
+      const normalised = title.trim() === "" ? null : title;
+      setCustomTitle(normalised);
+      const m = lsGetMap(LS.RENAMED);
+      if (normalised === null) {
+        delete m[session.id];
+      } else {
+        m[session.id] = normalised;
+      }
+      lsPutMap(LS.RENAMED, m);
+    });
+  }, [session.id]);
 
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const displayTitle = customTitle ?? session.title ?? "Untitled";
@@ -143,12 +179,32 @@ export function SessionItem({ session, isActive, onClick, runnerStatus }: Sessio
   }, []);
 
   const commitRename = useCallback((value: string) => {
+    // Optimistic: paint the new title immediately. Write-through cache so a
+    // reload before the request returns still shows the user's intent.
+    const trimmed = value.trim();
+    const optimistic = trimmed === "" ? null : trimmed;
     const m = lsGetMap(LS.RENAMED);
-    m[session.id] = value;
+    if (optimistic === null) {
+      delete m[session.id];
+    } else {
+      m[session.id] = optimistic;
+    }
     lsPutMap(LS.RENAMED, m);
-    setCustomTitle(value);
+    setCustomTitle(optimistic);
     setIsRenaming(false);
-    emit("rename", { id: session.id, title: value });
+    emit("rename", { id: session.id, title: optimistic ?? "" });
+    // Server-authoritative reconcile. The SSE session-meta event from our
+    // own write will round-trip through the bus, but we also reconcile here
+    // in case the response disagrees (e.g. whitespace stripping).
+    api
+      .setSessionTitle(session.id, optimistic)
+      .then((res) => {
+        emit("rename", { id: session.id, title: res.custom_title ?? "" });
+      })
+      .catch(() => {
+        // Keep the optimistic value — localStorage cache provides offline
+        // resilience and the next reload will hit /api/sessions to re-sync.
+      });
   }, [session.id]);
 
   const cancelRename = useCallback(() => {

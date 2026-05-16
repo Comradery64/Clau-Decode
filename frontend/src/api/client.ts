@@ -222,15 +222,45 @@ export const api = {
     post<{ ok: boolean; dismissed: boolean }>(
       `/api/sessions/${encodeURIComponent(sessionId)}/recaps/${recapId}/dismiss`,
     ),
+
+  // Session rename (issue #11). Pass null to clear the override.
+  setSessionTitle: (sessionId: string, title: string | null) =>
+    put<{ ok: boolean; id: string; custom_title: string | null }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/title`,
+      { title },
+    ),
 };
 
-/** SSE event source — call onRefresh when a JSONL file changes. */
-export function createEventSource(onRefresh: () => void): EventSource {
+/** Handlers for the SSE event types we know about (issue #11). */
+export interface EventSourceHandlers {
+  onRefresh: () => void;
+  // Fired when another client renames a session on the server (or our own
+  // PUT echoes back). `title` is the server-authoritative custom_title;
+  // null means the override was cleared.
+  onSessionMeta?: (payload: { id: string; title: string | null }) => void;
+}
+
+/** SSE event source — dispatches events by their `type` field. */
+export function createEventSource(
+  handlersOrRefresh: EventSourceHandlers | (() => void),
+): EventSource {
+  // Back-compat: callers passing just `onRefresh` still work — preserves the
+  // existing App.tsx call site contract and the older test fixtures.
+  const handlers: EventSourceHandlers =
+    typeof handlersOrRefresh === "function"
+      ? { onRefresh: handlersOrRefresh }
+      : handlersOrRefresh;
+
   const es = new EventSource("/api/events");
   es.addEventListener("message", (e) => {
     try {
       const data = JSON.parse(e.data) as { type: string };
-      if (data.type === "refresh") onRefresh();
+      if (data.type === "refresh") {
+        handlers.onRefresh();
+      } else if (data.type === "session-meta") {
+        const meta = data as { type: "session-meta"; id: string; title: string | null };
+        handlers.onSessionMeta?.({ id: meta.id, title: meta.title });
+      }
     } catch {
       // ignore malformed events
     }

@@ -79,8 +79,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const es = createEventSource(() => {
-      emit("refresh", undefined);
+    const es = createEventSource({
+      onRefresh: () => emit("refresh", undefined),
+      // Remote renames (issue #11) — fan into the same `rename` bus the
+      // local SessionItem.commitRename emits on, so every view (ChatView,
+      // SessionItem, ProjectGroup …) reconciles via the existing handler.
+      onSessionMeta: ({ id, title }) => emit("rename", { id, title: title ?? "" }),
     });
     return () => es.close();
   }, []);

@@ -62,6 +62,7 @@ from .analytics.tips import (
 from .config import save_config
 from .db import Database
 from .editor import swap_session
+from .events_bus import EventBroadcaster
 from .models import AppConfig, Profile
 from .parser import parse_session
 from .reporter import export_json, export_markdown
@@ -129,6 +130,13 @@ class _SendMessageRequest(BaseModel):
     permission_mode: str | None = None
 
 
+class _SessionTitleRequest(BaseModel):
+    # Pydantic enforces "must be string or null"; non-string/non-null bodies
+    # (e.g. ``{"title": 123}``) produce 422 automatically. Empty / whitespace
+    # strings are accepted and treated as a clear by the DB helper.
+    title: str | None
+
+
 def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     """Build and return the FastAPI application instance.
 
@@ -148,11 +156,15 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         A fully configured ``FastAPI`` application ready to hand to uvicorn.
     """
     # Mutable shared state captured by closures below.
-    _state: dict = {"config": config, "watch_task": None}
+    _state: dict = {"config": config, "watch_task": None, "fanout_task": None}
     _analytics = _AnalyticsSvc()
     _pricing_strat = CachedPricingStrategy()
     _cost_engine = CostEngine(_pricing_strat)
+    # Intermediate queue: the watcher writes WatchEvent objects here; a small
+    # background fan-out task scans the file and republishes the (now indexed)
+    # change to every connected SSE client via the broadcaster.
     _watch_queue: asyncio.Queue = asyncio.Queue()
+    _bus = EventBroadcaster()
     _runner = ClaudeCodeRunner()
 
     # ------------------------------------------------------------------
@@ -257,6 +269,23 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         _state["watch_task"] = asyncio.create_task(
             watch_paths(_all_scan_roots(), _watch_queue)
         )
+
+        async def _fanout_watcher_events() -> None:
+            """Drain the watcher queue and republish indexed events to all clients.
+
+            One-task-per-app (not per-client) so the DB re-index runs exactly
+            once per file change, regardless of how many viewers are connected.
+            """
+            while True:
+                event = await _watch_queue.get()
+                try:
+                    async with Database(db_path) as db:
+                        await _scan_one(db, event.path)
+                except Exception as exc:
+                    print(f"Warning: scan_one failed for {event.path}: {exc}")
+                _bus.publish({"type": "refresh", "path": str(event.path)})
+
+        _state["fanout_task"] = asyncio.create_task(_fanout_watcher_events())
 
         async def _refresh_pricing() -> None:
             await _pricing_strat.refresh()
@@ -987,6 +1016,24 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="Recap not found")
         return {"ok": True, "dismissed": True}
 
+    @app.put("/api/sessions/{session_id}/title")
+    async def set_session_title(session_id: str, req: _SessionTitleRequest):
+        """Persist a user-supplied rename and broadcast to other clients.
+
+        Body: ``{"title": str | null}`` — null/blank clears the override.
+        Returns ``{ok, id, custom_title}`` so the caller can reconcile.
+        """
+        async with Database(db_path) as db:
+            existing = await db.get_session_file_path(session_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            stored = await db.set_custom_title(session_id, req.title)
+        # The detail cache embeds custom_title — drop it so the next read
+        # rebuilds with the override.
+        _invalidate_detail_cache(session_id)
+        _bus.publish({"type": "session-meta", "id": session_id, "title": stored})
+        return {"ok": True, "id": session_id, "custom_title": stored}
+
     @app.post("/api/refresh")
     async def refresh():
         async with Database(db_path) as db:
@@ -995,6 +1042,11 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
 
     @app.get("/api/events")
     async def events(request: Request):
+        # Each /api/events connection gets its own queue off the shared
+        # broadcaster. Without this, multiple clients on the same server
+        # would steal events from each other (issue #11).
+        client_queue = _bus.subscribe()
+
         async def _wait_disconnect() -> None:
             # request.is_disconnected() is a NON-BLOCKING peek (uses a pre-cancelled
             # anyio scope) — it returns False immediately. To actually block until the
@@ -1008,7 +1060,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             disconnect_task = asyncio.ensure_future(_wait_disconnect())
             try:
                 while True:
-                    queue_get = asyncio.ensure_future(_watch_queue.get())
+                    queue_get = asyncio.ensure_future(client_queue.get())
                     try:
                         done, _ = await asyncio.wait(
                             {queue_get, disconnect_task},
@@ -1023,15 +1075,14 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                         return
                     if queue_get in done:
                         event = queue_get.result()
-                        async with Database(db_path) as db:
-                            await _scan_one(db, event.path)
-                        yield f"data: {_sse_event_data(event.path)}\n\n"
+                        yield f"data: {json.dumps(event)}\n\n"
                     else:
                         # Timeout — emit keepalive and poll again.
                         queue_get.cancel()
                         yield ": keepalive\n\n"
             finally:
                 disconnect_task.cancel()
+                _bus.unsubscribe(client_queue)
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 

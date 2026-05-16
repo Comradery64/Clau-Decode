@@ -238,6 +238,16 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_recaps_session_id
                 ON recaps(session_id, created_at);
+
+            -- Per-session metadata override for renames (issue #11).
+            -- Lives in a separate table because the JSONL file is the
+            -- source of truth for the parsed title; this row is just an
+            -- opt-in override the user typed in the sidebar.
+            CREATE TABLE IF NOT EXISTS session_meta (
+                session_id TEXT PRIMARY KEY,
+                custom_title TEXT,
+                updated_at TEXT NOT NULL
+            );
         """)
         await self._conn.commit()
         await self._migrate_add_is_fork()
@@ -426,7 +436,13 @@ class Database:
             )
             params.extend(data_sources)
         where = " AND ".join(conditions)
-        query = f"SELECT s.*, {_lmr} FROM sessions s WHERE {where} ORDER BY s.updated_at DESC"
+        # LEFT JOIN session_meta so each session row already carries any
+        # server-side rename — clients see the override on first paint.
+        query = (
+            f"SELECT s.*, {_lmr}, sm.custom_title AS custom_title "
+            "FROM sessions s LEFT JOIN session_meta sm ON sm.session_id = s.id "
+            f"WHERE {where} ORDER BY s.updated_at DESC"
+        )
         async with self._conn.execute(query, tuple(params)) as cursor:
             rows = await cursor.fetchall()
         return [_row_to_session(row) for row in rows]
@@ -458,6 +474,51 @@ class Database:
         if row is None:
             return None
         return row["file_path"]
+
+    # -----------------------------------------------------------------------
+    # Session metadata override (rename — issue #11)
+    # -----------------------------------------------------------------------
+
+    async def set_custom_title(
+        self, session_id: str, title: Optional[str]
+    ) -> Optional[str]:
+        """Upsert (or clear) the user-supplied title for a session.
+
+        Passing ``None`` deletes the row, restoring the parsed title. Returns
+        the normalised value actually stored (None when cleared).
+        """
+        assert self._conn is not None
+        normalised: Optional[str] = None
+        if title is not None:
+            stripped = title.strip()
+            normalised = stripped or None
+        if normalised is None:
+            await self._conn.execute(
+                "DELETE FROM session_meta WHERE session_id = ?", (session_id,)
+            )
+        else:
+            await self._conn.execute(
+                """
+                INSERT INTO session_meta (session_id, custom_title, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    custom_title = excluded.custom_title,
+                    updated_at = excluded.updated_at
+                """,
+                (session_id, normalised, datetime.now().isoformat()),
+            )
+        await self._conn.commit()
+        return normalised
+
+    async def get_custom_title(self, session_id: str) -> Optional[str]:
+        """Return the stored override for ``session_id`` or None if absent."""
+        assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT custom_title FROM session_meta WHERE session_id = ?",
+            (session_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row["custom_title"] if row else None
 
     # -----------------------------------------------------------------------
     # Messages
@@ -533,8 +594,11 @@ class Database:
         async with self._conn.execute(
             """SELECT s.*,
                    (SELECT role FROM messages WHERE session_id = s.id
-                    ORDER BY timestamp DESC LIMIT 1) AS last_message_role
-               FROM sessions s WHERE s.id = ?""",
+                    ORDER BY timestamp DESC LIMIT 1) AS last_message_role,
+                   sm.custom_title AS custom_title
+               FROM sessions s
+               LEFT JOIN session_meta sm ON sm.session_id = s.id
+               WHERE s.id = ?""",
             (session_id,),
         ) as cur:
             srow = await cur.fetchone()
@@ -552,6 +616,7 @@ class Database:
             "project_id": srow["project_id"],
             "file_path": srow["file_path"],
             "title": srow["title"],
+            "custom_title": srow["custom_title"],
             "model": srow["model"],
             "started_at": srow["started_at"],
             "updated_at": srow["updated_at"],
@@ -610,8 +675,11 @@ class Database:
         async with self._conn.execute(
             """SELECT s.*,
                    (SELECT role FROM messages WHERE session_id = s.id
-                    ORDER BY timestamp DESC LIMIT 1) AS last_message_role
-               FROM sessions s WHERE s.id = ?""",
+                    ORDER BY timestamp DESC LIMIT 1) AS last_message_role,
+                   sm.custom_title AS custom_title
+               FROM sessions s
+               LEFT JOIN session_meta sm ON sm.session_id = s.id
+               WHERE s.id = ?""",
             (session_id,),
         ) as cursor:
             session_row = await cursor.fetchone()
@@ -931,11 +999,15 @@ class Database:
 
 
 def _row_to_session(row: aiosqlite.Row) -> Session:
+    # custom_title is only present on rows from the JOIN'd selects (issue #11).
+    # Detail/list rows include it; rows from upsert-time round-trips don't.
+    custom_title = row["custom_title"] if "custom_title" in row.keys() else None
     return Session(
         id=row["id"],
         project_id=row["project_id"],
         file_path=row["file_path"],
         title=row["title"],
+        custom_title=custom_title,
         model=row["model"],
         started_at=_str_to_dt(row["started_at"]),
         updated_at=_str_to_dt(row["updated_at"]),

@@ -8,6 +8,7 @@ const baseSession: Session = {
   project_id: "proj-1",
   file_path: "/tmp/test.jsonl",
   title: "Test Session Title",
+  custom_title: null,
   model: "claude-sonnet-4-6",
   started_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
