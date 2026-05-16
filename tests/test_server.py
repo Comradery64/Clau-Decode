@@ -722,3 +722,29 @@ async def test_send_message_to_pending_uses_session_id_argv(
     assert argv[argv.index("--session-id") + 1] == new_id
     # Brand-new sessions don't --resume; that would fail against a non-existent id.
     assert "--resume" not in argv
+
+
+# ---------------------------------------------------------------------------
+# /api/fs/write — file-preview editing (always enabled, ignores edit_enabled)
+# ---------------------------------------------------------------------------
+
+
+async def test_fs_write_accepts_body_and_is_not_gated_by_edit_enabled(tmp_path):
+    """File-preview save: body parses (no 422 'loc=query'), and edit_enabled=False
+    must not block it — file-preview editing is intentionally always-on."""
+    target = tmp_path / "note.txt"
+    target.write_text("original\n")
+
+    db_path = tmp_path / "test.db"
+    async with Database(db_path) as db:
+        await db.init_schema()
+    config = AppConfig(data_paths=[str(tmp_path)], edit_enabled=False)
+    app = _make_app(db_path, config)
+
+    async with await _client(app) as c:
+        r = await c.put(
+            "/api/fs/write",
+            json={"path": str(target), "content": "edited\n"},
+        )
+    assert r.status_code == 200, r.text
+    assert target.read_text() == "edited\n"

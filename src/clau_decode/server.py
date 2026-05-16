@@ -161,6 +161,14 @@ class _SessionTitleRequest(BaseModel):
     title: str | None
 
 
+class _FsWriteBody(BaseModel):
+    # Module-scope: BaseModels declared inside create_app() are not picked up
+    # by FastAPI as request-body params (they get treated as query params and
+    # 422 with `loc: ["query", "body"]`).
+    path: str
+    content: str
+
+
 def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     """Build and return the FastAPI application instance.
 
@@ -1369,13 +1377,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         )
         return {"path": str(resolved), "entries": dirs + files}
 
-    class FsWriteBody(BaseModel):
-        path: str
-        content: str
-
     @app.put("/api/fs/write")
-    async def fs_write(body: FsWriteBody):
-        _require_edit()
+    async def fs_write(body: _FsWriteBody):
+        # File-preview editing is always available; edit_enabled gates only
+        # message edit/delete on the chat side.
         prefixes = await _allowed_prefixes()
         resolved = _validate_fs_path(body.path, prefixes)
         if resolved.is_dir():

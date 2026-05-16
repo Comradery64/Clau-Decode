@@ -81,7 +81,6 @@ export function FileViewer() {
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [editEnabled, setEditEnabled] = useState<boolean>(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Panel width — drag-resizable, persisted across sessions.
@@ -92,13 +91,6 @@ export function FileViewer() {
 
   // "Show raw" toggle for markdown files (overrides rendered view).
   const [showRawMarkdown, setShowRawMarkdown] = useState(false);
-
-  // Resolve edit-enabled flag from config (cheap one-shot, cache in state).
-  useEffect(() => {
-    api.getConfig()
-      .then((cfg) => setEditEnabled(cfg.edit_enabled))
-      .catch(() => setEditEnabled(false));
-  }, []);
 
   // Clamp stored width into a valid range for the current viewport. Runs once
   // on mount and whenever the window resizes — keeps the panel sane if the
@@ -431,7 +423,7 @@ export function FileViewer() {
               {showRawMarkdown ? "Preview" : "Raw"}
             </button>
           )}
-          {file && !editing && editEnabled && (
+          {file && !editing && (
             <button
               onClick={startEdit}
               title="Edit"
