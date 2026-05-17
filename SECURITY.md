@@ -13,7 +13,7 @@ Clau-Decode is in the 0.x series. Security fixes are applied to the latest minor
 
 Please report vulnerabilities **privately**, not in a public issue.
 
-Email: **alan.livshin@radixark.ai**
+Email: **security@twobuckapps.com**
 
 Include, at minimum:
 
