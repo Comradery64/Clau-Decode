@@ -129,6 +129,7 @@ class _SetActiveProfileRequest(BaseModel):
 class _SendMessageRequest(BaseModel):
     message: str
     permission_mode: str | None = None
+    model: str | None = None
 
 
 class _NewSessionRequest(BaseModel):
@@ -1037,12 +1038,14 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                     detail=f"{pending.bin_name} not found on PATH",
                 )
             permission_mode = req.permission_mode or pending.permission_mode
+            model = req.model or ""
             result = await _runner.submit(
                 session_id,
                 cwd=pending.cwd,
                 bin_name=pending.bin_name,
                 text=text,
                 permission_mode=permission_mode,
+                model=model,
                 new_session=True,
                 auto_stop_quiet_default=_state[
                     "config"
@@ -1074,12 +1077,14 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             or _state["config"].claude_default_permission_mode
             or "dontAsk"
         )
+        model = req.model or ""
         result = await _runner.submit(
             session_id,
             cwd=cwd,
             bin_name=bin_name,
             text=text,
             permission_mode=permission_mode,
+            model=model,
             auto_stop_quiet_default=_state[
                 "config"
             ].claude_auto_stop_quiet_default_turns,

@@ -186,7 +186,7 @@ export const api = {
     }),
 
   // Claude Code runner — send/stop/status (Phase 9 Rev 2)
-  sendMessage: (sessionId: string, message: string, permissionMode?: PermissionMode) =>
+  sendMessage: (sessionId: string, message: string, permissionMode?: PermissionMode, model?: string) =>
     post<{
       ok: boolean;
       permission_mode: PermissionMode;
@@ -197,7 +197,7 @@ export const api = {
       is_error?: boolean;
     }>(
       `/api/sessions/${encodeURIComponent(sessionId)}/send-message`,
-      { message, permission_mode: permissionMode },
+      { message, permission_mode: permissionMode, ...(model ? { model } : {}) },
     ),
   stopMessage: (sessionId: string) =>
     post<{ ok: boolean; stopped: boolean }>(
