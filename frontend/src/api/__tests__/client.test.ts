@@ -95,17 +95,54 @@ describe("createEventSource — SSE payload contract", () => {
 
   it("opens EventSource at /api/events", async () => {
     const { createEventSource } = await import("../client");
-    createEventSource(vi.fn());
+    createEventSource(vi.fn() as () => void);
 
     expect(MockEventSource.lastInstance!.url).toBe("/api/events");
   });
 
   it("returned object has a close() method", async () => {
     const { createEventSource } = await import("../client");
-    const es = createEventSource(vi.fn());
+    const es = createEventSource(vi.fn() as () => void);
 
     es.close();
 
     expect(MockEventSource.lastInstance!.closed).toBe(true);
+  });
+
+  // ---- session-meta fan-out (issue #11) ----
+
+  it("calls onSessionMeta for type === 'session-meta'", async () => {
+    const { createEventSource } = await import("../client");
+    const onRefresh = vi.fn();
+    const onSessionMeta = vi.fn();
+    createEventSource({ onRefresh, onSessionMeta });
+
+    MockEventSource.lastInstance!.emit(
+      JSON.stringify({ type: "session-meta", id: "abc", title: "New" })
+    );
+
+    expect(onSessionMeta).toHaveBeenCalledWith({ id: "abc", title: "New" });
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it("session-meta with null title (clear) round-trips faithfully", async () => {
+    const { createEventSource } = await import("../client");
+    const onSessionMeta = vi.fn();
+    createEventSource({ onRefresh: vi.fn(), onSessionMeta });
+
+    MockEventSource.lastInstance!.emit(
+      JSON.stringify({ type: "session-meta", id: "abc", title: null })
+    );
+
+    expect(onSessionMeta).toHaveBeenCalledWith({ id: "abc", title: null });
+  });
+
+  it("legacy onRefresh-only callers still work", async () => {
+    const { createEventSource } = await import("../client");
+    const onRefresh = vi.fn();
+    createEventSource(onRefresh);
+
+    MockEventSource.lastInstance!.emit(JSON.stringify({ type: "refresh" }));
+    expect(onRefresh).toHaveBeenCalledOnce();
   });
 });

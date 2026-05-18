@@ -102,6 +102,52 @@ def test_unknown_slash_pattern_detection():
 
 
 # ---------------------------------------------------------------------------
+# Subscription-mode env hygiene
+# ---------------------------------------------------------------------------
+
+
+def test_subscription_env_strips_api_key_vars(monkeypatch):
+    """Pure unit: API-key vars must not appear in the returned env dict."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-leaked")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "bearer-leaked")
+    monkeypatch.setenv("UNRELATED_VAR", "passthrough")
+    env = cr_mod._subscription_env()
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "ANTHROPIC_AUTH_TOKEN" not in env
+    assert env.get("UNRELATED_VAR") == "passthrough"
+
+
+async def test_spawned_subprocess_does_not_inherit_api_key(
+    monkeypatch, runner, tmp_path
+):
+    """End-to-end: a user with ANTHROPIC_API_KEY exported in their shell must
+    not have it reach the spawned ``claude`` binary — that would silently bill
+    against the static API key instead of their interactive subscription."""
+    env_capture = tmp_path / "child_env.json"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_shim(bin_dir, extra_argv=f"--capture-env {env_capture}")
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-shouldnotleak")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "bearer-shouldnotleak")
+
+    await runner.submit(
+        "sess-env",
+        cwd=str(tmp_path),
+        bin_name="claude",
+        text="hello",
+        permission_mode="dontAsk",
+    )
+    await _await_session_done(runner, "sess-env")
+
+    child_env = json.loads(env_capture.read_text())
+    assert "ANTHROPIC_API_KEY" not in child_env
+    assert "ANTHROPIC_AUTH_TOKEN" not in child_env
+    # PATH must still pass through — otherwise the shim couldn't have run.
+    assert "PATH" in child_env
+
+
+# ---------------------------------------------------------------------------
 # Submit path / basic plumbing
 # ---------------------------------------------------------------------------
 

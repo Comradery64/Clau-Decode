@@ -4,6 +4,7 @@ import { api, createEventSource, getConfigCached } from "./api/client";
 import { useRoute, getChatIdFromRoute } from "./router";
 import { emit } from "./utils/events";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { lazyWithRetry } from "./utils/lazyWithRetry";
 
 function applyTheme(theme: string) {
   if (theme === "dark") {
@@ -23,15 +24,17 @@ const chatViewImport = () => import("./components/ChatView/ChatView");
 const searchOverlayImport = () => import("./components/Sidebar/SearchOverlay");
 const settingsModalImport = () => import("./components/Settings/SettingsModal");
 
-const Sidebar = React.lazy(() => import("./components/Sidebar/Sidebar"));
-const ChatView = React.lazy(chatViewImport);
-const AnalyticsPanel = React.lazy(() => import("./components/Analytics/AnalyticsPanel"));
-const Dashboard = React.lazy(() => import("./components/Dashboard/Dashboard"));
-const SettingsModal = React.lazy(settingsModalImport);
-const SearchOverlay = React.lazy(searchOverlayImport);
-const HelpPopup = React.lazy(() => import("./components/Sidebar/HelpPopup"));
-const ShortcutsPopup = React.lazy(() => import("./components/Sidebar/ShortcutsPopup"));
-const FileViewer = React.lazy(() => import("./components/FileViewer/FileViewer"));
+// lazyWithRetry: when a code-split chunk 404s (stale hash after a rebuild),
+// render a reload prompt in-place instead of crashing the whole ErrorBoundary.
+const Sidebar = lazyWithRetry(() => import("./components/Sidebar/Sidebar"));
+const ChatView = lazyWithRetry(chatViewImport);
+const AnalyticsPanel = lazyWithRetry(() => import("./components/Analytics/AnalyticsPanel"));
+const Dashboard = lazyWithRetry(() => import("./components/Dashboard/Dashboard"));
+const SettingsModal = lazyWithRetry(settingsModalImport);
+const SearchOverlay = lazyWithRetry(searchOverlayImport);
+const HelpPopup = lazyWithRetry(() => import("./components/Sidebar/HelpPopup"));
+const ShortcutsPopup = lazyWithRetry(() => import("./components/Sidebar/ShortcutsPopup"));
+const FileViewer = lazyWithRetry(() => import("./components/FileViewer/FileViewer"));
 
 export default function App() {
   // Five individual selectors instead of `useAppStore()` without a selector —
@@ -76,8 +79,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const es = createEventSource(() => {
-      emit("refresh", undefined);
+    const es = createEventSource({
+      onRefresh: () => emit("refresh", undefined),
+      // Remote renames (issue #11) — fan into the same `rename` bus the
+      // local SessionItem.commitRename emits on, so every view (ChatView,
+      // SessionItem, ProjectGroup …) reconciles via the existing handler.
+      onSessionMeta: ({ id, title }) => emit("rename", { id, title: title ?? "" }),
     });
     return () => es.close();
   }, []);
@@ -114,15 +121,25 @@ export default function App() {
       }
 
       const ctrl = e.metaKey || e.ctrlKey;
-      if (!ctrl) return;
+      if (!ctrl || e.repeat) return;
+
+      // Skip readline-style Ctrl shortcuts when focus is in a text input
+      const tag = (e.target as HTMLElement)?.tagName;
+      const inText = e.ctrlKey && !e.metaKey && (tag === "TEXTAREA" || tag === "INPUT");
 
       if (e.key === "k") {
+        if (inText) return;
         e.preventDefault();
         useAppStore.getState().openSearch();
-      } else if (e.key === "e") {
-        // Ctrl+E — toggle show-all-content (no "show more" truncation)
+      } else if (e.key.toLowerCase() === "e" && e.metaKey && e.shiftKey) {
+        e.preventDefault();
+        useAppStore.getState().toggleExplorer();
+      } else if (e.key.toLowerCase() === "e" && e.metaKey) {
         e.preventDefault();
         useAppStore.getState().toggleResultsExpanded();
+      } else if (e.key.toLowerCase() === "b" && e.metaKey) {
+        e.preventDefault();
+        useAppStore.getState().toggleSidebar();
       } else if (e.shiftKey && e.key === ",") {
         e.preventDefault();
         useAppStore.getState().openSettings();
@@ -152,7 +169,7 @@ export default function App() {
             and session each time the user toggles. The Sidebar reads
             sidebarCollapsed itself and hides via display:none. */}
         <Sidebar />
-        <div style={{ flex: 1, display: "flex", minWidth: 0, overflow: "hidden" }}>
+        <div style={{ flex: 1, display: "flex", minWidth: 200, overflow: "hidden" }}>
           <ErrorBoundary>
             {route === "/analytics" ? <AnalyticsPanel /> : chatIdFromUrl ? <ChatView /> : <Dashboard />}
           </ErrorBoundary>

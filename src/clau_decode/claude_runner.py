@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import signal
 import time
 from dataclasses import dataclass, field
@@ -41,6 +42,17 @@ _UNKNOWN_SLASH_PATTERNS = (
 def _looks_like_unknown_slash(result_text: str) -> bool:
     lc = result_text.lower()
     return any(p in lc for p in _UNKNOWN_SLASH_PATTERNS)
+
+
+# Env vars that would force the spawned binary to bill against a static API key
+# instead of the user's interactive subscription. clau-decode is subscription-mode
+# only — strip these so a user with one of these exported in their shell doesn't
+# get surprise charges.
+_SUBSCRIPTION_BLOCKED_ENV = frozenset({"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"})
+
+
+def _subscription_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k not in _SUBSCRIPTION_BLOCKED_ENV}
 
 
 # (bin_name) -> (installed_mtime_ns, settings_mtime_ns, dirs)
@@ -166,7 +178,9 @@ class ClaudeCodeRunner:
         bin_name: str,
         text: str,
         permission_mode: str,
+        model: str = "",
         auto_stop_quiet_default: bool = False,
+        new_session: bool = False,
     ) -> Optional[dict]:
         is_slash_command = text.lstrip().startswith("/")
 
@@ -176,8 +190,10 @@ class ClaudeCodeRunner:
             bin_name=bin_name,
             text=text,
             permission_mode=permission_mode,
+            model=model,
             auto_stop_quiet_default=auto_stop_quiet_default,
             use_slash=is_slash_command,
+            new_session=new_session,
         )
 
         if not is_slash_command:
@@ -210,8 +226,10 @@ class ClaudeCodeRunner:
                 bin_name=bin_name,
                 text=text,
                 permission_mode=permission_mode,
+                model=model,
                 auto_stop_quiet_default=auto_stop_quiet_default,
                 use_slash=False,
+                new_session=False,
             )
             # The text-mode response will arrive via JSONL → SSE like any
             # normal turn — don't surface the rejection text.
@@ -269,6 +287,7 @@ class ClaudeCodeRunner:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=_subscription_env(),
             )
         except FileNotFoundError as exc:
             _log.warning("recap: spawn failed (session %s): %s", session_id, exc)
@@ -348,8 +367,10 @@ class ClaudeCodeRunner:
         bin_name: str,
         text: str,
         permission_mode: str,
+        model: str,
         auto_stop_quiet_default: bool,
         use_slash: bool,
+        new_session: bool = False,
     ) -> _RunnerState:
         lock = self._locks.setdefault(session_id, asyncio.Lock())
         async with lock:
@@ -364,11 +385,16 @@ class ClaudeCodeRunner:
                     session_id,
                 )
 
+            # new_session=True mints a fresh session id on the CLI side
+            # (--session-id <uuid> instead of --resume <uuid>). --resume against
+            # a non-existent id would fail; --session-id creates the JSONL so the
+            # watcher → SSE pipeline indexes it the moment it lands on disk.
+            resume_flag = "--session-id" if new_session else "--resume"
             argv: list[str] = [
                 bin_name,
                 "--print",
                 "--verbose",  # required when --output-format=stream-json is paired with --print
-                "--resume",
+                resume_flag,
                 session_id,
                 "--permission-mode",
                 permission_mode,
@@ -376,6 +402,8 @@ class ClaudeCodeRunner:
                 "stream-json",
                 "--include-partial-messages",
             ]
+            if model:
+                argv.extend(["--model", model])
             # Headless --print doesn't auto-load plugins (init event reports
             # plugins:[]). Inject the user's enabled plugins explicitly so
             # their custom slash commands resolve.
@@ -405,6 +433,7 @@ class ClaudeCodeRunner:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=_subscription_env(),
             )
 
             assert proc.stdin is not None
