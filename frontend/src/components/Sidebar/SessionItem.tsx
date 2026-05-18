@@ -264,7 +264,22 @@ export function SessionItem({ session, isActive, onClick, runnerStatus }: Sessio
               while (j >= 0 && parts[j] === "config") j--;
               if (j >= 0) bin = parts[j].replace(/^\./, "");
             }
-            navigator.clipboard.writeText(`${bin} -r ${session.id}`).catch(() => {});
+            let wt = "";
+            if (session.is_worktree) {
+              if (session.cwd) {
+                const m = "/.claude/worktrees/";
+                const wi = session.cwd.indexOf(m);
+                if (wi >= 0) wt = session.cwd.slice(wi + m.length);
+              }
+              if (!wt && idx >= 0 && parts[idx + 1]) {
+                const mangled = parts[idx + 1];
+                const mk = "worktrees-";
+                const wi = mangled.indexOf(mk);
+                if (wi >= 0) wt = mangled.slice(wi + mk.length);
+              }
+            }
+            const cmd = wt ? `${bin} -w ${wt} -r ${session.id}` : `${bin} -r ${session.id}`;
+            navigator.clipboard.writeText(cmd).catch(() => {});
           },
         },
         { kind: "separator" as const },

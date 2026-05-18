@@ -106,6 +106,27 @@ def _derive_bin_name(file_path: str) -> str:
     return "claude"
 
 
+def _extract_worktree_name(file_path: str, cwd: str | None) -> str | None:
+    """Extract the worktree name (e.g. 'pr-160-review') from a worktree session."""
+    # Try cwd first — the actual filesystem path is more reliable.
+    if cwd:
+        marker = "/.claude/worktrees/"
+        idx = cwd.find(marker)
+        if idx >= 0:
+            return cwd[idx + len(marker):]
+    # Fall back to the mangled project directory name in the file_path.
+    parts = Path(file_path).parts
+    for i, p in enumerate(parts):
+        if p == "projects" and i + 1 < len(parts):
+            mangled = parts[i + 1]
+            marker = "worktrees-"
+            idx = mangled.find(marker)
+            if idx >= 0:
+                return mangled[idx + len(marker):]
+            break
+    return None
+
+
 class _MessageContentUpdate(BaseModel):
     content_blocks: list[dict]
 
@@ -880,6 +901,8 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         if not Path(cwd).is_dir():
             raise HTTPException(status_code=404, detail=f"Directory not found: {cwd}")
         bin_name = _derive_bin_name(detail.file_path)
+        wt = _extract_worktree_name(detail.file_path, detail.cwd) if detail.is_worktree else None
+        cmd = f"{bin_name} -w {wt} -r {session_id}" if wt else f"{bin_name} -r {session_id}"
         if sys.platform == "darwin":
             subprocess.Popen(
                 [
@@ -887,7 +910,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                     "-e",
                     f'tell application "Terminal"\n'
                     f"  activate\n"
-                    f'  do script "cd {cwd} && {bin_name} -r {session_id}"\n'
+                    f'  do script "cd {cwd} && {cmd}"\n'
                     f"end tell",
                 ]
             )
@@ -900,7 +923,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                             "--",
                             "bash",
                             "-c",
-                            f"cd {cwd} && {bin_name} -r {session_id}; exec bash",
+                            f"cd {cwd} && {cmd}; exec bash",
                         ]
                     )
                     break
@@ -911,7 +934,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                         "-e",
                         "bash",
                         "-c",
-                        f"cd {cwd} && {bin_name} -r {session_id}; exec bash",
+                        f"cd {cwd} && {cmd}; exec bash",
                     ]
                 )
         else:
@@ -922,7 +945,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                     "start",
                     "cmd",
                     "/k",
-                    f"cd /d {cwd} && {bin_name} -r {session_id}",
+                    f"cd /d {cwd} && {cmd}",
                 ]
             )
         return {"ok": True}
