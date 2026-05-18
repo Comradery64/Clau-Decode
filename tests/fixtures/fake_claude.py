@@ -32,6 +32,11 @@ claude-style argv passes through):
   --capture-stdin FILE
         Append every line read from stdin verbatim to ``FILE``. Tests
         assert that the runner wrote a correctly-shaped NDJSON line.
+  --capture-env FILE
+        Write ``json.dumps(dict(os.environ))`` to ``FILE`` (one shot,
+        before anything else). Tests assert on which env vars the
+        runner exported to the spawned subprocess (e.g. confirming
+        ``ANTHROPIC_API_KEY`` was stripped before spawn).
   --pulse PERIOD COUNT
         Before processing input, emit ``COUNT`` stdout lines with
         ``PERIOD`` seconds between them. Used by quiet-age tests to
@@ -68,6 +73,7 @@ def _parse_argv(argv: list[str]) -> dict:
         "bytes": 0,
         "capture_argv": None,
         "capture_stdin": None,
+        "capture_env": None,
         "pulse_period": 0.0,
         "pulse_count": 0,
         "emit_error": False,
@@ -95,6 +101,9 @@ def _parse_argv(argv: list[str]) -> dict:
             i += 1
         elif a == "--capture-stdin":
             opts["capture_stdin"] = argv[i + 1]
+            i += 1
+        elif a == "--capture-env":
+            opts["capture_env"] = argv[i + 1]
             i += 1
         elif a == "--pulse":
             opts["pulse_period"] = float(argv[i + 1])
@@ -136,6 +145,10 @@ def main() -> int:
     if opts["capture_argv"]:
         with open(opts["capture_argv"], "w", encoding="utf-8") as f:
             json.dump(sys.argv, f)
+
+    if opts["capture_env"]:
+        with open(opts["capture_env"], "w", encoding="utf-8") as f:
+            json.dump(dict(os.environ), f)
 
     if opts["recap_mode"]:
         _emit(

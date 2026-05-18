@@ -15,12 +15,14 @@ export function useSearchScroll(
   useEffect(() => {
     if (!pendingScrollMessageId || !detail || detail.id !== sessionId) return;
     const anchorId = msgToAnchorRef.current?.get(pendingScrollMessageId) ?? pendingScrollMessageId;
-    setPendingScrollMessageId(null);
     const el = document.querySelector(`[data-message-id="${anchorId}"]`) as HTMLElement | null;
     if (!el) return;
+    setPendingScrollMessageId(null);
     const container = containerRef?.current;
     if (container) {
-      const top = el.offsetTop - SCROLL.NEAR_BOTTOM_PX;
+      const containerRect = container.getBoundingClientRect();
+      const elRect = el.getBoundingClientRect();
+      const top = container.scrollTop + elRect.top - containerRect.top - SCROLL.NEAR_BOTTOM_PX;
       container.scrollTo({ top: top < 0 ? 0 : top, behavior: "smooth" });
     }
     el.setAttribute("data-highlight", "1");
