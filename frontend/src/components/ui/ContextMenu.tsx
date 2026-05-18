@@ -45,6 +45,8 @@ export const MENU_ITEM_STYLE: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
+const MENU_MIN_WIDTH = 210;
+
 export function ContextMenu({
   items,
   anchorRect,
@@ -65,7 +67,7 @@ export function ContextMenu({
   // Flip menu upward when anchor is near the bottom of the viewport
   const flipUp = anchorRect.bottom + 4 + 180 > window.innerHeight;
   // Flip left+up when the menu would bleed past the left edge of the viewport
-  const flipLeft = anchorRect.right < 210;
+  const flipLeft = anchorRect.right < MENU_MIN_WIDTH;
 
   // Flip submenu upward when it would extend below the viewport
   useLayoutEffect(() => {
@@ -127,7 +129,7 @@ export function ContextMenu({
           ...(flipLeft
             ? { left: anchorRect.left }
             : { right }),
-          minWidth: "210px",
+          minWidth: `${MENU_MIN_WIDTH}px`,
           background: "var(--bg-modal)",
           border: "1px solid var(--border-subtle)",
           borderRadius: "var(--radius-md)",
@@ -229,7 +231,7 @@ export function ContextMenu({
             ...(flipLeft
               ? { left: moreRect.left }
               : { left: moreRect.right - 4 }),
-            minWidth: "210px",
+            minWidth: `${MENU_MIN_WIDTH}px`,
             background: "var(--bg-modal)",
             border: "1px solid var(--border-subtle)",
             borderRadius: "var(--radius-md)",
