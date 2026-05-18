@@ -61,7 +61,7 @@ export function ContextMenu({
   const moreRef = useRef<HTMLDivElement>(null);
   const [expandedSubmenu, setExpandedSubmenu] = useState<number | null>(null);
   const submenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [submenuFlip, setSubmenuFlip] = useState(false);
+  const [submenuPos, setSubmenuPos] = useState<{ top: number; left: number } | null>(null);
   const [moreRect, setMoreRect] = useState<DOMRect | null>(null);
 
   // Flip menu upward when anchor is near the bottom of the viewport
@@ -69,15 +69,41 @@ export function ContextMenu({
   // Flip left+up when the menu would bleed past the left edge of the viewport
   const flipLeft = anchorRect.right < MENU_MIN_WIDTH;
 
-  // Flip submenu upward when it would extend below the viewport
+  // Compute submenu position with viewport collision handling
   useLayoutEffect(() => {
-    if (expandedSubmenu === null || !submenuRef.current) {
-      setSubmenuFlip(false);
+    if (expandedSubmenu === null || !submenuRef.current || !menuRef.current || !moreRect) {
+      setSubmenuPos(null);
       return;
     }
-    const rect = submenuRef.current.getBoundingClientRect();
-    setSubmenuFlip(rect.bottom > window.innerHeight - 8);
-  }, [expandedSubmenu]);
+    const subRect = submenuRef.current.getBoundingClientRect();
+    const menuRect = menuRef.current.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const pad = 8;
+
+    let top = moreRect.top;
+    let left = moreRect.right - 4;
+
+    // Vertical: keep within viewport
+    if (top + subRect.height > vh - pad) top = vh - pad - subRect.height;
+    if (top < pad) top = pad;
+
+    // Horizontal: keep within viewport
+    if (left + subRect.width > vw - pad) left = vw - pad - subRect.width;
+    if (left < pad) left = pad;
+
+    // Ensure at least 30% of main menu is visible behind submenu
+    const menuW = menuRect.right - menuRect.left;
+    if (left < menuRect.right && left - menuRect.left < menuW * 0.3) {
+      left = menuRect.left + menuW * 0.3;
+    }
+
+    // Final viewport clamp after reveal adjustment
+    if (left + subRect.width > vw - pad) left = vw - pad - subRect.width;
+    if (left < pad) left = pad;
+
+    setSubmenuPos({ top, left });
+  }, [expandedSubmenu, moreRect]);
 
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
@@ -108,13 +134,16 @@ export function ContextMenu({
   const handleSubmenuLeave = () => {
     submenuTimerRef.current = setTimeout(() => {
       setExpandedSubmenu(null);
-    }, 400);
+    }, 500);
   };
 
   // Extract the expanded submenu item data
   const submenuItem = expandedSubmenu !== null && items[expandedSubmenu]?.kind === "submenu"
     ? (items[expandedSubmenu] as SubmenuItem)
     : null;
+
+  // Use measured position if available, else fall back to trigger-based estimate
+  const effectiveSubmenuPos = submenuPos ?? (moreRect ? { top: moreRect.top, left: moreRect.right - 4 } : null);
 
   return createPortal(
     <>
@@ -220,17 +249,13 @@ export function ContextMenu({
       </div>
 
       {/* Submenu — separate fixed element to avoid hover/layering issues */}
-      {submenuItem && moreRect && (
+      {submenuItem && effectiveSubmenuPos && (
         <div
           ref={submenuRef}
           style={{
             position: "fixed",
-            ...(flipUp || flipLeft || submenuFlip
-              ? { bottom: window.innerHeight - moreRect.bottom }
-              : { top: moreRect.top }),
-            ...(flipLeft
-              ? { left: moreRect.left }
-              : { left: moreRect.right - 4 }),
+            top: effectiveSubmenuPos.top,
+            left: effectiveSubmenuPos.left,
             minWidth: `${MENU_MIN_WIDTH}px`,
             background: "var(--bg-modal)",
             border: "1px solid var(--border-subtle)",
