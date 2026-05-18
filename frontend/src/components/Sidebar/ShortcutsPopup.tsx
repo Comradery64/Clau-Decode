@@ -1,12 +1,17 @@
 import { useAppStore } from "../../store";
 
 const shortcuts = [
-  { keys: "⌘I", action: "Toggle chat panel" },
   { keys: "⌘K", action: "Open search" },
   { keys: "⇧⌘,", action: "Open settings" },
+  { keys: "⇧⌘O", action: "Start new task (new Claude session)" },
   { keys: "⌘O", action: "Expand / collapse all tool blocks" },
   { keys: "⌘E", action: "Toggle full tool results" },
+  { keys: "⇧⌘E", action: "Toggle file explorer" },
+  { keys: "⌘I", action: "Toggle chat panel" },
   { keys: "⌘B", action: "Toggle sidebar" },
+  { keys: "Ctrl+E", action: "Cursor to end of line (chat)" },
+  { keys: "Ctrl+K", action: "Delete to end of line (chat)" },
+  { keys: "⌘S", action: "Stash draft / save file edit" },
   { keys: "Esc", action: "Close dialog / search / chat" },
 ];
 

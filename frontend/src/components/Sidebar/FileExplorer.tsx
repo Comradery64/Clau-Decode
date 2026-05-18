@@ -173,17 +173,13 @@ export function FileExplorer() {
           style={{
             display: "flex",
             alignItems: "center",
-            flexWrap: "wrap",
-            rowGap: "2px",
+            flexWrap: "nowrap",
             columnGap: "2px",
             fontSize: "12px",
             fontFamily: "var(--font-ui)",
             color: "var(--text-tertiary)",
-            // Allow the breadcrumb to use the panel's full width and wrap
-            // onto additional rows when needed — the sidebar is drag-
-            // resizable, so users can widen the panel to see more of the
-            // parent/cwd labels.
-            wordBreak: "break-word",
+            overflow: "hidden",
+            whiteSpace: "nowrap",
           }}
         >
           {showEllipsis && rootCrumb && truncatedRootLabel ? (
