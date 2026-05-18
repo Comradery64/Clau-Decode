@@ -1,13 +1,14 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { SessionItem, formatRelativeDate } from "../SessionItem";
-import type { Session } from "../../../api/types";
+import type { RunnerStatus, Session } from "../../../api/types";
 
 const baseSession: Session = {
   id: "test-id",
   project_id: "proj-1",
   file_path: "/tmp/test.jsonl",
   title: "Test Session Title",
+  custom_title: null,
   model: "claude-sonnet-4-6",
   started_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
@@ -111,6 +112,71 @@ describe("SessionItem", () => {
       />
     );
     expect(screen.queryByText(/sonnet/i)).not.toBeInTheDocument();
+  });
+
+  // ---- Runner-status marker (issue #12) -----------------------------------
+
+  it("renders the busy marker when runnerStatus.busy is true", () => {
+    const status: RunnerStatus = {
+      busy: true,
+      last_error: null,
+      permission_mode: "default",
+      quiet_age_seconds: 1.5,
+      quiet_warning: false,
+    };
+    render(
+      <SessionItem
+        session={baseSession}
+        isActive={false}
+        onClick={() => {}}
+        runnerStatus={status}
+      />
+    );
+    expect(screen.getByTestId("runner-busy-marker")).toBeInTheDocument();
+  });
+
+  it("does not render the busy marker when runnerStatus is undefined", () => {
+    render(<SessionItem session={baseSession} isActive={false} onClick={() => {}} />);
+    expect(screen.queryByTestId("runner-busy-marker")).not.toBeInTheDocument();
+  });
+
+  it("does not render the busy marker when runnerStatus.busy is false", () => {
+    const status: RunnerStatus = {
+      busy: false,
+      last_error: null,
+      permission_mode: null,
+      quiet_age_seconds: null,
+      quiet_warning: false,
+    };
+    render(
+      <SessionItem
+        session={baseSession}
+        isActive={false}
+        onClick={() => {}}
+        runnerStatus={status}
+      />
+    );
+    expect(screen.queryByTestId("runner-busy-marker")).not.toBeInTheDocument();
+  });
+
+  it("adds the quiet-warning attribute on the marker when watchdog fires", () => {
+    const status: RunnerStatus = {
+      busy: true,
+      last_error: null,
+      permission_mode: "default",
+      quiet_age_seconds: 180,
+      quiet_warning: true,
+    };
+    render(
+      <SessionItem
+        session={baseSession}
+        isActive={false}
+        onClick={() => {}}
+        runnerStatus={status}
+      />
+    );
+    const marker = screen.getByTestId("runner-busy-marker");
+    expect(marker.getAttribute("data-quiet-warning")).toBe("true");
   });
 });
 
