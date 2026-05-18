@@ -3,6 +3,7 @@ import type { Project, Session } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
 import { SessionItem } from "./SessionItem";
+import { useRunnerStatuses } from "./hooks/useRunnerStatuses";
 
 interface ProjectGroupProps {
   project: Project;
@@ -55,6 +56,14 @@ export function ProjectGroup({ project, displayName, isExpanded, onToggle, archi
       cancelled = true;
     };
   }, [isExpanded, project.id]);
+
+  // Issue #12 — only poll while the group is expanded; collapsed groups
+  // have no SessionItems mounted, so spending HTTP on them is pure waste.
+  const pollIds = useMemo(
+    () => (isExpanded ? sortedSessions.map((s) => s.id) : []),
+    [isExpanded, sortedSessions],
+  );
+  const runnerStatuses = useRunnerStatuses(pollIds);
 
   const handleSessionClick = (sessionId: string) => {
     selectProject(project.id);
@@ -151,6 +160,7 @@ export function ProjectGroup({ project, displayName, isExpanded, onToggle, archi
                 session={session}
                 isActive={selectedSessionId === session.id}
                 onClick={() => handleSessionClick(session.id)}
+                runnerStatus={runnerStatuses.get(session.id)}
               />
             ))}
           {!loading && !error && sessions.length === 0 && (
