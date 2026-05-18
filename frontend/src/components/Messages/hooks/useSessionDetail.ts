@@ -8,6 +8,17 @@ import { SSE } from "../../../config/ui";
 
 const XML_TAG_RE = /<[a-z][a-z0-9-]*>[\s\S]*?<\/[a-z][a-z0-9-]*>/g;
 
+// A freshly minted "New Task" session (issue #9) has no JSONL on disk until
+// the user submits their first message, so GET /api/sessions/{id} 404s for a
+// short window. Treat that as "empty session, awaiting first message" rather
+// than spamming the console with an error — but still surface unexpected
+// failures (network errors, 5xx) for debugging.
+export function logUnlessExpected404(err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/→\s*404\b/.test(msg)) return;
+  console.error(err);
+}
+
 function hasPlainText(blocks: import("../../../api/types").ContentBlock[]): boolean {
   return blocks.some((b) => {
     if (b.type !== "text") return false;
@@ -47,7 +58,7 @@ export function useSessionDetail(sessionId: string) {
     }
     fetchSession(sessionId, api.getSession)
       .then((d) => { setDetail(d); setLoading(false); })
-      .catch(console.error);
+      .catch(logUnlessExpected404);
   }, [sessionId]);
 
   // Listen for live-reload refresh events
@@ -59,7 +70,7 @@ export function useSessionDetail(sessionId: string) {
         setDetail((prev) =>
           prev?.id === d.id && prev.messages.length === d.messages.length ? prev : d
         );
-      }).catch(console.error);
+      }).catch(logUnlessExpected404);
     });
   }, [sessionId]);
 
@@ -71,7 +82,7 @@ export function useSessionDetail(sessionId: string) {
       api.getSession(sessionId).then((d) => {
         setCached(sessionId, d);
         setDetail(d);
-      }).catch(console.error);
+      }).catch(logUnlessExpected404);
     });
   }, [sessionId]);
 
