@@ -440,6 +440,15 @@ export default function Sidebar() {
     return () => window.removeEventListener("resize", clamp);
   }, []);
 
+  // Persist the user's preferred expanded width whenever it changes.
+  // Skips transient drag values and collapsed-width snaps so localStorage
+  // always reflects the last fully-committed user width.
+  useEffect(() => {
+    if (resizingSidebar) return;
+    if (sidebarWidth < SIDEBAR_SNAP_THRESHOLD) return;
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+  }, [sidebarWidth, resizingSidebar]);
+
   const startSidebarResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -470,7 +479,6 @@ export default function Sidebar() {
         setSidebarWidth(storedExpanded);
       } else {
         useAppStore.getState().setSidebarCollapsed(false);
-        window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(final));
         setSidebarWidth(final);
         setResizingSidebar(false);
       }
