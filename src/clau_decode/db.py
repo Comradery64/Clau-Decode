@@ -288,14 +288,25 @@ class Database:
         return len(bad_ids)
 
     async def reset_truncated_titles(self) -> int:
-        """Clear file_mtime for all sessions so titles get re-parsed.
+        """One-shot: clear file_mtime for all sessions so titles get re-parsed.
 
-        The 80-char title cap was removed; this forces a full re-scan so
-        every session picks up the full title.
+        Originally added when the 80-char title cap was removed. Without
+        the _meta guard this fired on every startup and forced every
+        session's JSONL to re-parse on next access — blocking get_session
+        for 10s+ per large file. The guard makes it a real one-shot.
         """
         assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT value FROM _meta WHERE key = 'truncated_titles_reset_v1'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is not None:
+            return 0  # already migrated
         cursor = await self._conn.execute(
             "UPDATE sessions SET file_mtime = NULL"
+        )
+        await self._conn.execute(
+            "INSERT OR REPLACE INTO _meta (key, value) VALUES ('truncated_titles_reset_v1', '1')"
         )
         await self._conn.commit()
         return cursor.rowcount
