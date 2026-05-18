@@ -131,13 +131,6 @@ export function SidebarHeader({ collapsed }: { collapsed?: boolean }) {
           </HeaderBtn>
         </div>
       </div>
-      <div
-        style={{
-          height: "15px",
-          background: "linear-gradient(to bottom, var(--bg-sidebar), transparent)",
-          pointerEvents: "none",
-        }}
-      />
     </div>
   );
 }
