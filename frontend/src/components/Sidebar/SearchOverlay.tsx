@@ -137,7 +137,7 @@ export default function SearchOverlay() {
         display: "flex",
         alignItems: "flex-start",
         justifyContent: "center",
-        paddingTop: "80px",
+        paddingTop: "180px",
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) closeSearch();
