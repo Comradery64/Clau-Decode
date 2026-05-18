@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import type { PermissionMode } from "../../api/types";
+import { useSessionDetail } from "../Messages/hooks/useSessionDetail";
 
 interface ChatInputProps {
   sessionId: string;
@@ -77,6 +78,29 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const wasStreamingRef = useRef(isStreaming);
+
+  // Message history (terminal-style Up/Down navigation)
+  const historyRef = useRef<string[]>([]);
+  const historyPosRef = useRef(-1);   // -1 = not browsing
+  const savedInputRef = useRef("");
+
+  // Seed history from all past user messages in the session (parsed from JSONL)
+  const { detail } = useSessionDetail(sessionId);
+  useEffect(() => {
+    if (!detail?.messages) return;
+    const texts: string[] = [];
+    for (const msg of detail.messages) {
+      if (msg.role !== "user") continue;
+      const text = msg.content_blocks
+        .filter((b): b is { type: "text"; text: string } => b.type === "text")
+        .map(b => b.text)
+        .join("\n")
+        .trim();
+      if (text) texts.push(text);
+    }
+    historyRef.current = texts;
+  }, [detail?.messages]);
+
   const postSendPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const postSendPollCountRef = useRef(0);
 
@@ -175,6 +199,9 @@ export function ChatInput({
     if (trimmed.length === 0) return;
 
     const text = trimmed;
+    // Append to history immediately (session detail catches up via SSE later)
+    historyRef.current.push(text);
+    historyPosRef.current = -1;
     setSending(true);
     setError(null);
     // eslint-disable-next-line no-console
@@ -235,6 +262,51 @@ export function ChatInput({
   }, [input]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const ta = e.currentTarget;
+
+    // Up arrow — recall older message, but only when cursor is at position 0
+    if (e.key === "ArrowUp" && !e.shiftKey && !e.ctrlKey && !e.metaKey
+      && ta.selectionStart === 0 && ta.selectionEnd === 0) {
+      const history = historyRef.current;
+      if (history.length > 0) {
+        if (historyPosRef.current === -1) {
+          savedInputRef.current = input;
+        }
+        const nextPos = historyPosRef.current + 1;
+        if (nextPos < history.length) {
+          historyPosRef.current = nextPos;
+          const recalled = history[history.length - 1 - nextPos];
+          setInput(recalled);
+          // Keep cursor at position 0 so repeated Up presses keep navigating back
+          requestAnimationFrame(() => {
+            textareaRef.current?.setSelectionRange(0, 0);
+          });
+        }
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // Down arrow — recall newer message, but only when cursor is at end
+    if (e.key === "ArrowDown" && !e.shiftKey && !e.ctrlKey && !e.metaKey
+      && ta.selectionStart === input.length && ta.selectionEnd === input.length
+      && historyPosRef.current !== -1) {
+      const nextPos = historyPosRef.current - 1;
+      historyPosRef.current = nextPos;
+      if (nextPos === -1) {
+        setInput(savedInputRef.current);
+      } else {
+        const recalled = historyRef.current[historyRef.current.length - 1 - nextPos];
+        setInput(recalled);
+        // Keep cursor at end so repeated Down presses keep navigating forward
+        requestAnimationFrame(() => {
+          textareaRef.current?.setSelectionRange(recalled.length, recalled.length);
+        });
+      }
+      e.preventDefault();
+      return;
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -273,6 +345,7 @@ export function ChatInput({
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const next = e.target.value;
     setInput(next);
+    historyPosRef.current = -1;
     if (stash !== null && next.length > 0) {
       setAutoRestoreSuppressed(true);
     }

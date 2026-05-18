@@ -41,7 +41,7 @@ const btnStyle: React.CSSProperties = {
   transition: "color var(--transition-fast), background var(--transition-fast)",
 };
 
-function HeaderBtn({ children, label, onClick, active }: { children: React.ReactNode; label: string; onClick: () => void; active?: boolean }) {
+function HeaderBtn({ children, label, onClick, active, collapsedStyle }: { children: React.ReactNode; label: string; onClick: () => void; active?: boolean; collapsedStyle?: boolean }) {
   return (
     <button
       onClick={onClick}
@@ -49,6 +49,7 @@ function HeaderBtn({ children, label, onClick, active }: { children: React.React
       title={label}
       style={{
         ...btnStyle,
+        ...(collapsedStyle ? { width: "calc(100% - 12px)", margin: "1px 6px", padding: "7px 12px" } : {}),
         color: active ? "var(--text-primary)" : "var(--text-tertiary)",
       }}
       onMouseEnter={(e) => {
@@ -89,7 +90,7 @@ export function SidebarHeader({ collapsed }: { collapsed?: boolean }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "0 12px",
+          padding: collapsed ? "0" : "0 12px",
           overflow: "hidden",
         }}
       >
@@ -126,7 +127,12 @@ export function SidebarHeader({ collapsed }: { collapsed?: boolean }) {
               {sidebarMode === "chat" ? <IconFolder /> : <IconChat />}
             </HeaderBtn>
           )}
-          <HeaderBtn label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={toggleSidebar} active={collapsed}>
+          <HeaderBtn
+            label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={toggleSidebar}
+            active={collapsed}
+            collapsedStyle={collapsed}
+          >
             <IconSidebarCollapse />
           </HeaderBtn>
         </div>
