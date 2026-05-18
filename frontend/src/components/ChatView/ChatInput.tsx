@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import type { PermissionMode } from "../../api/types";
+import { useSessionDetail } from "../Messages/hooks/useSessionDetail";
 
 interface ChatInputProps {
   sessionId: string;
@@ -16,6 +17,15 @@ interface PermissionModeMeta {
   description: string;
   tone: "neutral" | "danger" | "warn" | "info";
 }
+
+const MODEL_OPTIONS = [
+  { value: "default", label: "Auto", description: "Let the CLI pick the best model." },
+  { value: "claude-opus-4-7", label: "Opus", description: "Highest capability, highest cost." },
+  { value: "claude-sonnet-4-6", label: "Sonnet", description: "Balanced speed and capability." },
+  { value: "claude-haiku-4-5", label: "Haiku", description: "Fastest and cheapest." },
+] as const;
+
+type ModelId = typeof MODEL_OPTIONS[number]["value"];
 
 const PERMISSION_MODES: PermissionModeMeta[] = [
   { value: "dontAsk", label: "dontAsk", description: "Run without prompting for permission.", tone: "neutral" },
@@ -52,8 +62,10 @@ export function ChatInput({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(defaultPermissionMode);
+  const [model, setModel] = useState<ModelId>("default");
 
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerTab, setPickerTab] = useState<"model" | "permission">("model");
   const [bypassConfirmed, setBypassConfirmed] = useState(false);
   const [pendingBypass, setPendingBypass] = useState(false);
 
@@ -66,6 +78,29 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const wasStreamingRef = useRef(isStreaming);
+
+  // Message history (terminal-style Up/Down navigation)
+  const historyRef = useRef<string[]>([]);
+  const historyPosRef = useRef(-1);   // -1 = not browsing
+  const savedInputRef = useRef("");
+
+  // Seed history from all past user messages in the session (parsed from JSONL)
+  const { detail } = useSessionDetail(sessionId);
+  useEffect(() => {
+    if (!detail?.messages) return;
+    const texts: string[] = [];
+    for (const msg of detail.messages) {
+      if (msg.role !== "user") continue;
+      const text = msg.content_blocks
+        .filter((b): b is { type: "text"; text: string } => b.type === "text")
+        .map(b => b.text)
+        .join("\n")
+        .trim();
+      if (text) texts.push(text);
+    }
+    historyRef.current = texts;
+  }, [detail?.messages]);
+
   const postSendPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const postSendPollCountRef = useRef(0);
 
@@ -164,12 +199,15 @@ export function ChatInput({
     if (trimmed.length === 0) return;
 
     const text = trimmed;
+    // Append to history immediately (session detail catches up via SSE later)
+    historyRef.current.push(text);
+    historyPosRef.current = -1;
     setSending(true);
     setError(null);
     // eslint-disable-next-line no-console
     console.log("[ChatInput] sendMessage →", { sessionId, permissionMode, length: text.length });
     try {
-      const res = await api.sendMessage(sessionId, text, permissionMode);
+      const res = await api.sendMessage(sessionId, text, permissionMode, model === "default" ? undefined : model);
       // eslint-disable-next-line no-console
       console.log("[ChatInput] sendMessage ✓", res);
       setInput("");
@@ -224,6 +262,51 @@ export function ChatInput({
   }, [input]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const ta = e.currentTarget;
+
+    // Up arrow — recall older message, but only when cursor is at position 0
+    if (e.key === "ArrowUp" && !e.shiftKey && !e.ctrlKey && !e.metaKey
+      && ta.selectionStart === 0 && ta.selectionEnd === 0) {
+      const history = historyRef.current;
+      if (history.length > 0) {
+        if (historyPosRef.current === -1) {
+          savedInputRef.current = input;
+        }
+        const nextPos = historyPosRef.current + 1;
+        if (nextPos < history.length) {
+          historyPosRef.current = nextPos;
+          const recalled = history[history.length - 1 - nextPos];
+          setInput(recalled);
+          // Keep cursor at position 0 so repeated Up presses keep navigating back
+          requestAnimationFrame(() => {
+            textareaRef.current?.setSelectionRange(0, 0);
+          });
+        }
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // Down arrow — recall newer message, but only when cursor is at end
+    if (e.key === "ArrowDown" && !e.shiftKey && !e.ctrlKey && !e.metaKey
+      && ta.selectionStart === input.length && ta.selectionEnd === input.length
+      && historyPosRef.current !== -1) {
+      const nextPos = historyPosRef.current - 1;
+      historyPosRef.current = nextPos;
+      if (nextPos === -1) {
+        setInput(savedInputRef.current);
+      } else {
+        const recalled = historyRef.current[historyRef.current.length - 1 - nextPos];
+        setInput(recalled);
+        // Keep cursor at end so repeated Down presses keep navigating forward
+        requestAnimationFrame(() => {
+          textareaRef.current?.setSelectionRange(recalled.length, recalled.length);
+        });
+      }
+      e.preventDefault();
+      return;
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -232,12 +315,37 @@ export function ChatInput({
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
       e.preventDefault();
       handleStash();
+      return;
+    }
+    if (e.ctrlKey && !e.metaKey) {
+      const ta = e.currentTarget;
+      const pos = ta.selectionStart;
+      if (e.key === "e") {
+        // Ctrl+E — move cursor to end of line
+        e.preventDefault();
+        const lineEnd = ta.value.indexOf("\n", pos);
+        const target = lineEnd === -1 ? ta.value.length : lineEnd;
+        ta.setSelectionRange(target, target);
+        return;
+      }
+      if (e.key === "k") {
+        // Ctrl+K — delete from cursor to end of line
+        e.preventDefault();
+        const lineEnd = ta.value.indexOf("\n", pos);
+        const target = lineEnd === -1 ? ta.value.length : lineEnd;
+        const next = ta.value.substring(0, pos) + ta.value.substring(target);
+        setInput(next);
+        // Restore cursor on next tick after React re-renders
+        requestAnimationFrame(() => ta.setSelectionRange(pos, pos));
+        return;
+      }
     }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const next = e.target.value;
     setInput(next);
+    historyPosRef.current = -1;
     if (stash !== null && next.length > 0) {
       setAutoRestoreSuppressed(true);
     }
@@ -271,10 +379,6 @@ export function ChatInput({
     setPermissionMode("bypassPermissions");
     setPickerOpen(false);
     setPendingBypass(false);
-  };
-
-  const resetMode = () => {
-    setPermissionMode(defaultPermissionMode);
   };
 
   const meta = modeMeta(permissionMode);
@@ -436,33 +540,13 @@ export function ChatInput({
               )}
             </div>
 
-            {/* Right: permission pill + send/stop */}
+            {/* Right: unified settings pill + send/stop */}
             <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              {overridden && (
-                <button
-                  type="button"
-                  onClick={resetMode}
-                  title="Reset to default permission mode"
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: "var(--text-tertiary)",
-                    fontSize: "11px",
-                    padding: 0,
-                    cursor: "pointer",
-                    textDecoration: "underline",
-                    fontFamily: "var(--font-ui)",
-                  }}
-                >
-                  reset
-                </button>
-              )}
-
               <div ref={pickerRef} style={{ position: "relative" }}>
                 <button
                   type="button"
                   onClick={() => setPickerOpen((v) => !v)}
-                  title={`Permission mode: ${meta.label}`}
+                  title={`${MODEL_OPTIONS.find((m) => m.value === model)?.label ?? "Auto"} · ${meta.label}`}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -478,17 +562,19 @@ export function ChatInput({
                     fontWeight: 500,
                   }}
                 >
-                  {overridden && (
+                  {(overridden || model !== "default") && (
                     <span
                       style={{
                         width: "6px",
                         height: "6px",
                         borderRadius: "50%",
-                        background: modeColor,
+                        background: overridden ? modeColor : "var(--accent-orange)",
                         display: "inline-block",
                       }}
                     />
                   )}
+                  <span>{MODEL_OPTIONS.find((m) => m.value === model)?.label ?? "Auto"}</span>
+                  <span style={{ color: "var(--text-tertiary)" }}>·</span>
                   <span>{meta.label}</span>
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
                     <path d="M2 4l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -502,7 +588,7 @@ export function ChatInput({
                       right: 0,
                       bottom: "calc(100% + 6px)",
                       zIndex: 50,
-                      width: "300px",
+                      width: "280px",
                       background: "var(--bg-elevated, var(--bg-base))",
                       border: "1px solid var(--border-default)",
                       borderRadius: "12px",
@@ -510,19 +596,49 @@ export function ChatInput({
                       overflow: "hidden",
                     }}
                   >
-                    {PERMISSION_MODES.map((m) => {
-                      const t = toneColor(m.tone);
-                      const active = m.value === permissionMode;
+                    {/* Tab bar */}
+                    <div style={{ display: "flex", borderBottom: "1px solid var(--border-subtle)" }}>
+                      {(["model", "permission"] as const).map((tab) => {
+                        const isActive = pickerTab === tab;
+                        const label = tab === "model" ? "Model" : "Permission";
+                        return (
+                          <button
+                            key={tab}
+                            type="button"
+                            onClick={() => { setPickerTab(tab); setPendingBypass(false); }}
+                            style={{
+                              flex: 1,
+                              padding: "9px 0",
+                              border: "none",
+                              background: "transparent",
+                              cursor: "pointer",
+                              fontFamily: "var(--font-ui)",
+                              fontSize: "12px",
+                              fontWeight: isActive ? 600 : 400,
+                              color: isActive ? "var(--text-primary)" : "var(--text-tertiary)",
+                              borderBottom: isActive ? "2px solid var(--text-primary)" : "2px solid transparent",
+                              transition: "color 0.15s, border-color 0.15s",
+                            }}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Tab content */}
+                    {pickerTab === "model" && MODEL_OPTIONS.map((m) => {
+                      const active = m.value === model;
                       return (
                         <button
                           key={m.value}
                           type="button"
-                          onClick={() => selectMode(m.value)}
+                          onClick={() => setModel(m.value)}
                           style={{
                             display: "block",
                             width: "100%",
                             textAlign: "left",
-                            padding: "9px 13px",
+                            padding: "9px 14px",
                             border: "none",
                             background: active ? "var(--bg-sidebar-hover)" : "transparent",
                             cursor: "pointer",
@@ -537,31 +653,74 @@ export function ChatInput({
                               : "transparent";
                           }}
                         >
-                          <div
-                            style={{
-                              fontSize: "13px",
-                              fontFamily: "var(--font-ui)",
-                              fontWeight: 600,
-                              color: t,
-                            }}
-                          >
+                          <div style={{ fontSize: "13px", fontFamily: "var(--font-ui)", fontWeight: 600, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: "6px" }}>
+                            {active && (
+                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ flexShrink: 0 }}>
+                                <path d="M2 6l3 3 5-5" stroke="var(--text-secondary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                            {!active && <span style={{ width: "12px" }} />}
                             {m.label}
-                            {m.value === defaultPermissionMode && (
-                              <span style={{ fontWeight: 400, color: "var(--text-tertiary)", marginLeft: "6px" }}>
-                                (default)
-                              </span>
+                            {m.value === "default" && (
+                              <span style={{ fontWeight: 400, color: "var(--text-tertiary)", fontSize: "11px" }}>default</span>
                             )}
                           </div>
-                          <div style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "2px" }}>
+                          <div style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "2px", paddingLeft: "18px" }}>
                             {m.description}
                           </div>
                         </button>
                       );
                     })}
-                    {pendingBypass && (
+
+                    {pickerTab === "permission" && PERMISSION_MODES.map((m) => {
+                      const t = toneColor(m.tone);
+                      const active = m.value === permissionMode;
+                      return (
+                        <button
+                          key={m.value}
+                          type="button"
+                          onClick={() => selectMode(m.value)}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            textAlign: "left",
+                            padding: "9px 14px",
+                            border: "none",
+                            background: active ? "var(--bg-sidebar-hover)" : "transparent",
+                            cursor: "pointer",
+                            borderBottom: "1px solid var(--border-subtle)",
+                          }}
+                          onMouseEnter={(e) => {
+                            (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-sidebar-hover)";
+                          }}
+                          onMouseLeave={(e) => {
+                            (e.currentTarget as HTMLButtonElement).style.background = active
+                              ? "var(--bg-sidebar-hover)"
+                              : "transparent";
+                          }}
+                        >
+                          <div style={{ fontSize: "13px", fontFamily: "var(--font-ui)", fontWeight: 600, color: t, display: "flex", alignItems: "center", gap: "6px" }}>
+                            {active && (
+                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ flexShrink: 0 }}>
+                                <path d="M2 6l3 3 5-5" stroke={t} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                            {!active && <span style={{ width: "12px" }} />}
+                            {m.label}
+                            {m.value === defaultPermissionMode && (
+                              <span style={{ fontWeight: 400, color: "var(--text-tertiary)", fontSize: "11px" }}>default</span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "2px", paddingLeft: "18px" }}>
+                            {m.description}
+                          </div>
+                        </button>
+                      );
+                    })}
+                    {pickerTab === "permission" && pendingBypass && (
                       <div
                         style={{
-                          padding: "10px 13px",
+                          padding: "10px 14px",
                           background: "rgba(239, 68, 68, 0.10)",
                           borderTop: "1px solid rgba(239, 68, 68, 0.40)",
                           fontSize: "11px",
