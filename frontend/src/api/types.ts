@@ -86,6 +86,10 @@ export interface Session {
   project_id: string;
   file_path: string;
   title: string | null;
+  // Server-side rename override (issue #11). When set, this is what the user
+  // typed in the sidebar. Frontend overlays it on top of `title`; both fields
+  // are sent so original parse stays visible (tooltip, search debugging).
+  custom_title: string | null;
   model: string | null;
   started_at: string | null;
   updated_at: string | null;
@@ -192,6 +196,18 @@ export interface Recap {
 export interface ProfilesResponse {
   profiles: Profile[];
   active_profile_id: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Runner status — mirrors ClaudeCodeRunner.status_snapshot
+// ---------------------------------------------------------------------------
+
+export interface RunnerStatus {
+  busy: boolean;
+  last_error: string | null;
+  permission_mode: PermissionMode | null;
+  quiet_age_seconds: number | null;
+  quiet_warning: boolean;
 }
 
 // ---------------------------------------------------------------------------
