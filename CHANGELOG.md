@@ -8,13 +8,39 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- **Message history in chat input** — Up/Down arrow keys cycle through all past user messages from the conversation (parsed from JSONL). Up at cursor position 0 recalls older messages; Down at end of text moves forward. Normal cursor movement is preserved everywhere else.
+- **Model selector** — pick Auto / Opus / Sonnet / Haiku directly in the chat input bar, no trip to settings required.
+- **File explorer** — `Cmd+Shift+E` toggles a resizable file explorer panel beside the conversation.
+- **New Task** — `Cmd+Shift+O` or the "New Task" button starts a fresh, empty session without an auto-greeting.
+- **Sidebar drag-resize & collapse** — drag the right edge to resize the sidebar; drag past the snap threshold to collapse it with a smooth animation. Width persists across changes (not just drag release).
+- **Favicon set & webmanifest** — multi-size favicons and a PWA manifest for a proper browser tab identity.
+- **Readline-style editing** — `Ctrl+E` jumps to end of line, `Ctrl+K` kills to end of line, in the chat textarea.
+- **Active session marker** — sidebar shows a pulsing indicator on sessions that are currently streaming.
+- **Real-time session rename sync** — renaming a session propagates to all connected browser tabs instantly.
+- **Worktree support** — resume and open-terminal commands now understand git worktrees.
+- **Remote viewer support** — host-only actions (edit, send) are disabled for remote viewers to prevent accidents.
+- **Full-length session titles** — titles are no longer truncated at 80 characters; sidebar shows the full text with hover overflow.
+
 ### Changed
 
-### Deprecated
-
-### Removed
+- **Dependency upgrades** — React 18 → 19, Vite 5 → 8, Zustand 4 → 5, Vitest 2 → 4.
+- **Sidebar header** — no gradient fade; cleaner, flatter look. Collapsed state shows full-width toggle button.
+- **Context menus** — submenus flip direction when near the viewport edge instead of overflowing off-screen.
+- **Dark mode code blocks** — increased border alpha so the divider between header and body is visible.
+- **Thought chain titles** — verbs are capitalized and always include a noun for multi-tool turns.
 
 ### Fixed
+
+- **Search scroll-to-message** — uses `getBoundingClientRect` for accurate positioning; results ordered by timestamp.
+- **Scroll position** — re-pins correctly across container resizes (file explorer open/close, sidebar toggle).
+- **FTS5 search** — punctuation in queries no longer causes syntax errors; treated as plain text.
+- **File preview editing** — separated from the global `edit_enabled` flag, fixing a 422 error on save.
+- **File explorer breadcrumb** — stays on a single line instead of wrapping.
+- **Sidebar collapse animation** — unified to 352 ms ease-out; auto-collapses on narrow windows.
+- **Runner fallback** — falls back to plain `claude` when the inferred binary isn't on PATH.
+- **Stale chunk imports** — gracefully handles changed content hashes on lazy-loaded bundles.
+- **Title truncation** — removed the 80-char DB truncation; added a migration to restore full titles.
+- **New Task auto-greeting** — new sessions start empty; no text injected on the user's behalf (#9).
 
 ### Security
 
