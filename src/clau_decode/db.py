@@ -876,7 +876,7 @@ class Database:
                 JOIN messages m ON m.id = f.message_id
                 WHERE messages_fts MATCH ?
                   AND s.project_id = ?
-                ORDER BY s.updated_at DESC
+                ORDER BY m.timestamp DESC
                 LIMIT ?
             """
             params: tuple = (match_query, project_id, limit)
@@ -894,7 +894,7 @@ class Database:
                 JOIN sessions s ON s.id = f.session_id
                 JOIN messages m ON m.id = f.message_id
                 WHERE messages_fts MATCH ?
-                ORDER BY s.updated_at DESC
+                ORDER BY m.timestamp DESC
                 LIMIT ?
             """
             params = (match_query, limit)

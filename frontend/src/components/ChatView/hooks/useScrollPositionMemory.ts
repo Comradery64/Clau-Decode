@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useAppStore } from "../../../store";
 
 // Remember each session's scroll position so re-selecting a session lands the
 // user where they left off. Skip the restore if they were within ~one viewport
@@ -14,16 +15,21 @@ export function useScrollPositionMemory(
   sessionId: string | null,
 ): void {
   const scrollPositions = useRef(new Map<string, { top: number; height: number }>());
+  const pendingScrollMessageId = useAppStore((s) => s.pendingScrollMessageId);
 
   useEffect(() => {
     const el = scrollElRef.current;
     if (!el || !sessionId) return;
 
-    const saved = scrollPositions.current.get(sessionId);
-    if (saved) {
-      const distFromBottom = saved.height - saved.top - el.clientHeight;
-      if (distFromBottom >= el.clientHeight) {
-        el.scrollTop = saved.top;
+    // Skip restoration when a search-scroll is pending — useSearchScroll will
+    // handle the navigation instead, and restoring here would cause a flicker.
+    if (!pendingScrollMessageId) {
+      const saved = scrollPositions.current.get(sessionId);
+      if (saved) {
+        const distFromBottom = saved.height - saved.top - el.clientHeight;
+        if (distFromBottom >= el.clientHeight) {
+          el.scrollTop = saved.top;
+        }
       }
     }
 
@@ -60,5 +66,5 @@ export function useScrollPositionMemory(
       if (pendingRaf) cancelAnimationFrame(pendingRaf);
       ro.disconnect();
     };
-  }, [scrollElRef, sessionId]);
+  }, [scrollElRef, sessionId, pendingScrollMessageId]);
 }
