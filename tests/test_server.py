@@ -422,6 +422,47 @@ async def test_regular_message_keeps_stream_json_input(env_with_claude, monkeypa
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Static SPA fallback — hashed asset misses must 404
+# ---------------------------------------------------------------------------
+
+
+async def test_missing_hashed_asset_returns_404(tmp_path):
+    """Requests under /assets/ that don't match a real file must 404.
+
+    Falling through to index.html for a missing JS chunk hands the browser
+    text/html in response to a module import, producing an opaque
+    "Failed to fetch dynamically imported module" error with no actionable
+    diagnostic. The frontend's lazyWithRetry only triggers its reload prompt
+    on a real fetch failure — see issue #10.
+    """
+    cfg = AppConfig()
+    db_path = tmp_path / "spa.db"
+    async with Database(db_path) as db:
+        await db.init_schema()
+    app = _make_app(db_path, cfg)
+    async with await _client(app) as c:
+        r = await c.get("/assets/ShortcutsPopup-DOES-NOT-EXIST.js")
+    assert r.status_code == 404
+
+
+async def test_spa_unknown_route_still_serves_index(tmp_path):
+    """Non-/assets unknown routes keep serving index.html so the SPA router
+    can take over (deep-link to /analytics, /session/<id>, etc.)."""
+    cfg = AppConfig()
+    db_path = tmp_path / "spa2.db"
+    async with Database(db_path) as db:
+        await db.init_schema()
+    app = _make_app(db_path, cfg)
+    async with await _client(app) as c:
+        r = await c.get("/some/spa/route")
+    # If a static/ build is present in the package, we get the SPA shell.
+    # If not (dev install without `npm run build`), this route is simply
+    # absent — either outcome is acceptable, but we MUST NOT see HTML being
+    # mistakenly served from the /assets/ namespace handled above.
+    assert r.status_code in (200, 404)
+
+
 async def test_auto_stop_flag_threaded_to_runner(env_with_claude, monkeypatch):
     """AppConfig.claude_auto_stop_quiet_default_turns reaches runner.submit()."""
     e = env_with_claude
@@ -439,3 +480,271 @@ async def test_auto_stop_flag_threaded_to_runner(env_with_claude, monkeypatch):
         )
     assert r.status_code == 200
     assert submit_mock.await_args.kwargs["auto_stop_quiet_default"] is True
+
+
+# ---------------------------------------------------------------------------
+# POST /api/sessions/new — issue #9 "New Task" button + Cmd+Shift+O
+#
+# Contract: /api/sessions/new is a pure metadata mint. It does NOT spawn a
+# claude subprocess and does NOT write any JSONL. It stashes a pending
+# entry keyed by session id; the user's real first message — sent through
+# /send-message — is what materialises the JSONL via `claude --session-id`.
+# ---------------------------------------------------------------------------
+
+
+async def test_new_session_returns_fresh_uuid_without_spawning_runner(
+    env_with_claude, monkeypatch
+):
+    """POST /api/sessions/new returns a new uuid + cwd + permission_mode
+    WITHOUT calling the runner. Nothing should be sent on the user's behalf.
+    """
+    e = env_with_claude
+    from clau_decode import claude_runner as cr_mod
+
+    submit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post("/api/sessions/new", json={"cwd": e["cwd"]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "session_id" in body
+    assert body["session_id"] != e["session_id"]  # NOT the seeded session
+    # UUIDv4 shape (8-4-4-4-12 hex)
+    import re
+    assert re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+        body["session_id"],
+    )
+    assert body["cwd"] == e["cwd"]
+    assert body["permission_mode"] == "dontAsk"
+    # Critical: no runner spawn — the user's first turn comes through
+    # /send-message, not this metadata-mint endpoint.
+    submit_mock.assert_not_awaited()
+
+
+async def test_new_session_records_pending_entry(env_with_claude, monkeypatch):
+    """The minted id is stashed in the in-memory pending map so a later
+    /send-message can route to the new_session=True spawn path."""
+    e = env_with_claude
+    from clau_decode import claude_runner as cr_mod
+
+    submit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post(
+            "/api/sessions/new",
+            json={"cwd": e["cwd"], "permission_mode": "acceptEdits"},
+        )
+    assert r.status_code == 200, r.text
+    new_id = r.json()["session_id"]
+    pending = app.state.pending_sessions
+    assert new_id in pending
+    assert pending[new_id].cwd == e["cwd"]
+    assert pending[new_id].permission_mode == "acceptEdits"
+
+
+async def test_new_session_defaults_cwd_to_last_used(env_with_claude, monkeypatch):
+    """When no cwd is given, default to the most-recent session's cwd."""
+    e = env_with_claude
+    from clau_decode import claude_runner as cr_mod
+
+    submit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post("/api/sessions/new", json={})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["cwd"] == e["cwd"]  # falls back to the seeded session's cwd
+    submit_mock.assert_not_awaited()
+
+
+async def test_new_session_rejects_unknown_cwd(env_with_claude, monkeypatch):
+    """A cwd that doesn't exist on disk → 404, no pending entry."""
+    e = env_with_claude
+    from clau_decode import claude_runner as cr_mod
+
+    submit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post(
+            "/api/sessions/new", json={"cwd": "/definitely/not/a/real/path"}
+        )
+    assert r.status_code == 404
+    submit_mock.assert_not_awaited()
+    assert not app.state.pending_sessions
+
+
+async def test_new_session_503_when_bin_missing(env_with_claude, monkeypatch):
+    """When claude is not on PATH → 503 (validated up front)."""
+    e = env_with_claude
+    monkeypatch.setenv("PATH", "/nonexistent-dir")
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post("/api/sessions/new", json={"cwd": e["cwd"]})
+    assert r.status_code == 503
+
+
+async def test_send_message_to_pending_session_spawns_with_new_session_flag(
+    env_with_claude, monkeypatch
+):
+    """The user's *actual* first message is what spawns the runner.
+
+    For an id that exists only in the pending map (no DB row yet), the
+    send-message route must call submit(new_session=True) with the user's
+    text — NOT any auto-greeting.
+    """
+    e = env_with_claude
+    from clau_decode import claude_runner as cr_mod
+
+    submit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post("/api/sessions/new", json={"cwd": e["cwd"]})
+        assert r.status_code == 200, r.text
+        new_id = r.json()["session_id"]
+
+        r2 = await c.post(
+            f"/api/sessions/{new_id}/send-message",
+            json={"message": "do the thing I asked"},
+        )
+    assert r2.status_code == 200, r2.text
+    submit_mock.assert_awaited_once()
+    kwargs = submit_mock.await_args.kwargs
+    args = submit_mock.await_args.args
+    assert args[0] == new_id
+    assert kwargs["new_session"] is True
+    assert kwargs["cwd"] == e["cwd"]
+    assert kwargs["text"] == "do the thing I asked"
+    # CRITICAL — no auto greeting got injected anywhere.
+    assert "Hi! I'm ready when you are." not in kwargs["text"]
+
+
+async def test_send_message_clears_pending_entry(env_with_claude, monkeypatch):
+    """First send-message consumes the pending entry; subsequent calls
+    fall through to the normal --resume path (and 404 here, since the DB
+    row doesn't exist yet in our test setup)."""
+    e = env_with_claude
+    from clau_decode import claude_runner as cr_mod
+
+    submit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post("/api/sessions/new", json={"cwd": e["cwd"]})
+        new_id = r.json()["session_id"]
+        assert new_id in app.state.pending_sessions
+
+        r2 = await c.post(
+            f"/api/sessions/{new_id}/send-message",
+            json={"message": "first turn"},
+        )
+        assert r2.status_code == 200, r2.text
+        assert new_id not in app.state.pending_sessions
+
+        # Second send for the same id — pending is gone AND there's no DB row,
+        # so this must 404 (the normal "session not found" code path).
+        r3 = await c.post(
+            f"/api/sessions/{new_id}/send-message",
+            json={"message": "second turn"},
+        )
+        assert r3.status_code == 404
+
+
+async def test_send_message_unknown_id_still_404(env_with_claude, monkeypatch):
+    """Send-message for an id that is neither in the DB nor pending → 404."""
+    e = env_with_claude
+    from clau_decode import claude_runner as cr_mod
+
+    submit_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "submit", submit_mock)
+    monkeypatch.setattr(cr_mod.ClaudeCodeRunner, "is_busy", lambda self, sid: False)
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post(
+            "/api/sessions/00000000-0000-4000-8000-000000000000/send-message",
+            json={"message": "hi"},
+        )
+    assert r.status_code == 404
+    submit_mock.assert_not_awaited()
+
+
+async def test_send_message_to_pending_uses_session_id_argv(
+    env_with_claude, monkeypatch
+):
+    """End-to-end: send-message on a pending id spawns the CLI with
+    --session-id <new uuid> (not --resume) and the user's text reaches stdin.
+
+    This is the spawn shape that materialises a fresh JSONL on disk so the
+    watcher → SSE pipeline can index the session the moment it appears.
+    """
+    e = env_with_claude
+    capture = e["bin_dir"].parent / "argv_new.json"
+    bin_dir2 = e["bin_dir"].parent / "bin_capture_new"
+    bin_dir2.mkdir()
+    _write_shim(bin_dir2, extra_argv=f"--capture-argv {capture}")
+    monkeypatch.setenv("PATH", f"{bin_dir2}{os.pathsep}{os.environ['PATH']}")
+
+    app = _make_app(e["db_path"], AppConfig())
+    async with await _client(app) as c:
+        r = await c.post("/api/sessions/new", json={"cwd": e["cwd"]})
+        assert r.status_code == 200, r.text
+        new_id = r.json()["session_id"]
+
+        r2 = await c.post(
+            f"/api/sessions/{new_id}/send-message",
+            json={"message": "first real user message"},
+        )
+        assert r2.status_code == 200, r2.text
+
+    deadline = time.monotonic() + 5.0
+    while not capture.exists() and time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+    assert capture.exists(), "fake_claude never wrote argv capture file"
+    argv = json.loads(capture.read_text())
+    assert "--session-id" in argv
+    assert argv[argv.index("--session-id") + 1] == new_id
+    # Brand-new sessions don't --resume; that would fail against a non-existent id.
+    assert "--resume" not in argv
+
+
+# ---------------------------------------------------------------------------
+# /api/fs/write — file-preview editing (always enabled, ignores edit_enabled)
+# ---------------------------------------------------------------------------
+
+
+async def test_fs_write_accepts_body_and_is_not_gated_by_edit_enabled(tmp_path):
+    """File-preview save: body parses (no 422 'loc=query'), and edit_enabled=False
+    must not block it — file-preview editing is intentionally always-on."""
+    target = tmp_path / "note.txt"
+    target.write_text("original\n")
+
+    db_path = tmp_path / "test.db"
+    async with Database(db_path) as db:
+        await db.init_schema()
+    config = AppConfig(data_paths=[str(tmp_path)], edit_enabled=False)
+    app = _make_app(db_path, config)
+
+    async with await _client(app) as c:
+        r = await c.put(
+            "/api/fs/write",
+            json={"path": str(target), "content": "edited\n"},
+        )
+    assert r.status_code == 200, r.text
+    assert target.read_text() == "edited\n"

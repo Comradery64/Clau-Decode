@@ -139,15 +139,26 @@ function getToolSummary(toolUse: ToolUseBlockType): { description: string; badge
   };
 }
 
-function getToolAction(toolUse: ToolUseBlockType): string {
+interface ToolAction {
+  verb: string;   // Title-cased verb shown by itself for single uses (e.g. "Edited")
+  noun: string;   // Plural noun used in counted summaries (e.g. "files", "commands")
+}
+
+function getToolAction(toolUse: ToolUseBlockType): ToolAction {
   const name = toolUse.name.toLowerCase();
-  if (name === "todowrite") return "Updated todos";
-  if (name.includes("write") || name.includes("create")) return "Created";
-  if (name.includes("edit") || name.includes("patch") || name.includes("str_replace")) return "Edited";
-  if (name.includes("read") || name.includes("view")) return "Read";
-  if (name.includes("bash") || name.includes("execute")) return "Ran command";
-  if (name.includes("glob") || name.includes("grep") || name.includes("find") || name.includes("search")) return "Searched";
-  return toolUse.name;
+  if (name === "todowrite") return { verb: "Updated", noun: "todos" };
+  if (name.includes("write") || name.includes("create")) return { verb: "Created", noun: "files" };
+  if (name.includes("edit") || name.includes("patch") || name.includes("str_replace")) return { verb: "Edited", noun: "files" };
+  if (name.includes("read") || name.includes("view")) return { verb: "Read", noun: "files" };
+  if (name.includes("bash") || name.includes("execute")) return { verb: "Ran", noun: "commands" };
+  if (name.includes("glob") || name.includes("grep") || name.includes("find") || name.includes("search")) return { verb: "Searched", noun: "files" };
+  return { verb: toolUse.name, noun: "tools" };
+}
+
+// Drop a trailing "s" when the count is 1 so we get "1 file" / "1 command" instead of "1 files".
+function pluralize(noun: string, count: number): string {
+  if (count !== 1) return noun;
+  return noun.endsWith("s") ? noun.slice(0, -1) : noun;
 }
 
 function computeTitle(blocks: PairedBlock[]): string {
@@ -156,27 +167,20 @@ function computeTitle(blocks: PairedBlock[]): string {
 
   if (toolPairs.length === 0) return "Thought for a moment";
   if (toolPairs.length === 1) {
-    return getToolAction(toolPairs[0].toolUse);
+    return getToolAction(toolPairs[0].toolUse).verb;
   }
 
-  // Multiple tools — short summary
-  const groups = new Map<string, number>();
+  // Multiple tools — aggregate by verb so duplicates collapse into "Verb N nouns".
+  const groups = new Map<string, { verb: string; noun: string; count: number }>();
   for (const b of toolPairs) {
-    const action = getToolAction(b.toolUse);
-    groups.set(action, (groups.get(action) ?? 0) + 1);
+    const { verb, noun } = getToolAction(b.toolUse);
+    const existing = groups.get(verb);
+    if (existing) existing.count += 1;
+    else groups.set(verb, { verb, noun, count: 1 });
   }
-  const parts = [...groups.entries()].map(([action, count]) => {
-    if (count <= 1) return action;
-    const lower = action.toLowerCase();
-    const spaceIdx = lower.indexOf(" ");
-    if (spaceIdx > 0) {
-      const verb = lower.slice(0, spaceIdx);
-      const rest = lower.slice(spaceIdx + 1);
-      const plural = rest.endsWith("s") ? rest : rest + "s";
-      return `${verb} ${count} ${plural}`;
-    }
-    return `${lower} ${count}`;
-  });
+  const parts = [...groups.values()].map(({ verb, noun, count }) =>
+    count > 1 ? `${verb} ${count} ${noun}` : `${verb} 1 ${pluralize(noun, 1)}`
+  );
 
   if (hasThinking) parts.unshift("Thought");
 
