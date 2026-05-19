@@ -35,6 +35,7 @@ import subprocess
 import sys
 from collections import OrderedDict
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -62,6 +63,7 @@ from .analytics.tips import (
 from .config import save_config
 from .db import Database
 from .editor import swap_session
+from .events_bus import EventBroadcaster
 from .models import AppConfig, Profile
 from .parser import parse_session
 from .reporter import export_json, export_markdown
@@ -104,6 +106,27 @@ def _derive_bin_name(file_path: str) -> str:
     return "claude"
 
 
+def _extract_worktree_name(file_path: str, cwd: str | None) -> str | None:
+    """Extract the worktree name (e.g. 'pr-160-review') from a worktree session."""
+    # Try cwd first — the actual filesystem path is more reliable.
+    if cwd:
+        marker = "/.claude/worktrees/"
+        idx = cwd.find(marker)
+        if idx >= 0:
+            return cwd[idx + len(marker):]
+    # Fall back to the mangled project directory name in the file_path.
+    parts = Path(file_path).parts
+    for i, p in enumerate(parts):
+        if p == "projects" and i + 1 < len(parts):
+            mangled = parts[i + 1]
+            marker = "worktrees-"
+            idx = mangled.find(marker)
+            if idx >= 0:
+                return mangled[idx + len(marker):]
+            break
+    return None
+
+
 class _MessageContentUpdate(BaseModel):
     content_blocks: list[dict]
 
@@ -127,6 +150,45 @@ class _SetActiveProfileRequest(BaseModel):
 class _SendMessageRequest(BaseModel):
     message: str
     permission_mode: str | None = None
+    model: str | None = None
+
+
+class _NewSessionRequest(BaseModel):
+    # All optional — defaults are "last-used cwd" + AppConfig permission mode.
+    # No initial_message: brand-new sessions stay empty until the user types
+    # their first message (see issue #9 fix — auto-greeting was wrong).
+    cwd: str | None = None
+    permission_mode: str | None = None
+
+
+@dataclass(frozen=True)
+class _PendingSession:
+    """Metadata for a session that's been minted but not yet materialised.
+
+    Lives in a small in-memory map (``app.state.pending_sessions``) keyed by
+    session id. Entries are created by ``POST /api/sessions/new`` and consumed
+    by the first ``POST /api/sessions/{id}/send-message``; nothing else touches
+    them, so we don't need a TTL — server restarts wipe the map.
+    """
+
+    cwd: str
+    permission_mode: str
+    bin_name: str
+
+
+class _SessionTitleRequest(BaseModel):
+    # Pydantic enforces "must be string or null"; non-string/non-null bodies
+    # (e.g. ``{"title": 123}``) produce 422 automatically. Empty / whitespace
+    # strings are accepted and treated as a clear by the DB helper.
+    title: str | None
+
+
+class _FsWriteBody(BaseModel):
+    # Module-scope: BaseModels declared inside create_app() are not picked up
+    # by FastAPI as request-body params (they get treated as query params and
+    # 422 with `loc: ["query", "body"]`).
+    path: str
+    content: str
 
 
 def create_app(config: AppConfig, db_path: Path) -> FastAPI:
@@ -148,11 +210,15 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         A fully configured ``FastAPI`` application ready to hand to uvicorn.
     """
     # Mutable shared state captured by closures below.
-    _state: dict = {"config": config, "watch_task": None}
+    _state: dict = {"config": config, "watch_task": None, "fanout_task": None}
     _analytics = _AnalyticsSvc()
     _pricing_strat = CachedPricingStrategy()
     _cost_engine = CostEngine(_pricing_strat)
+    # Intermediate queue: the watcher writes WatchEvent objects here; a small
+    # background fan-out task scans the file and republishes the (now indexed)
+    # change to every connected SSE client via the broadcaster.
     _watch_queue: asyncio.Queue = asyncio.Queue()
+    _bus = EventBroadcaster()
     _runner = ClaudeCodeRunner()
 
     # ------------------------------------------------------------------
@@ -246,6 +312,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         async with Database(db_path) as db:
             await db.init_schema()
             await db.reset_xml_title_mtimes()
+            await db.reset_truncated_titles()
             await db.migrate_project_id_v2()
 
         async def _background_scan() -> None:
@@ -256,6 +323,23 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         _state["watch_task"] = asyncio.create_task(
             watch_paths(_all_scan_roots(), _watch_queue)
         )
+
+        async def _fanout_watcher_events() -> None:
+            """Drain the watcher queue and republish indexed events to all clients.
+
+            One-task-per-app (not per-client) so the DB re-index runs exactly
+            once per file change, regardless of how many viewers are connected.
+            """
+            while True:
+                event = await _watch_queue.get()
+                try:
+                    async with Database(db_path) as db:
+                        await _scan_one(db, event.path)
+                except Exception as exc:
+                    print(f"Warning: scan_one failed for {event.path}: {exc}")
+                _bus.publish({"type": "refresh", "path": str(event.path)})
+
+        _state["fanout_task"] = asyncio.create_task(_fanout_watcher_events())
 
         async def _refresh_pricing() -> None:
             await _pricing_strat.refresh()
@@ -270,6 +354,13 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     # Session-detail responses are megabytes of JSON for old chats; gzip cuts
     # transfer time by ~10x. minimum_size avoids overhead for tiny payloads.
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+    # Pending-session map (issue #9 fix): /api/sessions/new mints metadata into
+    # this dict; the first /send-message for that id consumes the entry and
+    # spawns the CLI with --session-id. Guarded by an asyncio lock so two
+    # concurrent send-messages for the same fresh id can't both claim it.
+    app.state.pending_sessions = {}
+    app.state.pending_sessions_lock = asyncio.Lock()
 
     # LRU cache of pre-serialized SessionDetail responses, keyed by session id
     # with file mtime as the validation token. A hit skips the SQL fetch,
@@ -810,6 +901,8 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         if not Path(cwd).is_dir():
             raise HTTPException(status_code=404, detail=f"Directory not found: {cwd}")
         bin_name = _derive_bin_name(detail.file_path)
+        wt = _extract_worktree_name(detail.file_path, detail.cwd) if detail.is_worktree else None
+        cmd = f"{bin_name} -w {wt} -r {session_id}" if wt else f"{bin_name} -r {session_id}"
         if sys.platform == "darwin":
             subprocess.Popen(
                 [
@@ -817,7 +910,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                     "-e",
                     f'tell application "Terminal"\n'
                     f"  activate\n"
-                    f'  do script "cd {cwd} && {bin_name} -r {session_id}"\n'
+                    f'  do script "cd {cwd} && {cmd}"\n'
                     f"end tell",
                 ]
             )
@@ -830,7 +923,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                             "--",
                             "bash",
                             "-c",
-                            f"cd {cwd} && {bin_name} -r {session_id}; exec bash",
+                            f"cd {cwd} && {cmd}; exec bash",
                         ]
                     )
                     break
@@ -841,7 +934,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                         "-e",
                         "bash",
                         "-c",
-                        f"cd {cwd} && {bin_name} -r {session_id}; exec bash",
+                        f"cd {cwd} && {cmd}; exec bash",
                     ]
                 )
         else:
@@ -852,7 +945,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                     "start",
                     "cmd",
                     "/k",
-                    f"cd /d {cwd} && {bin_name} -r {session_id}",
+                    f"cd /d {cwd} && {cmd}",
                 ]
             )
         return {"ok": True}
@@ -860,6 +953,80 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     # -----------------------------------------------------------------------
     # Headless runner — send/stop/status
     # -----------------------------------------------------------------------
+
+    @app.post("/api/sessions/new")
+    async def new_session(req: _NewSessionRequest):
+        """Mint metadata for a brand-new Claude session (issue #9).
+
+        This endpoint is a PURE METADATA MINT — it does NOT spawn the CLI and
+        does NOT write any JSONL on disk. It stashes a ``_PendingSession`` in
+        ``app.state.pending_sessions`` keyed by the new uuid. The user's first
+        real ``/send-message`` for that id is what materialises the session
+        via ``claude --session-id`` (see send-message route).
+
+        Why no spawn here: an auto-greeting that materialises the JSONL would
+        appear as the user's first turn in the conversation, which is wrong.
+        A new session must land empty.
+
+        Defaults (all overridable):
+          * ``cwd`` — last-used cwd from the most-recent indexed session.
+          * ``permission_mode`` — ``AppConfig.claude_default_permission_mode``.
+        """
+        import uuid
+
+        # Resolve cwd default → last-used session's cwd. Query directly
+        # (not via get_sessions) because we want to fall back to any session
+        # with a cwd on disk, including untitled ones.
+        cwd = req.cwd
+        if not cwd:
+            async with Database(db_path) as db:
+                assert db._conn is not None
+                async with db._conn.execute(
+                    "SELECT cwd FROM sessions WHERE cwd IS NOT NULL "
+                    "ORDER BY updated_at DESC"
+                ) as cursor:
+                    rows = await cursor.fetchall()
+            for row in rows:
+                candidate = row["cwd"]
+                if candidate and Path(candidate).is_dir():
+                    cwd = candidate
+                    break
+        if not cwd:
+            raise HTTPException(
+                status_code=400,
+                detail="cwd is required and no prior session cwd is available",
+            )
+        if not Path(cwd).is_dir():
+            raise HTTPException(status_code=404, detail=f"Directory not found: {cwd}")
+
+        # We default to plain `claude` for new sessions — the binary that
+        # writes the JSONL determines which data_path the session shows up
+        # under, and `claude` is the conventional default. We validate the
+        # bin up front so the caller learns about a missing CLI now rather
+        # than only on their first message.
+        bin_name = "claude"
+        if shutil.which(bin_name) is None:
+            raise HTTPException(
+                status_code=503, detail=f"{bin_name} not found on PATH"
+            )
+
+        permission_mode = (
+            req.permission_mode
+            or _state["config"].claude_default_permission_mode
+            or "dontAsk"
+        )
+        new_id = str(uuid.uuid4())
+        async with app.state.pending_sessions_lock:
+            app.state.pending_sessions[new_id] = _PendingSession(
+                cwd=cwd,
+                permission_mode=permission_mode,
+                bin_name=bin_name,
+            )
+        return {
+            "session_id": new_id,
+            "cwd": cwd,
+            "permission_mode": permission_mode,
+        }
 
     @app.post("/api/sessions/{session_id}/send-message")
     async def send_message(session_id: str, req: _SendMessageRequest):
@@ -869,7 +1036,49 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         async with Database(db_path) as db:
             detail = await db.get_session_detail(session_id)
         if detail is None:
-            raise HTTPException(status_code=404, detail="Session not found")
+            # Existing session row absent — check the pending-session map (issue #9):
+            # a brand-new session minted by /api/sessions/new lives only here until
+            # its first user message lands. Pop atomically so we can't double-spawn
+            # if two clients send concurrently.
+            pending: _PendingSession | None = None
+            async with app.state.pending_sessions_lock:
+                pending = app.state.pending_sessions.pop(session_id, None)
+            if pending is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            if not Path(pending.cwd).is_dir():
+                # Cwd vanished between mint and first message — restore the entry so
+                # a retry after the user fixes their disk doesn't lose the id.
+                async with app.state.pending_sessions_lock:
+                    app.state.pending_sessions[session_id] = pending
+                raise HTTPException(
+                    status_code=404, detail=f"Directory not found: {pending.cwd}"
+                )
+            if shutil.which(pending.bin_name) is None:
+                async with app.state.pending_sessions_lock:
+                    app.state.pending_sessions[session_id] = pending
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"{pending.bin_name} not found on PATH",
+                )
+            permission_mode = req.permission_mode or pending.permission_mode
+            model = req.model or ""
+            result = await _runner.submit(
+                session_id,
+                cwd=pending.cwd,
+                bin_name=pending.bin_name,
+                text=text,
+                permission_mode=permission_mode,
+                model=model,
+                new_session=True,
+                auto_stop_quiet_default=_state[
+                    "config"
+                ].claude_auto_stop_quiet_default_turns,
+            )
+            response: dict = {"ok": True, "permission_mode": permission_mode}
+            if result is not None:
+                response["result_text"] = result.get("result_text")
+                response["is_error"] = bool(result.get("is_error"))
+            return response
         if detail.is_fork:
             raise HTTPException(
                 status_code=422,
@@ -891,12 +1100,14 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             or _state["config"].claude_default_permission_mode
             or "dontAsk"
         )
+        model = req.model or ""
         result = await _runner.submit(
             session_id,
             cwd=cwd,
             bin_name=bin_name,
             text=text,
             permission_mode=permission_mode,
+            model=model,
             auto_stop_quiet_default=_state[
                 "config"
             ].claude_auto_stop_quiet_default_turns,
@@ -986,6 +1197,24 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="Recap not found")
         return {"ok": True, "dismissed": True}
 
+    @app.put("/api/sessions/{session_id}/title")
+    async def set_session_title(session_id: str, req: _SessionTitleRequest):
+        """Persist a user-supplied rename and broadcast to other clients.
+
+        Body: ``{"title": str | null}`` — null/blank clears the override.
+        Returns ``{ok, id, custom_title}`` so the caller can reconcile.
+        """
+        async with Database(db_path) as db:
+            existing = await db.get_session_file_path(session_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            stored = await db.set_custom_title(session_id, req.title)
+        # The detail cache embeds custom_title — drop it so the next read
+        # rebuilds with the override.
+        _invalidate_detail_cache(session_id)
+        _bus.publish({"type": "session-meta", "id": session_id, "title": stored})
+        return {"ok": True, "id": session_id, "custom_title": stored}
+
     @app.post("/api/refresh")
     async def refresh():
         async with Database(db_path) as db:
@@ -994,6 +1223,11 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
 
     @app.get("/api/events")
     async def events(request: Request):
+        # Each /api/events connection gets its own queue off the shared
+        # broadcaster. Without this, multiple clients on the same server
+        # would steal events from each other (issue #11).
+        client_queue = _bus.subscribe()
+
         async def _wait_disconnect() -> None:
             # request.is_disconnected() is a NON-BLOCKING peek (uses a pre-cancelled
             # anyio scope) — it returns False immediately. To actually block until the
@@ -1007,7 +1241,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             disconnect_task = asyncio.ensure_future(_wait_disconnect())
             try:
                 while True:
-                    queue_get = asyncio.ensure_future(_watch_queue.get())
+                    queue_get = asyncio.ensure_future(client_queue.get())
                     try:
                         done, _ = await asyncio.wait(
                             {queue_get, disconnect_task},
@@ -1022,15 +1256,14 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                         return
                     if queue_get in done:
                         event = queue_get.result()
-                        async with Database(db_path) as db:
-                            await _scan_one(db, event.path)
-                        yield f"data: {_sse_event_data(event.path)}\n\n"
+                        yield f"data: {json.dumps(event)}\n\n"
                     else:
                         # Timeout — emit keepalive and poll again.
                         queue_get.cancel()
                         yield ": keepalive\n\n"
             finally:
                 disconnect_task.cancel()
+                _bus.unsubscribe(client_queue)
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -1172,13 +1405,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         )
         return {"path": str(resolved), "entries": dirs + files}
 
-    class FsWriteBody(BaseModel):
-        path: str
-        content: str
-
     @app.put("/api/fs/write")
-    async def fs_write(body: FsWriteBody):
-        _require_edit()
+    async def fs_write(body: _FsWriteBody):
+        # File-preview editing is always available; edit_enabled gates only
+        # message edit/delete on the chat side.
         prefixes = await _allowed_prefixes()
         resolved = _validate_fs_path(body.path, prefixes)
         if resolved.is_dir():
@@ -1250,6 +1480,14 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             candidate = static_dir / full_path
             if full_path and candidate.exists() and candidate.is_file():
                 return _FileResponse(str(candidate))
+            # Hashed asset misses must 404, NOT fall through to index.html.
+            # Otherwise a browser holding a stale chunk hash (e.g. after a
+            # rebuild) gets text/html for an /assets/<old-hash>.js request
+            # and throws "Failed to fetch dynamically imported module" with
+            # no actionable error — see frontend lazyWithRetry which only
+            # triggers its reload prompt on a real fetch failure.
+            if full_path.startswith("assets/"):
+                raise HTTPException(status_code=404)
             index = static_dir / "index.html"
             return _FileResponse(
                 str(index),

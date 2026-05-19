@@ -81,7 +81,6 @@ export function FileViewer() {
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [editEnabled, setEditEnabled] = useState<boolean>(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Panel width — drag-resizable, persisted across sessions.
@@ -92,13 +91,6 @@ export function FileViewer() {
 
   // "Show raw" toggle for markdown files (overrides rendered view).
   const [showRawMarkdown, setShowRawMarkdown] = useState(false);
-
-  // Resolve edit-enabled flag from config (cheap one-shot, cache in state).
-  useEffect(() => {
-    api.getConfig()
-      .then((cfg) => setEditEnabled(cfg.edit_enabled))
-      .catch(() => setEditEnabled(false));
-  }, []);
 
   // Clamp stored width into a valid range for the current viewport. Runs once
   // on mount and whenever the window resizes — keeps the panel sane if the
@@ -333,8 +325,7 @@ export function FileViewer() {
         transition: resizing ? "none" : "opacity 180ms ease-out",
       }}
     >
-      {/* Resize handle on the left edge. 6px wide hit target with a 1px visual
-          line that brightens on hover/drag. */}
+      {/* Resize handle on the left edge. */}
       <div
         onMouseDown={startResize}
         title="Drag to resize"
@@ -343,10 +334,10 @@ export function FileViewer() {
           top: 0,
           bottom: 0,
           left: 0,
-          width: "6px",
+          width: "4px",
           cursor: "col-resize",
           zIndex: 2,
-          background: resizing ? "var(--accent-orange)" : "transparent",
+          background: resizing ? "var(--border-default)" : "transparent",
           transition: "background 0.12s",
         }}
         onMouseEnter={(e) => {
@@ -432,7 +423,7 @@ export function FileViewer() {
               {showRawMarkdown ? "Preview" : "Raw"}
             </button>
           )}
-          {file && !editing && editEnabled && (
+          {file && !editing && (
             <button
               onClick={startEdit}
               title="Edit"

@@ -288,7 +288,7 @@ def parse_session(path: Path) -> tuple[Session, list[Message]]:
                         ).strip()
                         text = text.splitlines()[0].strip() if text else ""
                         if text:
-                            session.title = text[:80] + ("…" if len(text) > 80 else "")
+                            session.title = text
                             break
                 if session.title is not None:
                     break

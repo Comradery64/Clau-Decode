@@ -100,6 +100,10 @@ class Session(BaseModel):
     project_id: str
     file_path: str
     title: Optional[str] = None
+    # Server-side rename override (issue #11). Frontend overlays this on top
+    # of `title` so the original parsed title stays available for display
+    # fallback and search debugging.
+    custom_title: Optional[str] = None
     model: Optional[str] = None
     started_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
