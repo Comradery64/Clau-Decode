@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { Session } from "../../api/types";
+import type { RunnerStatus, Session } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
 import { prefetch } from "../../api/sessionCache";
 import { lsGetMap, lsPutMap, LS } from "../../utils/localStorage";
-import { emit } from "../../utils/events";
+import { emit, on } from "../../utils/events";
 import { useLsSet } from "../../utils/useLsSet";
 import { formatRelativeBucket } from "../../utils/formatRelative";
 import { IconStar, IconRename, IconArchive, IconCopy, IconTerminal, IconFolder, IconBell } from "../ui/icons";
@@ -66,9 +66,16 @@ interface SessionItemProps {
   session: Session;
   isActive: boolean;
   onClick: () => void;
+  /**
+   * Live runner status for this session — populated by the Sidebar's shared
+   * polling hook (issue #12). Undefined means "not yet polled" or "no Headless
+   * runner managed by clau-decode" (e.g. session driven by external CLI).
+   * Kept as a prop so SessionItem stays presentational and unit-testable.
+   */
+  runnerStatus?: RunnerStatus;
 }
 
-export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
+export function SessionItem({ session, isActive, onClick, runnerStatus }: SessionItemProps) {
   const [hovered, setHovered] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null);
@@ -77,9 +84,45 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
   const archived = useLsSet(LS.ARCHIVED, "archive");
   const isStarred = starred.has(session.id);
   const isArchived = archived.has(session.id);
+  // Issue #11: server-side custom_title is the source of truth; localStorage
+  // is just a write-through cache for offline resilience + flash-of-stale
+  // prevention before the first /api/sessions response.
   const [customTitle, setCustomTitle] = useState<string | null>(
-    () => lsGetMap(LS.RENAMED)[session.id] ?? null
+    () => session.custom_title ?? lsGetMap(LS.RENAMED)[session.id] ?? null
   );
+
+  // When the server-side override is present, reconcile to it and refresh
+  // the cache. When null, we *don't* preemptively clear the cache — it may
+  // be a legitimate cached rename made offline or before the API existed.
+  // Explicit clears flow through the "rename" bus (see effect below) where
+  // we trust the empty payload as authoritative.
+  useEffect(() => {
+    if (session.custom_title) {
+      setCustomTitle(session.custom_title);
+      const m = lsGetMap(LS.RENAMED);
+      if (m[session.id] !== session.custom_title) {
+        m[session.id] = session.custom_title;
+        lsPutMap(LS.RENAMED, m);
+      }
+    }
+  }, [session.id, session.custom_title]);
+
+  // SSE-driven rename reconciliation: another client (or our own write)
+  // emits "rename" on the bus → update in-memory state and the cache.
+  useEffect(() => {
+    return on("rename", ({ id, title }) => {
+      if (id !== session.id) return;
+      const normalised = title.trim() === "" ? null : title;
+      setCustomTitle(normalised);
+      const m = lsGetMap(LS.RENAMED);
+      if (normalised === null) {
+        delete m[session.id];
+      } else {
+        m[session.id] = normalised;
+      }
+      lsPutMap(LS.RENAMED, m);
+    });
+  }, [session.id]);
 
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const displayTitle = customTitle ?? session.title ?? "Untitled";
@@ -136,12 +179,32 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
   }, []);
 
   const commitRename = useCallback((value: string) => {
+    // Optimistic: paint the new title immediately. Write-through cache so a
+    // reload before the request returns still shows the user's intent.
+    const trimmed = value.trim();
+    const optimistic = trimmed === "" ? null : trimmed;
     const m = lsGetMap(LS.RENAMED);
-    m[session.id] = value;
+    if (optimistic === null) {
+      delete m[session.id];
+    } else {
+      m[session.id] = optimistic;
+    }
     lsPutMap(LS.RENAMED, m);
-    setCustomTitle(value);
+    setCustomTitle(optimistic);
     setIsRenaming(false);
-    emit("rename", { id: session.id, title: value });
+    emit("rename", { id: session.id, title: optimistic ?? "" });
+    // Server-authoritative reconcile. The SSE session-meta event from our
+    // own write will round-trip through the bus, but we also reconcile here
+    // in case the response disagrees (e.g. whitespace stripping).
+    api
+      .setSessionTitle(session.id, optimistic)
+      .then((res) => {
+        emit("rename", { id: session.id, title: res.custom_title ?? "" });
+      })
+      .catch(() => {
+        // Keep the optimistic value — localStorage cache provides offline
+        // resilience and the next reload will hit /api/sessions to re-sync.
+      });
   }, [session.id]);
 
   const cancelRename = useCallback(() => {
@@ -201,7 +264,22 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
               while (j >= 0 && parts[j] === "config") j--;
               if (j >= 0) bin = parts[j].replace(/^\./, "");
             }
-            navigator.clipboard.writeText(`${bin} -r ${session.id}`).catch(() => {});
+            let wt = "";
+            if (session.is_worktree) {
+              if (session.cwd) {
+                const m = "/.claude/worktrees/";
+                const wi = session.cwd.indexOf(m);
+                if (wi >= 0) wt = session.cwd.slice(wi + m.length);
+              }
+              if (!wt && idx >= 0 && parts[idx + 1]) {
+                const mangled = parts[idx + 1];
+                const mk = "worktrees-";
+                const wi = mangled.indexOf(mk);
+                if (wi >= 0) wt = mangled.slice(wi + mk.length);
+              }
+            }
+            const cmd = wt ? `${bin} -w ${wt} -r ${session.id}` : `${bin} -r ${session.id}`;
+            navigator.clipboard.writeText(cmd).catch(() => {});
           },
         },
         { kind: "separator" as const },
@@ -296,7 +374,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                 alignItems: "center",
                 flex: 1,
                 minWidth: 0,
-                padding: "5px 12px",
+                padding: "5px 8px 5px 12px",
                 gap: "4px",
                 background: "none",
                 border: "none",
@@ -325,10 +403,6 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                   color: "var(--text-primary)",
                   fontWeight: isActive ? 500 : 400,
                   lineHeight: "1.35",
-                  // Single line — users widen the sidebar (drag handle on the
-                  // right edge) to fit long titles in full. When the panel is
-                  // narrower than the title, ellipsis truncates and the
-                  // title-attribute tooltip reveals the full text on hover.
                   whiteSpace: "nowrap",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
@@ -337,6 +411,7 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                 {displayTitle}
               </span>
 
+              {/* Bell — right side, after title */}
               {bellState !== "hidden" && (
                 <span
                   aria-label="Awaiting your reply"
@@ -354,6 +429,41 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
                   <IconBell />
                 </span>
               )}
+
+              {/* Busy marker — pulses while the Headless runner subprocess
+                  is alive (issue #12). Quiet-warning shifts the colour to
+                  warn after the watchdog window so the user knows the
+                  process is alive but not producing output. */}
+              {runnerStatus?.busy && (
+                <span
+                  data-testid="runner-busy-marker"
+                  data-quiet-warning={runnerStatus.quiet_warning ? "true" : "false"}
+                  aria-label={
+                    runnerStatus.quiet_warning
+                      ? `Running, quiet for ${Math.round(runnerStatus.quiet_age_seconds ?? 0)}s`
+                      : "Running"
+                  }
+                  title={
+                    runnerStatus.quiet_warning && runnerStatus.quiet_age_seconds != null
+                      ? `Running — quiet for ${Math.round(runnerStatus.quiet_age_seconds)}s`
+                      : "Running"
+                  }
+                  style={{
+                    flexShrink: 0,
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "50%",
+                    background: runnerStatus.quiet_warning
+                      ? "var(--accent-orange)"
+                      : "var(--accent-green, #2ea043)",
+                    boxShadow: runnerStatus.quiet_warning
+                      ? "0 0 0 0 var(--accent-orange)"
+                      : "0 0 0 0 var(--accent-green, #2ea043)",
+                    animation: "clau-runner-pulse 1.6s ease-out infinite",
+                    marginRight: "2px",
+                  }}
+                />
+              )}
             </button>
 
             <button
@@ -363,30 +473,24 @@ export function SessionItem({ session, isActive, onClick }: SessionItemProps) {
               className={isActive || menuOpen ? "" : "hover-actions"}
               style={{
                 position: "absolute",
-                right: "8px",
-                top: "50%",
-                transform: "translateY(-50%)",
+                right: "0",
+                top: 0,
+                bottom: 0,
                 color: menuOpen ? "var(--text-primary)" : "var(--text-tertiary)",
                 fontSize: "14px",
-                lineHeight: 1,
-                padding: "2px 5px",
-                borderRadius: "var(--radius-sm)",
+                lineHeight: "30px",
+                padding: "0 8px",
                 letterSpacing: "1px",
-                background: menuOpen ? "var(--bg-sidebar-hover)" : "none",
+                background: isActive
+                  ? "var(--bg-sidebar-active)"
+                  : hovered || menuOpen
+                  ? "var(--bg-sidebar-hover)"
+                  : "var(--bg-sidebar)",
                 border: "none",
                 cursor: "pointer",
                 outline: "none",
                 fontFamily: "var(--font-ui)",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-sidebar-hover)";
-                (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
-              }}
-              onMouseLeave={(e) => {
-                if (!menuOpen) {
-                  (e.currentTarget as HTMLButtonElement).style.background = "none";
-                  (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)";
-                }
+                transition: "background var(--transition-fast)",
               }}
               aria-label="Session options"
             >

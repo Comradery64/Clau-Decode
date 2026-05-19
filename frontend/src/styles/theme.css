@@ -121,7 +121,7 @@
   /* Code block — dark mode stays terminal-dark */
   --bg-code-block: #1f1e1c;
   --bg-code-block-header: #262624;
-  --border-code-block: rgba(187, 187, 186, 0.06);
+  --border-code-block: rgba(187, 187, 186, 0.22);
   --text-code-lang: #8a887f;
   /* Syntax highlighting vars — dark mode */
   /* Claude.ai-style dark palette: purple keywords, yellow types/functions,
@@ -192,6 +192,14 @@ body {
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 @keyframes skeleton-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+/* Sidebar runner-busy marker (issue #12). Subtle pulse so a glance at the
+   sidebar tells you which sessions have a live Headless subprocess. */
+@keyframes clau-runner-pulse {
+  0%   { transform: scale(0.9); opacity: 0.75; }
+  50%  { transform: scale(1.0); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.75; }
+}
 
 @keyframes search-highlight {
   0%   { background: transparent; }
