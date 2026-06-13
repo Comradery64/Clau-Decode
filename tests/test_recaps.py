@@ -1,4 +1,9 @@
-"""Tests for the recap feature: DB layer + HTTP routes."""
+"""Tests for the recap feature: DB layer + HTTP routes.
+
+Recap uses a hidden-PTY fork-session spawn. The integration here uses
+``fake_claude_tui.py``, which mirrors real claude's TUI behavior (TTY
+required, cbreak, emits ``\\x1b[?2004h``, writes user+assistant JSONL on CR).
+"""
 
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ from clau_decode.db import Database
 from clau_decode.models import AppConfig, Project, Session
 
 
-FAKE = Path(__file__).parent / "fixtures" / "fake_claude.py"
+FAKE = Path(__file__).parent / "fixtures" / "fake_claude_tui.py"
 
 
 # ---------------------------------------------------------------------------
@@ -76,19 +81,42 @@ async def _client(app) -> AsyncClient:
 
 @pytest.fixture
 async def recap_env(tmp_path, monkeypatch) -> AsyncIterator[dict]:
-    """Tmp DB + a real session + ``claude`` shim that emits a recap result."""
+    """Tmp DB + a real session + ``claude`` TUI shim that echoes a canned
+    recap response.
+
+    Path layout matches what real claude produces: the source JSONL lives
+    at ``<CLAUDE_CONFIG_DIR>/projects/<encoded_cwd>/<session_id>.jsonl``
+    where ``encoded_cwd = '-' + cwd.replace('/', '-')``. The recap runner
+    derives the fork JSONL path from the source JSONL's parent, so the
+    test setup MUST mirror that layout — otherwise the runner won't find
+    the fake's output.
+    """
     db_path = tmp_path / "test.db"
-    projects = tmp_path / "root" / ".claude" / "projects" / "-runtime"
-    projects.mkdir(parents=True)
-    session_id = "22222222-3333-4444-5555-666666666666"
-    file_path = projects / f"{session_id}.jsonl"
-    file_path.write_text("")
+    config_dir = tmp_path / "root"
     cwd = tmp_path / "cwd"
     cwd.mkdir()
+    # Resolve symlinks so the encoded path matches what the spawned
+    # ``claude`` child sees via ``os.getcwd()``. On macOS ``/tmp`` is a
+    # symlink to ``/private/tmp``; without ``resolve()`` the test would
+    # encode ``--tmp-...`` while the fake writes to ``--private-tmp-...``.
+    canonical_cwd = cwd.resolve()
+
+    # Mirror the real claude project layout under the test config dir
+    # so the recap runner's ``source_jsonl_path.parent / fork.jsonl``
+    # lands in the same directory the fake writes to. The fake reads
+    # ``CLAUDE_CONFIG_DIR`` to pick its output root, so we set both.
+    encoded_cwd = "-" + str(canonical_cwd).replace("/", "-")
+    project_dir = config_dir / "projects" / encoded_cwd
+    project_dir.mkdir(parents=True)
+    session_id = "22222222-3333-4444-5555-666666666666"
+    file_path = project_dir / f"{session_id}.jsonl"
+    file_path.write_text("")
+
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    _write_shim(bin_dir, extra_argv="--recap-mode --recap-text bullet-recap")
+    _write_shim(bin_dir, extra_argv="--canned-response bullet-recap")
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
 
     await _seed_session(
         db_path,
@@ -102,6 +130,7 @@ async def recap_env(tmp_path, monkeypatch) -> AsyncIterator[dict]:
         "file_path": str(file_path),
         "session_id": session_id,
         "bin_dir": bin_dir,
+        "config_dir": config_dir,
     }
 
 
@@ -267,18 +296,22 @@ async def test_dismiss_endpoint_happy_path(recap_env):
 
 
 # ---------------------------------------------------------------------------
-# Argv verification — recap uses --model haiku + --fork-session + --no-session-persistence
+# Argv verification — recap uses a forked hidden PTY and inherits model choice.
 # ---------------------------------------------------------------------------
 
 
-async def test_recap_uses_haiku_in_argv(recap_env, monkeypatch):
+async def test_recap_argv_shape(recap_env, monkeypatch):
+    """After Phase 8 recap spawns ``claude --session-id <fork>
+    --resume <source> --fork-session --permission-mode dontAsk`` on a
+    hidden PTY (TUI mode, no ``--model`` override).
+    """
     e = recap_env
     capture = e["bin_dir"].parent / "recap_argv.json"
     bin_dir2 = e["bin_dir"].parent / "bin_capture_recap"
     bin_dir2.mkdir()
     _write_shim(
         bin_dir2,
-        extra_argv=f"--capture-argv {capture} --recap-mode --recap-text captured",
+        extra_argv=f"--capture-argv {capture} --canned-response captured",
     )
     monkeypatch.setenv("PATH", f"{bin_dir2}{os.pathsep}{os.environ['PATH']}")
 
@@ -290,11 +323,20 @@ async def test_recap_uses_haiku_in_argv(recap_env, monkeypatch):
     deadline = time.monotonic() + 5.0
     while not capture.exists() and time.monotonic() < deadline:
         await asyncio.sleep(0.02)
-    assert capture.exists(), "fake_claude never wrote argv capture file"
+    assert capture.exists(), "fake_claude_tui never wrote argv capture file"
     argv = json.loads(capture.read_text())
-    assert "--model" in argv
-    assert argv[argv.index("--model") + 1] == "haiku"
+    assert "--session-id" in argv
     assert "--fork-session" in argv
-    assert "--no-session-persistence" in argv
-    # Recap must not use --input-format stream-json (per the verified contract).
+    assert "--resume" in argv
+    assert argv[argv.index("--resume") + 1] == e["session_id"]
+    # The fork must be spawned with a fresh session id, not the source's.
+    assert argv[argv.index("--session-id") + 1] != e["session_id"]
+    # TUI mode: no alternate transport plumbing or retired non-TUI flags.
+    retired_one_shot_flag = "--" + "print"
+    assert retired_one_shot_flag not in argv
     assert "--input-format" not in argv
+    no_persist_flag = "--no-session-" + "persistence"
+    assert no_persist_flag not in argv
+    # --model is intentionally NOT passed; let the fork inherit the source
+    # session's model so cc-mirror provider mappings stay valid.
+    assert "--model" not in argv

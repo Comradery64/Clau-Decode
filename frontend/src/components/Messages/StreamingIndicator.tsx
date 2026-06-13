@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { STREAMING } from "../../config/ui";
 import { useCycle } from "./hooks/useCycle";
+import { LoadingAnimation } from "../ui/LoadingAnimation";
 
 const THINKING_WORDS: string[] = [
   "Accomplishing", "Actioning", "Actualizing", "Architecting", "Baking",
@@ -75,7 +76,6 @@ export function StreamingIndicator({
   const [elapsed, setElapsed] = useState(0);
   const word = useMemo(() => THINKING_WORDS[Math.floor(Math.random() * THINKING_WORDS.length)], []);
   const tip = useCycle(TIPS, STREAMING.TIP_CYCLE_MS);
-  const dotPhase = useCycle(["0", "1", "2", "3"], STREAMING.DOT_PULSE_MS);
 
   useEffect(() => {
     const start = lastUserTimestamp ? new Date(lastUserTimestamp).getTime() : Date.now();
@@ -84,8 +84,6 @@ export function StreamingIndicator({
     const id = setInterval(tick, STREAMING.ELAPSED_TICK_MS);
     return () => clearInterval(id);
   }, [lastUserTimestamp]);
-
-  const dotOpacity = [1, 0.6, 0.3, 0.6][Number(dotPhase)];
 
   const kTokens =
     totalInputTokens >= 1000
@@ -117,16 +115,7 @@ export function StreamingIndicator({
           color: "var(--text-muted)",
         }}
       >
-        <span
-          style={{
-            color: "var(--accent-orange)",
-            opacity: dotOpacity,
-            transition: "opacity 0.2s",
-            fontSize: "10px",
-          }}
-        >
-          ●
-        </span>
+        <LoadingAnimation width="21px" />
         <span>{word}…</span>
         <span style={{ opacity: 0.55 }}>({stats})</span>
       </div>

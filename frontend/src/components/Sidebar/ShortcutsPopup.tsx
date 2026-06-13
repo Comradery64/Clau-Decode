@@ -2,6 +2,7 @@ import { useAppStore } from "../../store";
 
 const shortcuts = [
   { keys: "⌘K", action: "Open search" },
+  { keys: "⇧⌘\\", action: "Cycle view: Decoded → Native → Split" },
   { keys: "⇧⌘,", action: "Open settings" },
   { keys: "⇧⌘O", action: "Start new task (new Claude session)" },
   { keys: "⌘O", action: "Expand / collapse all tool blocks" },
@@ -12,6 +13,7 @@ const shortcuts = [
   { keys: "Ctrl+E", action: "Cursor to end of line (chat)" },
   { keys: "Ctrl+K", action: "Delete to end of line (chat)" },
   { keys: "⌘S", action: "Stash draft / save file edit" },
+  { keys: "⌘/", action: "Show / hide this shortcuts menu" },
   { keys: "Esc", action: "Close dialog / search / chat" },
 ];
 

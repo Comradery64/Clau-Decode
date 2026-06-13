@@ -4,6 +4,38 @@ All notable changes to Clau-Decode will be documented in this file.
 
 The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the project is in the 0.x series, breaking changes may land in any minor release; we'll call them out clearly.
 
+## [Unreleased]
+
+### Changed
+
+- **PTY runner is the canonical send path.** Chat-input messages are now
+  written through a hidden pseudo-terminal attached to the local `claude`
+  CLI in interactive TUI mode, so they stay inside the user's
+  subscription. The legacy `claude --print` (stream-json) runner has been
+  removed alongside its three HTTP endpoints
+  (`/api/sessions/{id}/send-message`, `/api/sessions/{id}/stop`,
+  `/api/sessions/{id}/runner-status`). The sidebar busy badge keeps
+  working through `/api/runner-status?ids=...` (batch), now derived
+  purely from `PtyManager` state.
+- **Recap runs through a forked PTY too.** `src/clau_decode/recap_runner.py`
+  now spawns `claude --session-id <fork> --resume <source> --fork-session
+  --permission-mode dontAsk` on a hidden PTY, writes the recap prompt
+  one byte at a time (real claude's TUI fork drops bulk writes during
+  bootstrap), polls the fork's JSONL for the assistant turn, and unlinks
+  the fork JSONL on the way out. No `claude --print` spawn site remains
+  in the tree — clau-decode stays inside the no-additional-cost envelope
+  after the 2026-06-15 billing change.
+
+### Removed
+
+- Frontend: `api.sendMessage`, `api.stopMessage`, `api.getRunnerStatus`
+  (single), and the `useQuietWarning` hook + `QuietWarningBanner`.
+  Quiet-warning was a `default`-mode watchdog specific to the headless
+  runner; the PTY's `pty_input_stalled` SSE event covers the equivalent
+  failure mode with a deterministic signal.
+- Backend: `claude_runner.py` is gone. `RunnerStatus` shed the
+  `quiet_warning` and `quiet_age_seconds` fields.
+
 ## [0.2.0] - 2026-05-18
 
 ### Added

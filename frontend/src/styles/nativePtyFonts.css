@@ -1,0 +1,73 @@
+/*
+ * Bundled monospace fonts for the Native PTY view. All OFL-licensed and shipped
+ * locally as woff2 (fetched from fontsource / official repos) so the Settings
+ * font picker actually renders these on any machine — the canvas renderer can
+ * only paint fonts the browser has. Family names here must match the stacks in
+ * src/constants/nativePtyFonts.ts. Regular weight only; bold/italic are
+ * synthesized by the browser. License-gated fonts (Berkeley Mono, TheSansMono
+ * Condensed, Antithesis, Corbi Mono S) are intentionally NOT bundled.
+ */
+
+@font-face {
+  font-family: "Monaspace Argon";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/monaspace-argon.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Source Code Pro";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/source-code-pro.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Fira Code";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/fira-code.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/jetbrains-mono.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Libertinus Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/libertinus-mono.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Xanh Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/xanh-mono.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JuliaMono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/julia-mono.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Spline Sans Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/spline-sans-mono.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Ioskeley Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/ioskeley-mono.woff2") format("woff2");
+}

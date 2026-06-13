@@ -3,9 +3,8 @@ import { api } from "../../api/client";
 import { getCached, setCached } from "../../api/sessionCache";
 import type { SearchHit } from "../../api/types";
 import { useAppStore } from "../../store";
-import { LS } from "../../utils/localStorage";
 import { useDebounce } from "../../utils/useDebounce";
-import { useLsSet } from "../../utils/useLsSet";
+import { useArchivedSet } from "../../utils/sessionMeta";
 import { formatRelative } from "../../utils/formatRelative";
 import { navigateTo } from "../../router";
 import { renderSnippet } from "../../utils/renderSnippet";
@@ -13,7 +12,7 @@ import { ScrollContainer } from "../ScrollContainer";
 
 export function DashboardSearch() {
   const setPendingScrollMessageId = useAppStore((s) => s.setPendingScrollMessageId);
-  const archived = useLsSet(LS.ARCHIVED, "archive");
+  const archived = useArchivedSet();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchHit[]>([]);
   const [loading, setLoading] = useState(false);

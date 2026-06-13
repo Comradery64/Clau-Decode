@@ -1,7 +1,53 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { Session } from "../../api/types";
+import type { PtyOwnership, Session } from "../../api/types";
 import { api } from "../../api/client";
+import { useAppStore } from "../../store";
 import { emit } from "../../utils/events";
+import { IconTerminal } from "../ui/icons";
+
+// Small status dot for the Phase-0 ownership badge. Inline-rendered
+// next to the model label so it doesn't disturb existing header layout.
+function OwnershipBadge({ ownership }: { ownership: PtyOwnership | null }) {
+  if (!ownership) return null;
+  // Phase-1: prefer the structured sidecar metadata when present —
+  // it tells us owner_kind/hostname/ui_endpoint, not just a pid.
+  const fo = ownership.foreign_owner;
+  const terminalLabel = fo
+    ? `Open in ${fo.kind} @ ${fo.hostname} (pid ${fo.pid})`
+        + (fo.ui_endpoint ? ` — ${fo.ui_endpoint}` : "")
+    : ownership.foreign_pids.length > 0
+      ? `Open in another terminal (pid ${ownership.foreign_pids.join(", ")})`
+      : "Open in another terminal";
+  const palette = {
+    ours: {
+      color: "var(--accent-green, #6aaa64)",
+      label: "Attached here (clau-decode)",
+    },
+    terminal: {
+      color: "var(--accent-amber, #c9b870)",
+      label: terminalLabel,
+    },
+    idle: {
+      color: "var(--text-tertiary)",
+      label: "Idle — no claude attached",
+    },
+  } as const;
+  const p = palette[ownership.status];
+  return (
+    <span
+      title={p.label}
+      aria-label={p.label}
+      style={{
+        display: "inline-block",
+        width: "8px",
+        height: "8px",
+        borderRadius: "50%",
+        background: p.color,
+        flexShrink: 0,
+      }}
+    />
+  );
+}
 
 function formatModelDisplay(model: string): string {
   const withoutPrefix = model.replace(/^claude-/i, "");
@@ -21,26 +67,33 @@ function IconDownload() {
   );
 }
 
-function IconRefresh() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="23 4 23 10 17 10"/>
-      <polyline points="1 20 1 14 7 14"/>
-      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-    </svg>
-  );
-}
-
 interface ConversationHeaderProps {
   session: Session | null;
+  ownership: PtyOwnership | null;
+  viewMode?: "decoded" | "native" | "sbs";
+  onViewModeChange?: (mode: "decoded" | "native" | "sbs") => void;
+  nativeStateLabel?: string | null;
 }
 
-export function ConversationHeader({ session }: ConversationHeaderProps) {
+export function ConversationHeader({
+  session,
+  ownership,
+  viewMode = "decoded",
+  onViewModeChange,
+  nativeStateLabel = null,
+}: ConversationHeaderProps) {
   const title = session === null ? "Loading…" : (session.title ?? "Untitled");
   const modelLabel = session?.model ? formatModelDisplay(session.model) : null;
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const remoteClient = useAppStore((s) => s.hostInfo?.is_remote_client === true);
+  const terminalDisabled = !session || session.is_fork || remoteClient;
+  const terminalTitle = session?.is_fork
+    ? "Open in terminal (fork — not resumable)"
+    : remoteClient
+    ? "Open in terminal (host-only)"
+    : "Open in terminal";
 
   const handleClickOutside = useCallback((e: MouseEvent) => {
     if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -129,6 +182,60 @@ export function ConversationHeader({ session }: ConversationHeaderProps) {
 
         {/* Right side */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+          <div
+            role="group"
+            aria-label="Conversation view"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              padding: "2px",
+              border: "1px solid var(--border-subtle)",
+              borderRadius: "var(--radius-sm)",
+              background: "var(--bg-subtle)",
+            }}
+          >
+            {(["decoded", "native", "sbs"] as const).map((mode) => {
+              const active = viewMode === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={active}
+                  title={`${mode === "decoded" ? "Decoded" : mode === "native" ? "Native" : "Split"} view · ⇧⌘\\ cycles`}
+                  onClick={() => onViewModeChange?.(mode)}
+                  style={{
+                    border: "none",
+                    borderRadius: "calc(var(--radius-sm) - 2px)",
+                    background: active ? "var(--bg-base)" : "transparent",
+                    color: active ? "var(--text-primary)" : "var(--text-secondary)",
+                    boxShadow: active ? "0 1px 2px rgba(0, 0, 0, 0.08)" : "none",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    lineHeight: 1,
+                    padding: "5px 8px",
+                    transition: "background var(--transition-fast), color var(--transition-fast)",
+                  }}
+                >
+                  {mode === "decoded" ? "Decoded" : mode === "native" ? "Native" : "Split"}
+                </button>
+              );
+            })}
+          </div>
+          <OwnershipBadge ownership={ownership} />
+          {nativeStateLabel && (
+            <span
+              style={{
+                fontSize: "12px",
+                color: "var(--text-secondary)",
+                padding: "4px 7px",
+                border: "1px solid var(--border-subtle)",
+                borderRadius: "var(--radius-sm)",
+                background: "var(--bg-subtle)",
+              }}
+            >
+              {nativeStateLabel}
+            </span>
+          )}
           {modelLabel && (
             <span
               style={{
@@ -225,11 +332,25 @@ export function ConversationHeader({ session }: ConversationHeaderProps) {
           )}
 
           <button
-            onClick={() => emit("refresh", undefined)}
-            title="Refresh (⌘R / ⌘J)"
-            aria-label="Refresh"
-            style={btnBase}
+            onClick={() => {
+              if (!session) return;
+              api.openTerminal(session.id).catch((e: unknown) => {
+                emit("toast", {
+                  message: e instanceof Error ? e.message : "Couldn't open a terminal",
+                  kind: "error",
+                });
+              });
+            }}
+            disabled={terminalDisabled}
+            title={terminalTitle}
+            aria-label={terminalTitle}
+            style={{
+              ...btnBase,
+              cursor: terminalDisabled ? "default" : "pointer",
+              opacity: terminalDisabled ? 0.4 : 1,
+            }}
             onMouseEnter={(e) => {
+              if (terminalDisabled) return;
               (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
               (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-sidebar-hover)";
             }}
@@ -238,7 +359,7 @@ export function ConversationHeader({ session }: ConversationHeaderProps) {
               (e.currentTarget as HTMLButtonElement).style.background = "none";
             }}
           >
-            <IconRefresh />
+            <IconTerminal />
           </button>
         </div>
       </div>

@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { api } from "../../api/client";
-import type { DailyBucket, DashboardData, FileTouchEntry, ToolUsageEntry } from "../../api/types";
+import type { DailyBucket, DashboardData, FileTouchEntry, PricingTableResponse, ToolUsageEntry } from "../../api/types";
 import { useAppStore } from "../../store";
 import { on } from "../../utils/events";
 import { navigateTo } from "../../router";
 import { ScrollContainer } from "../ScrollContainer";
+import { LoadingAnimation } from "../ui/LoadingAnimation";
 
 import { Hero } from "./Hero";
 import { SectionHeader } from "./SectionHeader";
@@ -16,14 +17,28 @@ import { ModelUsageStrip } from "./ModelUsageStrip";
 import { TouchedFilesList } from "./TouchedFilesList";
 import { ProjectStrip } from "./ProjectStrip";
 import { TipCard } from "./TipCard";
+import { ModelRates } from "./ModelRates";
 import { DashboardEmpty } from "./DashboardEmpty";
 
+// Module-level cache so navigating away and back — or a refresh-driven
+// refetch — shows the last dashboard *instantly* (stale-while-revalidate)
+// instead of flashing through a blank state while analytics reload. Survives
+// remounts for the page session; a full reload clears it.
+const _cache: {
+  data: DashboardData | null;
+  daily: DailyBucket[] | null;
+  touchedFiles: FileTouchEntry[] | null;
+  toolUsage: ToolUsageEntry[] | null;
+  pricing: PricingTableResponse | null;
+} = { data: null, daily: null, touchedFiles: null, toolUsage: null, pricing: null };
+
 export default function Dashboard() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [daily, setDaily] = useState<DailyBucket[] | null>(null);
-  const [touchedFiles, setTouchedFiles] = useState<FileTouchEntry[] | null>(null);
-  const [toolUsage, setToolUsage] = useState<ToolUsageEntry[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<DashboardData | null>(_cache.data);
+  const [daily, setDaily] = useState<DailyBucket[] | null>(_cache.daily);
+  const [touchedFiles, setTouchedFiles] = useState<FileTouchEntry[] | null>(_cache.touchedFiles);
+  const [toolUsage, setToolUsage] = useState<ToolUsageEntry[] | null>(_cache.toolUsage);
+  const [pricing, setPricing] = useState<PricingTableResponse | null>(_cache.pricing);
+  const [loading, setLoading] = useState(_cache.data === null);
   const selectProject = useAppStore((s) => s.selectProject);
   const openSearch = useAppStore((s) => s.openSearch);
   const setViewingFilePath = useAppStore((s) => s.setViewingFilePath);
@@ -35,14 +50,20 @@ export default function Dashboard() {
 
   const fetchRef = useRef(() => {});
   fetchRef.current = () => {
-    setLoading(true);
+    // Only show the loading screen when we have nothing cached to display.
+    // A refresh/remount with cached data revalidates silently in the
+    // background — the sections stay put and update in place on arrival.
+    if (_cache.data === null) setLoading(true);
     api.getDashboard()
-      .then(setData)
+      .then((d) => { _cache.data = d; setData(d); })
       .finally(() => setLoading(false));
-    // Side-fetches populate progressively; failures degrade gracefully.
-    api.getDailyAnalytics().then(setDaily).catch(() => setDaily([]));
-    api.getFileTouches().then(setTouchedFiles).catch(() => setTouchedFiles([]));
-    api.getToolUsage().then(setToolUsage).catch(() => setToolUsage([]));
+    // Side-fetches update in place on success. On failure we KEEP the last
+    // good value rather than blanking the section — a transient slow/failed
+    // reload must never tear down the activity strip, sparklines, or insight.
+    api.getDailyAnalytics().then((d) => { _cache.daily = d; setDaily(d); }).catch(() => {});
+    api.getFileTouches().then((d) => { _cache.touchedFiles = d; setTouchedFiles(d); }).catch(() => {});
+    api.getToolUsage().then((d) => { _cache.toolUsage = d; setToolUsage(d); }).catch(() => {});
+    api.getPricingTable().then((p) => { _cache.pricing = p; setPricing(p); }).catch(() => {});
   };
 
   const insight = useMemo(
@@ -56,14 +77,7 @@ export default function Dashboard() {
   if (loading && !data) {
     return (
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{
-          width: "32px",
-          height: "32px",
-          border: "3px solid var(--border-default)",
-          borderTopColor: "var(--accent-orange)",
-          borderRadius: "50%",
-          animation: "spin 0.8s linear infinite",
-        }} />
+        <LoadingAnimation width="102px" label="Loading dashboard" />
       </div>
     );
   }
@@ -100,6 +114,8 @@ export default function Dashboard() {
                   <ModelUsageStrip models={data.model_usage} />
                 </section>
               )}
+
+              {pricing && <ModelRates pricing={pricing} />}
 
               {rest.length > 0 && (
                 <section>

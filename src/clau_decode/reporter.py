@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from .analytics.cost import SessionCost
@@ -28,10 +29,38 @@ def _truncate(text: str, max_len: int = 200) -> str:
     return text[: max_len - 3] + "..."
 
 
+_MIN_UTC = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _timestamp_sort_key(value: datetime | str | None) -> datetime:
+    """Return an aware UTC datetime for mixed JSONL/ephemeral timestamps."""
+    if value is None:
+        return _MIN_UTC
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        if not value:
+            return _MIN_UTC
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return _MIN_UTC
+    else:
+        return _MIN_UTC
+
+    if dt.tzinfo is None:
+        # Legacy ephemeral rows were written with naive local datetime.now().
+        # astimezone() intentionally interprets naive values in the process
+        # local timezone before converting them to UTC.
+        return dt.astimezone(timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def export_json(
     detail: SessionDetail,
     cost: SessionCost | None = None,
     prompts: list[dict] | None = None,
+    ephemerals: list[dict] | None = None,
 ) -> dict:
     """Produce a full structured JSON export of a session.
 
@@ -89,6 +118,10 @@ def export_json(
     if prompts is not None:
         result["prompts"] = prompts
 
+    # Always include the ephemerals array (empty list when none exist) so
+    # callers can reliably read result["ephemerals"] without key-checking.
+    result["ephemerals"] = ephemerals if ephemerals is not None else []
+
     return result
 
 
@@ -98,6 +131,7 @@ def export_markdown(
     prompts: list[dict] | None = None,
     pricing: ModelPricing | None = None,
     all_models_usage: list[dict] | None = None,
+    ephemerals: list[dict] | None = None,
 ) -> str:
     """Produce a Markdown report with executive summary.
 
@@ -206,19 +240,66 @@ def export_markdown(
             )
         lines.append("")
 
-    # Conversation log
+    # Conversation log — regular messages and ephemeral pairs interleaved by
+    # timestamp so the export reads chronologically.
     lines.append("## Conversation")
     lines.append("")
+
+    # Build ephemeral pair index: user row id → (user_row, assistant_row | None).
+    # Pairs are keyed by the user row; assistant rows (responds_to != None) are
+    # looked up from the same list.  Unpaired user rows export without a reply.
+    eph_by_input_id: dict[int, dict] = {}
+    eph_response_by_responds_to: dict[int, dict] = {}
+    if ephemerals:
+        for row in ephemerals:
+            if row.get("responds_to") is None:
+                eph_by_input_id[row["id"]] = row
+            else:
+                eph_response_by_responds_to[row["responds_to"]] = row
+
+    # Collect regular messages and ephemeral user rows with normalized aware
+    # UTC sort keys. Legacy ephemerals may be naive local strings while JSONL
+    # message timestamps are UTC-aware datetimes.
+    # Sort everything by timestamp; None timestamps sort to the beginning.
+    timeline: list[tuple[datetime, str, object]] = []
     for msg in detail.messages:
         if msg.is_meta:
             continue
-        role_label = "**User**" if msg.role == "user" else "**Assistant**"
-        ts = msg.timestamp.strftime("%H:%M:%S") if msg.timestamp else ""
-        lines.append(f"### {role_label} {f'({ts})' if ts else ''}".strip())
-        lines.append("")
-        text = _text_content(msg)
-        if text:
-            lines.append(_truncate(text, 500))
+        timeline.append((_timestamp_sort_key(msg.timestamp), "message", msg))
+
+    for input_id, user_row in eph_by_input_id.items():
+        ts_key = _timestamp_sort_key(user_row.get("timestamp"))
+        timeline.append((ts_key, "ephemeral", user_row))
+
+    # Sort by timestamp ascending so the log reads in chronological order.
+    timeline.sort(key=lambda t: t[0])
+
+    for _, kind, obj in timeline:
+        if kind == "message":
+            msg = obj  # type: ignore[assignment]
+            role_label = "**User**" if msg.role == "user" else "**Assistant**"
+            ts = msg.timestamp.strftime("%H:%M:%S") if msg.timestamp else ""
+            lines.append(f"### {role_label} {f'({ts})' if ts else ''}".strip())
+            lines.append("")
+            text = _text_content(msg)
+            if text:
+                lines.append(_truncate(text, 500))
+                lines.append("")
+        else:
+            # Ephemeral pair: blockquote marker matching the existing ### style
+            # but visually distinguished so readers recognise /btw exchanges.
+            user_row = obj  # type: ignore[assignment]
+            user_ts = user_row.get("timestamp", "")
+            user_content = user_row.get("content", "")
+            eph_kind = user_row.get("kind", "btw")
+            resp_row = eph_response_by_responds_to.get(user_row["id"])
+
+            lines.append(f"> **[ephemeral · {eph_kind}]** {user_ts}")
+            lines.append(f"> {user_content}")
+            lines.append(">")
+            if resp_row:
+                resp_content = resp_row.get("content", "")
+                lines.append(f"> {resp_content}")
             lines.append("")
 
     return "\n".join(lines)

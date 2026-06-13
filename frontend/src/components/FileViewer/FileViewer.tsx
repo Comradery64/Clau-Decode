@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FileContent } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
 import hljs from "../../utils/hljs";
-import { LS } from "../../utils/localStorage";
+import { LS, lsGetRaw, lsSetRaw } from "../../utils/localStorage";
 import { ScrollContainer } from "../ScrollContainer";
 import { TextBlock } from "../Messages/TextBlock";
+import { type FileCategory, getFileCategory, blobUrl } from "../../utils/fileType";
 
 const MIN_WIDTH = 360;
 // Leave at least this much room for the main pane.
@@ -13,7 +14,7 @@ const MIN_MAIN_PANE = 360;
 
 function loadStoredWidth(): number {
   if (typeof window === "undefined") return 720;
-  const raw = window.localStorage.getItem(LS.FILE_VIEWER_WIDTH);
+  const raw = lsGetRaw(LS.FILE_VIEWER_WIDTH);
   const n = raw ? Number(raw) : NaN;
   if (!Number.isFinite(n)) return 720;
   return n;
@@ -65,6 +66,66 @@ const PRE_STYLE = {
   overflowWrap: "anywhere" as const,
 } as const;
 
+function BinaryPreview({ category, url }: { category: FileCategory; url: string }) {
+  if (category === "image") {
+    return (
+      <div style={{ padding: "20px", display: "flex", justifyContent: "center", alignItems: "flex-start", minHeight: "100%" }}>
+        <img
+          src={url}
+          alt="Preview"
+          loading="lazy"
+          style={{ maxWidth: "100%", maxHeight: "80vh", borderRadius: "var(--radius-sm)" }}
+          onError={(e) => {
+            (e.target as HTMLImageElement).style.display = "none";
+            const parent = (e.target as HTMLImageElement).parentElement;
+            if (parent) parent.innerHTML = '<div style="padding:24px;color:var(--tool-error-text);fontSize:13px">Failed to load image</div>';
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (category === "pdf") {
+    return (
+      <iframe
+        src={url}
+        title="PDF Preview"
+        style={{ width: "100%", height: "100%", border: "none", minHeight: "80vh" }}
+      />
+    );
+  }
+
+  if (category === "audio") {
+    return (
+      <div style={{ padding: "40px 20px", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100%" }}>
+        <audio controls src={url} style={{ width: "100%", maxWidth: "500px" }}>
+          Your browser does not support audio playback.
+        </audio>
+      </div>
+    );
+  }
+
+  if (category === "video") {
+    return (
+      <div style={{ padding: "20px", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100%" }}>
+        <video controls src={url} style={{ maxWidth: "100%", maxHeight: "80vh", borderRadius: "var(--radius-sm)" }}>
+          Your browser does not support video playback.
+        </video>
+      </div>
+    );
+  }
+
+  // Archives and unknown binary — show a message.
+  return (
+    <div style={{ padding: "40px 24px", textAlign: "center", color: "var(--text-tertiary)", fontSize: "13px" }}>
+      <div style={{ fontWeight: 500, color: "var(--text-secondary)", marginBottom: "6px" }}>
+        {category === "archive" ? "Archive file" : "Binary file"}
+      </div>
+      <div>Preview is not available for this file type.</div>
+    </div>
+  );
+}
+
 export function FileViewer() {
   const viewingFilePath = useAppStore((s) => s.viewingFilePath);
   const setViewingFilePath = useAppStore((s) => s.setViewingFilePath);
@@ -92,6 +153,14 @@ export function FileViewer() {
   // "Show raw" toggle for markdown files (overrides rendered view).
   const [showRawMarkdown, setShowRawMarkdown] = useState(false);
 
+  // File category — computed from the path so it's available immediately
+  // (before the text fetch even starts).
+  const fileCategory: FileCategory = useMemo(
+    () => (viewingFilePath ? getFileCategory(viewingFilePath) : "text"),
+    [viewingFilePath],
+  );
+  const isBinary = fileCategory !== "text";
+
   // Clamp stored width into a valid range for the current viewport. Runs once
   // on mount and whenever the window resizes — keeps the panel sane if the
   // user drags the browser window narrower than the saved width.
@@ -118,7 +187,7 @@ export function FileViewer() {
     };
     const onUp = () => {
       setResizing(false);
-      window.localStorage.setItem(LS.FILE_VIEWER_WIDTH, String(widthRef.current));
+      lsSetRaw(LS.FILE_VIEWER_WIDTH, String(widthRef.current));
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
     };
@@ -138,6 +207,16 @@ export function FileViewer() {
       setSaveError(null);
       return;
     }
+
+    // Binary files are previewed via the /api/fs/blob endpoint — no text fetch.
+    if (isBinary) {
+      setLoading(false);
+      setFile(null);
+      setHighlighted(null);
+      setError(null);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -186,7 +265,7 @@ export function FileViewer() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [viewingFilePath]);
+  }, [viewingFilePath, isBinary]);
 
   useEffect(() => {
     if (!viewingFilePath) return;
@@ -385,6 +464,19 @@ export function FileViewer() {
               {file.language}
             </span>
           )}
+          {isBinary && (
+            <span
+              style={{
+                fontSize: "11px",
+                color: "var(--text-tertiary)",
+                fontFamily: "var(--font-mono)",
+                flexShrink: 0,
+                textTransform: "uppercase" as const,
+              }}
+            >
+              {fileCategory}
+            </span>
+          )}
           {dirty && (
             <span
               title="Unsaved changes"
@@ -400,7 +492,7 @@ export function FileViewer() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: "2px", flexShrink: 0 }}>
-          {file && !editing && isMarkdown(file) && (
+          {file && !editing && !isBinary && isMarkdown(file) && (
             <button
               onClick={() => setShowRawMarkdown((v) => !v)}
               title={showRawMarkdown ? "Show rendered markdown" : "Show raw source"}
@@ -423,7 +515,7 @@ export function FileViewer() {
               {showRawMarkdown ? "Preview" : "Raw"}
             </button>
           )}
-          {file && !editing && (
+          {file && !editing && !isBinary && (
             <button
               onClick={startEdit}
               title="Edit"
@@ -472,7 +564,7 @@ export function FileViewer() {
               </button>
             </>
           )}
-          {file && (
+          {file && !isBinary && (
             <button
               onClick={handleCopy}
               title={copied ? "Copied!" : "Copy"}
@@ -528,8 +620,6 @@ export function FileViewer() {
 
       {/* Body */}
       {editing ? (
-        // Direct overflow scroll on the textarea — ScrollContainer would clip
-        // editing affordances (caret, selection).
         <textarea
           ref={textareaRef}
           value={draft}
@@ -567,7 +657,12 @@ export function FileViewer() {
               {error}
             </div>
           )}
-          {file && !loading && (
+          {/* Binary file previews */}
+          {!loading && !error && isBinary && viewingFilePath && (
+            <BinaryPreview category={fileCategory} url={blobUrl(viewingFilePath)} />
+          )}
+          {/* Text file content */}
+          {file && !loading && !isBinary && (
             renderAsMarkdown ? (
               <div style={{ padding: "20px 24px" }}>
                 <TextBlock text={file.content} />

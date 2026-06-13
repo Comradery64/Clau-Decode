@@ -90,6 +90,11 @@ export interface Session {
   // typed in the sidebar. Frontend overlays it on top of `title`; both fields
   // are sent so original parse stays visible (tooltip, search debugging).
   custom_title: string | null;
+  // Server-persisted flags (previously localStorage-only on the FE; bug fix
+  // 2026-05-28). ISO-8601 string when set, null when unset.
+  archived_at: string | null;
+  starred_at: string | null;
+  viewed_at: string | null;
   model: string | null;
   started_at: string | null;
   updated_at: string | null;
@@ -106,6 +111,11 @@ export interface Session {
 export interface SessionDetail extends Session {
   messages: Message[];
   total_message_count?: number;
+  /** False when the session's project working directory no longer
+   * exists on disk (resolved_path is null in the DB). Sending in such
+   * a session would fail downstream when claude tries to spawn with a
+   * nonexistent cwd, so the UI short-circuits with a clear error. */
+  cwd_exists: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +144,9 @@ export interface SearchHit {
   role: string;
   snippet: string;
   timestamp: string | null;
+  source?: "message" | "ephemeral" | string;
+  kind?: string | null;
+  responds_to?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +168,21 @@ export type PermissionMode =
   | "plan"
   | "default";
 
+export type ChatSendShortcut = "enter" | "modEnter";
+export type NativePtyFontFamily =
+  | "monaspace-argon"
+  | "source-code-pro"
+  | "fira-code"
+  | "jetbrains-mono"
+  | "ioskeley-mono"
+  | "libertinus-mono"
+  | "antithesis"
+  | "thesansmono-condensed"
+  | "xanh-mono"
+  | "julia-mono"
+  | "spline-sans-mono"
+  | "system-monospace";
+
 export interface AppConfig {
   data_paths: string[];
   profiles: Profile[];
@@ -165,6 +193,9 @@ export interface AppConfig {
   host: string;
   edit_enabled: boolean;
   claude_default_permission_mode: PermissionMode;
+  chat_send_shortcut: ChatSendShortcut;
+  native_pty_font_family: NativePtyFontFamily;
+  native_pty_cols: number;
   claude_auto_stop_quiet_default_turns: boolean;
   claude_recap_enabled: boolean;
   claude_recap_idle_minutes: number;
@@ -199,15 +230,15 @@ export interface ProfilesResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Runner status — mirrors ClaudeCodeRunner.status_snapshot
+// Runner status — batch shape served by /api/runner-status.
+// Derived from PtyManager state on the server (Phase 6+); the only
+// consumer is the sidebar busy-pulse.
 // ---------------------------------------------------------------------------
 
 export interface RunnerStatus {
   busy: boolean;
   last_error: string | null;
   permission_mode: PermissionMode | null;
-  quiet_age_seconds: number | null;
-  quiet_warning: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +415,104 @@ export interface FileContent {
 export type ExportFormat = "json" | "md";
 
 // ---------------------------------------------------------------------------
+// PTY runner (pty-runner-plan.md)
+// ---------------------------------------------------------------------------
+
+export interface PtyStatus {
+  alive: boolean;
+  last_activity_ms: number;
+  last_input_ms: number;
+  last_pty_output_ms: number;
+  idle_kill_at_ms: number | null;
+}
+
+export type NativePtyState =
+  | "booting"
+  | "idle_chat_input"
+  | "assistant_streaming"
+  | "slash_palette_open"
+  | "ask_user_question"
+  | "permission_prompt"
+  | "login_required"
+  | "trust_prompt"
+  | "model_selector"
+  | "btw_modal"
+  | "native_input_required"
+  | "unknown_interactive"
+  | "dead";
+
+export interface PtyNativeSnapshot {
+  session_id: string;
+  ring_b64: string;
+  ring_complete?: boolean;
+  rows: number;
+  cols: number;
+  alive: boolean;
+  native_state: NativePtyState;
+  decoded_input_safe: boolean;
+}
+
+export interface PtyOutputChunk {
+  session_id: string;
+  data_b64: string;
+}
+
+export interface PtyNativeStateEvent {
+  session_id: string;
+  state: NativePtyState;
+  decoded_input_safe: boolean;
+}
+
+// Phase-0 ownership snapshot (pty-ownership-plan.md). Driven by the
+// hybrid pgrep + lsof detector on the BE; reports who, if anyone, is
+// already attached to the session id.
+//   ours     — a live PtyChannel exists in THIS clau-decode instance.
+//   terminal — at least one foreign claude process is attached.
+//   idle     — no one is attached.
+export type PtyOwnershipStatus = "ours" | "terminal" | "idle";
+
+export interface PtyOwnership {
+  status: PtyOwnershipStatus;
+  foreign_pids: number[];
+  jsonl_path: string | null;
+  // Phase-1: structured metadata from the .lock sidecar when present.
+  // null when no lock sidecar exists (e.g. an unwrapped terminal
+  // claude that Phase-0's pgrep detector caught).
+  foreign_owner: PtyForeignOwner | null;
+}
+
+export interface PtyForeignOwner {
+  kind: string; // "clau-decode" | "claude-wrapper" | …
+  pid: number;
+  hostname: string;
+  ui_endpoint: string | null;
+  heartbeat_at: string; // ISO-8601
+}
+
+// Takeover responses share a shape on success; the 409 timeout body
+// surfaces via the standard HTTPException detail and is read inline at
+// the call site.
+export interface PtyTakeoverResponse {
+  ok: boolean;
+  released_pids: number[];
+  still_held_by: number[];
+}
+
+// ---------------------------------------------------------------------------
+// Ephemeral messages (/btw capture — Phase 2, pty-runner-plan.md)
+// ---------------------------------------------------------------------------
+
+export interface EphemeralMessage {
+  id: number;
+  session_id: string;
+  kind: string;           // "btw" for v1; extensible
+  role: "user" | "assistant";
+  content: string;
+  responds_to: number | null;  // self-FK on the paired input row
+  timestamp: string;           // ISO 8601
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
 
@@ -421,4 +550,3 @@ export interface DashboardData {
   total_messages: number;
   tips: DashboardTip[];
 }
-

@@ -5,9 +5,8 @@ import { getCached, fetchSession } from "../../api/sessionCache";
 import { useAppStore } from "../../store";
 import { navigateTo } from "../../router";
 import { formatRelativeDate } from "./SessionItem";
-import { LS } from "../../utils/localStorage";
 import { useDebounce } from "../../utils/useDebounce";
-import { useLsSet } from "../../utils/useLsSet";
+import { useArchivedSet } from "../../utils/sessionMeta";
 import { renderSnippet } from "../../utils/renderSnippet";
 import { ScrollContainer } from "../ScrollContainer";
 
@@ -19,7 +18,7 @@ export default function SearchOverlay() {
   const [results, setResults] = useState<SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
-  const archived = useLsSet(LS.ARCHIVED, "archive");
+  const archived = useArchivedSet();
 
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -276,6 +275,25 @@ export default function SearchOverlay() {
                       }}
                     >
                       archived
+                    </span>
+                  )}
+                  {hit.source === "ephemeral" && (
+                    <span
+                      aria-label={`Ephemeral ${hit.kind ?? "message"}`}
+                      style={{
+                        fontSize: "10px",
+                        color: "var(--accent-orange)",
+                        background: "var(--accent-orange-subtle)",
+                        border: "1px solid var(--border-accent)",
+                        borderRadius: "var(--radius-pill)",
+                        padding: "1px 6px",
+                        flexShrink: 0,
+                        fontFamily: "var(--font-ui)",
+                        fontWeight: 600,
+                        letterSpacing: 0,
+                      }}
+                    >
+                      {hit.kind?.toUpperCase() ?? "EPHEMERAL"}
                     </span>
                   )}
                 </div>
