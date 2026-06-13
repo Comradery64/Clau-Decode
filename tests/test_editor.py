@@ -193,6 +193,70 @@ class TestRoundTrip:
         assert len(messages) == 0
         assert session.title == "Keep Me"
 
+    def test_swap_session_bumps_mtime_on_content_edit(self, tmp_path):
+        """swap_session must advance the file's mtime even when the edit
+        doesn't change message timestamps — content edits leave timestamps
+        intact, so the parser-derived updated_at would otherwise stay flat
+        and downstream dedupe (which keys on detail.updated_at / file mtime)
+        would miss the mutation. Regression test for the fix that adds an
+        explicit os.utime() bump at the end of swap_session.
+        """
+        import os
+        import time
+
+        from clau_decode.editor import swap_session
+
+        src = tmp_path / f"{_SESSION_UUID}.jsonl"
+        _write_session_file(src, [_make_record(_MSG_UUID_1, "user", "original")])
+
+        # Force a baseline mtime in the past so even coarse-resolution
+        # filesystems can demonstrate advance.
+        past = time.time() - 60
+        os.utime(src, (past, past))
+        before = src.stat().st_mtime
+        assert before == past  # sanity
+
+        swap_session(
+            src,
+            _SESSION_UUID,
+            edit_uuid=_MSG_UUID_1,
+            new_content=[{"type": "text", "text": "updated"}],
+        )
+
+        after = src.stat().st_mtime
+        assert after > before, (
+            f"swap_session must bump mtime: before={before}, after={after}"
+        )
+
+    def test_swap_session_bumps_mtime_on_delete(self, tmp_path):
+        """Same guarantee on delete — even when the file content shrinks
+        and the write happens in the same wall-clock second as the
+        baseline, mtime must advance.
+        """
+        import os
+        import time
+
+        from clau_decode.editor import swap_session
+
+        src = tmp_path / f"{_SESSION_UUID}.jsonl"
+        _write_session_file(
+            src,
+            [
+                _make_record(_MSG_UUID_1, "user", "keep me"),
+                _make_record(_MSG_UUID_2, "assistant", "delete me"),
+            ],
+        )
+        past = time.time() - 60
+        os.utime(src, (past, past))
+        before = src.stat().st_mtime
+
+        swap_session(src, _SESSION_UUID, delete_uuid=_MSG_UUID_2)
+
+        after = src.stat().st_mtime
+        assert after > before, (
+            f"swap_session must bump mtime on delete: before={before}, after={after}"
+        )
+
     def test_backup_restore_roundtrip(self, tmp_path):
         from clau_decode.editor import backup_session, delete_from_session
         from clau_decode.parser import parse_session

@@ -30,9 +30,14 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
+import os
+import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -45,7 +50,16 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .analytics.cost import CostEngine
-from .claude_runner import ClaudeCodeRunner
+from .recap_runner import generate_recap as _generate_recap
+from .pty_runner import (
+    PtyManager,
+    PtyOwnershipConflict,
+    PtySubmitInFlight,
+    _session_conflict_pids,
+    _unlink_fresh_foreign_sidecar,
+)
+from .pty_native import decode_terminal_input
+from .analytics import fast as analytics_fast
 from .analytics.pricing import CachedPricingStrategy, _HARDCODED_RATES
 from .analytics.service import TokenAnalyticsService as _AnalyticsSvc
 from .analytics.stats import (
@@ -69,6 +83,9 @@ from .parser import parse_session
 from .reporter import export_json, export_markdown
 from .scanner import build_project_from_dir, scan_paths
 from .watcher import watch_paths
+
+
+_log = logging.getLogger(__name__)
 
 
 def _sse_event_data(path: Path | str) -> str:
@@ -106,6 +123,117 @@ def _derive_bin_name(file_path: str) -> str:
     return "claude"
 
 
+def _derive_bin_from_data_path(data_path: str) -> str:
+    """Derive a CLI bin_name from a profile's data_path directory.
+
+    Same conventions as ``_derive_bin_name`` but accepts the data-root dir
+    (e.g. ``~/.cc-mirror/zai/config`` or ``~/.claude``) instead of a JSONL
+    file path. Implemented by synthesizing a fake ``<path>/projects/_.jsonl``
+    so a single resolver covers both call sites.
+    """
+    expanded = str(Path(data_path).expanduser())
+    return _derive_bin_name(str(Path(expanded) / "projects" / "_.jsonl"))
+
+
+def _active_profile_bin_name(config: AppConfig) -> str:
+    """Resolve the CLI bin_name to use for a brand-new session.
+
+    Inspects ``config.active_profile_id`` and the matching profile's first
+    ``data_paths`` entry (cc-mirror profiles have a single canonical data
+    root per CLI install). Falls back to plain ``claude`` when no profile is
+    active or no data_paths are configured.
+
+    This mirrors the per-profile binary selection that ``_derive_bin_name``
+    performs for EXISTING sessions (whose JSONL path encodes the writer
+    binary). For new sessions there is no JSONL yet, so the active profile
+    is the only signal available.
+    """
+    if config.active_profile_id and config.profiles:
+        for p in config.profiles:
+            if p.id == config.active_profile_id and p.data_paths:
+                return _derive_bin_from_data_path(p.data_paths[0])
+    # No active profile (or legacy config with only top-level data_paths).
+    if config.data_paths:
+        return _derive_bin_from_data_path(config.data_paths[0])
+    return "claude"
+
+
+def _config_dir_for_bin(config: AppConfig, bin_name: str) -> Path:
+    """Resolve the ``CLAUDE_CONFIG_DIR``-equivalent for a CLI bin_name.
+
+    The directory holds the ``.claude.json`` claude reads at startup
+    (containing per-project trust flags etc.). For cc-mirror profiles
+    this is the profile's first ``data_paths`` entry; for vanilla
+    ``claude`` it's ``~/.claude``.
+
+    Strategy: find the profile whose first data_path resolves to the
+    same bin_name. If none matches, fall back to the active profile.
+    Last resort: ``~/.claude``.
+    """
+    candidates: list[Path] = []
+    if config.profiles:
+        for p in config.profiles:
+            if not p.data_paths:
+                continue
+            if _derive_bin_from_data_path(p.data_paths[0]) == bin_name:
+                return Path(p.data_paths[0]).expanduser()
+        # No bin match — fall back to active profile.
+        for p in config.profiles:
+            if p.id == config.active_profile_id and p.data_paths:
+                candidates.append(Path(p.data_paths[0]).expanduser())
+    if candidates:
+        return candidates[0]
+    if config.data_paths:
+        return Path(config.data_paths[0]).expanduser()
+    return Path("~/.claude").expanduser()
+
+
+def _ensure_trust(config_dir: Path, cwd: str) -> bool:
+    """Mark ``cwd`` as trusted in ``<config_dir>/.claude.json``.
+
+    Returns True if a write happened, False if the cwd was already
+    trusted (or trust state was already True). claude's TUI shows a
+    "trust this folder" dialog on first launch in an untrusted cwd; if
+    we don't pre-empt it, our first user message gets consumed by the
+    dialog's Enter binding and never reaches the chat input.
+
+    clau-decode owns the chat-spawn gesture (click ``+``, choose/inherit
+    a cwd, hit send) so the trust signal is implicit in the UI flow —
+    this just plumbs that intent through to claude's config.
+
+    Atomic via temp-file + rename. Tolerates a missing file (creates
+    a minimal one). Re-raises on malformed JSON (caller should let it
+    surface; we don't want to silently overwrite a corrupted user file).
+    """
+    import json as _json
+    import os as _os
+
+    path = config_dir / ".claude.json"
+    if path.exists():
+        with path.open("r") as f:
+            data = _json.load(f)
+        if not isinstance(data, dict):
+            raise RuntimeError(f"{path}: expected top-level object")
+    else:
+        data = {}
+
+    projects = data.setdefault("projects", {})
+    if not isinstance(projects, dict):
+        raise RuntimeError(f"{path}: 'projects' is not an object")
+    proj = projects.setdefault(cwd, {})
+    if not isinstance(proj, dict):
+        raise RuntimeError(f"{path}: projects[{cwd!r}] is not an object")
+    if proj.get("hasTrustDialogAccepted") is True:
+        return False
+    proj["hasTrustDialogAccepted"] = True
+
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w") as f:
+        _json.dump(data, f, indent=2)
+    _os.replace(tmp, path)
+    return True
+
+
 def _extract_worktree_name(file_path: str, cwd: str | None) -> str | None:
     """Extract the worktree name (e.g. 'pr-160-review') from a worktree session."""
     # Try cwd first — the actual filesystem path is more reliable.
@@ -125,6 +253,20 @@ def _extract_worktree_name(file_path: str, cwd: str | None) -> str | None:
                 return mangled[idx + len(marker):]
             break
     return None
+
+
+def _reject_root_cwd(cwd: str, action: str) -> None:
+    """Raise HTTP 400 if ``cwd`` resolves to the filesystem root.
+
+    A session with cwd "/" is almost always degenerate (no working dir
+    recorded); spawning a CLI there triggers claude's "trust this folder?"
+    prompt for "/" and is never what the user intended.
+    """
+    if os.path.realpath(cwd) == os.sep:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Refusing to {action} at the filesystem root (/)",
+        )
 
 
 class _MessageContentUpdate(BaseModel):
@@ -147,12 +289,6 @@ class _SetActiveProfileRequest(BaseModel):
     active_profile_id: str | None = None
 
 
-class _SendMessageRequest(BaseModel):
-    message: str
-    permission_mode: str | None = None
-    model: str | None = None
-
-
 class _NewSessionRequest(BaseModel):
     # All optional — defaults are "last-used cwd" + AppConfig permission mode.
     # No initial_message: brand-new sessions stay empty until the user types
@@ -167,8 +303,8 @@ class _PendingSession:
 
     Lives in a small in-memory map (``app.state.pending_sessions``) keyed by
     session id. Entries are created by ``POST /api/sessions/new`` and consumed
-    by the first ``POST /api/sessions/{id}/send-message``; nothing else touches
-    them, so we don't need a TTL — server restarts wipe the map.
+    by the first PTY submit; nothing else touches them, so we don't need a TTL
+    — server restarts wipe the map.
     """
 
     cwd: str
@@ -183,12 +319,72 @@ class _SessionTitleRequest(BaseModel):
     title: str | None
 
 
+class _SessionArchivedRequest(BaseModel):
+    archived: bool
+
+
+class _SessionStarredRequest(BaseModel):
+    starred: bool
+
+
+class _SessionViewedRequest(BaseModel):
+    # Explicit ISO timestamp lets the FE record "viewed at message_updated_at"
+    # rather than "viewed at now"; None clears.
+    viewed_at: str | None
+
+
+class _LocalStorageMigrationRequest(BaseModel):
+    """One-time payload uploaded by the FE the first time it loads with the
+    server-backed meta. Maps existing localStorage flags into session_meta."""
+    archived: list[str] = []
+    starred: list[str] = []
+    viewed_at: dict[str, str] = {}
+
+
+class _SessionDeleteRequest(BaseModel):
+    session_ids: list[str]
+
+
 class _FsWriteBody(BaseModel):
     # Module-scope: BaseModels declared inside create_app() are not picked up
     # by FastAPI as request-body params (they get treated as query params and
     # 422 with `loc: ["query", "body"]`).
     path: str
     content: str
+
+
+class _PtyFocusRequest(BaseModel):
+    session_id: str
+    cwd: str | None = None
+    bin_name: str | None = None
+    model: str | None = None
+    permission_mode: str | None = None
+    new_chat: bool = False
+
+
+class _PtyBlurRequest(BaseModel):
+    session_id: str
+
+
+class _PtySubmitRequest(BaseModel):
+    session_id: str
+    content: str
+    model: str | None = None
+
+
+class _PtyKillRequest(BaseModel):
+    session_id: str
+
+
+class _PtyNativeInputRequest(BaseModel):
+    session_id: str
+    data: str
+
+
+class _PtyResizeRequest(BaseModel):
+    session_id: str
+    rows: int = Field(gt=0, le=200)
+    cols: int = Field(gt=0, le=400)
 
 
 def create_app(config: AppConfig, db_path: Path) -> FastAPI:
@@ -219,7 +415,11 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     # change to every connected SSE client via the broadcaster.
     _watch_queue: asyncio.Queue = asyncio.Queue()
     _bus = EventBroadcaster()
-    _runner = ClaudeCodeRunner()
+    _pty_manager: PtyManager | None = None  # populated in lifespan
+    # Tombstone set: session ids that have been hard-deleted are recorded here
+    # so that concurrent/queued scan tasks never re-upsert a deleted session.
+    # Scoped to the create_app() closure — one set per app instance.
+    _deleted_tombstones: set[str] = set()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -234,6 +434,8 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         MAX_SCAN_SIZE = 20 * 1024 * 1024  # skip files > 20 MB; loaded on demand instead
         root_paths = _all_scan_roots()
         async for project, session_path in scan_paths(root_paths):
+            if session_path.stem in _deleted_tombstones:
+                continue
             current_mtime = session_path.stat().st_mtime
             stored_mtime = await db.get_session_mtime(session_path.stem)
             if stored_mtime == current_mtime:
@@ -271,6 +473,8 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         Path structure assumed: <root>/projects/<project-dir>/<session>.jsonl
         """
         if not session_path.exists() or session_path.suffix != ".jsonl":
+            return
+        if session_path.stem in _deleted_tombstones:
             return
         try:
             project_dir = session_path.parent
@@ -314,6 +518,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             await db.reset_xml_title_mtimes()
             await db.reset_truncated_titles()
             await db.migrate_project_id_v2()
+            await db.migrate_materialize_v1()
 
         async def _background_scan() -> None:
             async with Database(db_path) as db:
@@ -327,17 +532,41 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         async def _fanout_watcher_events() -> None:
             """Drain the watcher queue and republish indexed events to all clients.
 
-            One-task-per-app (not per-client) so the DB re-index runs exactly
-            once per file change, regardless of how many viewers are connected.
+            One task per app (not per client) so the DB re-index runs once per
+            file change regardless of how many viewers are connected.
+
+            Burst coalescing: a streaming turn (claude is spawned with
+            ``--include-partial-messages``) rewrites its JSONL many times per
+            second. Re-parsing the whole file on every watch event pinned the
+            event loop near 80% CPU. Instead we block for the first event, wait
+            a short window for the burst to accumulate, dedupe by path, and
+            re-index each distinct path once — collapsing ~20 reparses/sec into
+            a handful while keeping the reader's view live. Emitting a single
+            refresh per path (rather than per event) also throttles the FE's
+            on-demand refetch, which itself reparses via GET /api/sessions/{id}.
+
+            A single long-lived DB connection is reused across iterations
+            rather than reopened per event.
             """
-            while True:
-                event = await _watch_queue.get()
-                try:
-                    async with Database(db_path) as db:
-                        await _scan_one(db, event.path)
-                except Exception as exc:
-                    print(f"Warning: scan_one failed for {event.path}: {exc}")
-                _bus.publish({"type": "refresh", "path": str(event.path)})
+            COALESCE_WINDOW_S = 0.2
+            async with Database(db_path) as db:
+                while True:
+                    first = await _watch_queue.get()
+                    paths = {first.path}
+                    # Let the rest of the burst land, then coalesce by path.
+                    await asyncio.sleep(COALESCE_WINDOW_S)
+                    while True:
+                        try:
+                            nxt = _watch_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        paths.add(nxt.path)
+                    for path in paths:
+                        try:
+                            await _scan_one(db, path)
+                        except Exception as exc:
+                            print(f"Warning: scan_one failed for {path}: {exc}")
+                        _bus.publish({"type": "refresh", "path": str(path)})
 
         _state["fanout_task"] = asyncio.create_task(_fanout_watcher_events())
 
@@ -345,10 +574,34 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             await _pricing_strat.refresh()
 
         asyncio.create_task(_refresh_pricing())
-        try:
-            yield
-        finally:
-            await _runner.shutdown()
+        nonlocal _pty_manager
+        # ui_endpoint is written into Phase-1 lock sidecars so a peer
+        # clau-decode reading the lock can render "open in UI at ..."
+        # in its take-over banner. Best-effort — config.host of
+        # "0.0.0.0" gets normalised to "127.0.0.1" for the URL.
+        _ui_host = (
+            "127.0.0.1" if config.host in ("0.0.0.0", "::") else config.host
+        )
+        # PtyManager holds a long-lived Database reference for Phase 2 /btw
+        # capture (`record_ephemeral_input` / `record_ephemeral_response`).
+        # The async-context-manager MUST be entered here so ``_conn`` is
+        # opened — passing a bare ``Database(db_path)`` would leave the
+        # connection None and silently fail every ephemeral write. Routes
+        # continue to use their own per-request ``async with Database(...)``
+        # contexts; SQLite WAL mode keeps the long-lived + per-request
+        # connections from contending.
+        async with Database(db_path) as _pty_db:
+            _pty_manager = PtyManager(
+                _pty_db, _bus,
+                ui_endpoint=f"http://{_ui_host}:{config.port}",
+            )
+            app.state.pty_manager = _pty_manager
+            _pty_manager.set_native_cols(_state["config"].native_pty_cols)
+            try:
+                yield
+            finally:
+                if _pty_manager is not None:
+                    await _pty_manager.shutdown()
 
     app = FastAPI(title="Clau-Decode", version="0.1.0", lifespan=lifespan)
     # Session-detail responses are megabytes of JSON for old chats; gzip cuts
@@ -356,9 +609,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     # Pending-session map (issue #9 fix): /api/sessions/new mints metadata into
-    # this dict; the first /send-message for that id consumes the entry and
-    # spawns the CLI with --session-id. Guarded by an asyncio lock so two
-    # concurrent send-messages for the same fresh id can't both claim it.
+    # this dict; the first PTY submit for that id materializes the session with
+    # --session-id. Guarded by an asyncio lock so two concurrent submits for the
+    # same fresh id can't both claim it.
     app.state.pending_sessions = {}
     app.state.pending_sessions_lock = asyncio.Lock()
 
@@ -370,6 +623,36 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
 
     def _invalidate_detail_cache(session_id: str) -> None:
         _detail_cache.pop(session_id, None)
+
+    # Whole-corpus analytics cache. Six endpoints (daily/stats/models/tools/
+    # files/tips) each used to run `SELECT * FROM messages` and scan all
+    # ~145k rows in Python — independently, uncached, on every dashboard view
+    # (~6-12s each). We now load the corpus once and compute the whole bundle
+    # behind a lock, keyed on a cheap sessions-table signature. Cache hits are
+    # the common case (dashboard re-opened, data unchanged → instant); the
+    # bundle recomputes only when a session is added/removed/re-indexed.
+    _analytics_cache: dict = {}
+    _analytics_cache_sig: list = [None]  # boxed so the closure can rebind it
+    _analytics_lock = asyncio.Lock()
+
+    async def _analytics_bundle(db: Database) -> dict:
+        sig = await db.analytics_signature()
+        if _analytics_cache_sig[0] == sig and _analytics_cache:
+            return _analytics_cache
+        async with _analytics_lock:
+            # Re-check: a concurrent request may have filled the cache while
+            # we waited for the lock (browsers fetch all six in parallel).
+            if _analytics_cache_sig[0] == sig and _analytics_cache:
+                return _analytics_cache
+            # SQL-backed aggregation: two corpus reads (usage + content) in
+            # the engine instead of loading 145k pydantic Message objects.
+            # Verified byte-for-byte against the scanners in
+            # tests/analytics/test_fast_parity.py.
+            bundle = await analytics_fast.compute_bundle(db._conn)
+            _analytics_cache.clear()
+            _analytics_cache.update(bundle)
+            _analytics_cache_sig[0] = sig
+            return _analytics_cache
 
     # ------------------------------------------------------------------
     # Routes
@@ -387,6 +670,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     async def update_config(new_config: AppConfig):
         _state["config"] = new_config
         save_config(new_config)
+        # Refresh the authoritative native PTY width so new spawns pick it up.
+        if _pty_manager is not None:
+            _pty_manager.set_native_cols(new_config.native_pty_cols)
         return new_config
 
     # ------------------------------------------------------------------
@@ -471,6 +757,43 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         async with Database(db_path) as db:
             return await db.get_sessions(data_sources=data_sources)
 
+    def _pending_session_placeholder(session_id: str, pending: _PendingSession):
+        """Synthesize a minimal SessionDetail for a not-yet-materialised session.
+
+        Returned when the caller asks for a session that's been minted via
+        ``/api/sessions/new`` but whose JSONL hasn't appeared on disk yet
+        (lazy-spawn PTY path: the user has focused the chat input and may
+        even have hit Submit, but ``claude`` is still booting). Without this
+        the UI 404s for the brief window between submit and the first JSONL
+        flush. The placeholder keeps the route deterministic during that
+        bootstrap window instead of relying on post-submit polling.
+        """
+        # Synthesize a plausible file_path so ``_derive_bin_name`` and the
+        # frontend's worktree-extraction logic stay consistent once the
+        # real JSONL replaces the placeholder via the SSE refresh event.
+        file_path = str(
+            Path(pending.cwd) / ".pending" / f"{session_id}.jsonl"
+        )
+        return {
+            "id": session_id,
+            "project_id": "",
+            "file_path": file_path,
+            "title": None,
+            "custom_title": None,
+            "model": None,
+            "started_at": None,
+            "updated_at": None,
+            "message_count": 0,
+            "user_message_count": 0,
+            "cwd": pending.cwd,
+            "git_branch": None,
+            "is_worktree": False,
+            "is_fork": False,
+            "permission_mode": pending.permission_mode,
+            "last_message_role": None,
+            "messages": [],
+        }
+
     @app.get("/api/sessions/{session_id}")
     async def get_session(
         session_id: str, limit: int | None = Query(None, ge=1, le=5000)
@@ -501,7 +824,23 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             if limit is None:
                 body = await db.get_session_detail_json_bytes(session_id)
                 if body is None:
+                    # Session not on disk — check the pending-session map
+                    # before 404'ing. A session minted by /api/sessions/new
+                    # and submitted via /api/pty/submit has no JSONL until
+                    # claude finishes booting + flushes its first turn;
+                    # return a placeholder so the UI can render an empty
+                    # chat instead of treating it as a deleted session.
+                    async with app.state.pending_sessions_lock:
+                        pending = app.state.pending_sessions.get(session_id)
+                    if pending is not None:
+                        return _pending_session_placeholder(session_id, pending)
                     raise HTTPException(status_code=404, detail="Session not found")
+                # Session is materialised on disk — drop any stale pending
+                # entry so the placeholder branch above never wins after
+                # the real JSONL arrives. The PTY flow leaves the entry in
+                # place until materialization confirms the session is on disk.
+                async with app.state.pending_sessions_lock:
+                    app.state.pending_sessions.pop(session_id, None)
                 if current_mtime is not None:
                     _detail_cache[session_id] = (current_mtime, body)
                     _detail_cache.move_to_end(session_id)
@@ -513,7 +852,13 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             detail = await db.get_session_detail(session_id, message_limit=limit)
 
         if detail is None:
+            async with app.state.pending_sessions_lock:
+                pending = app.state.pending_sessions.get(session_id)
+            if pending is not None:
+                return _pending_session_placeholder(session_id, pending)
             raise HTTPException(status_code=404, detail="Session not found")
+        async with app.state.pending_sessions_lock:
+            app.state.pending_sessions.pop(session_id, None)
         return detail
 
     @app.get("/api/search")
@@ -653,21 +998,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     @app.get("/api/analytics/daily")
     async def get_daily_analytics():
         async with Database(db_path) as db:
-            all_messages = await db.get_all_messages()
-        buckets = _analytics.daily_buckets(all_messages)
-        return [
-            {
-                "day": b.day.isoformat(),
-                "input_tokens": b.breakdown.input_tokens,
-                "output_tokens": b.breakdown.output_tokens,
-                "cache_creation_tokens": b.breakdown.cache_creation_tokens,
-                "cache_read_tokens": b.breakdown.cache_read_tokens,
-                "total": b.breakdown.total,
-                "prompt_count": b.prompt_count,
-                "session_count": b.session_count,
-            }
-            for b in buckets
-        ]
+            return (await _analytics_bundle(db))["daily"]
 
     @app.get("/api/analytics/sessions/{session_id}/cost")
     async def get_session_cost(session_id: str):
@@ -700,46 +1031,27 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     @app.get("/api/analytics/stats")
     async def get_prompt_stats():
         async with Database(db_path) as db:
-            all_messages = await db.get_all_messages()
-        return PromptStatsScanner().scan(all_messages)
+            return (await _analytics_bundle(db))["stats"]
 
     @app.get("/api/analytics/models")
     async def get_model_usage():
         async with Database(db_path) as db:
-            all_messages = await db.get_all_messages()
-        return ModelUsageScanner().scan(all_messages)
+            return (await _analytics_bundle(db))["models"]
 
     @app.get("/api/analytics/tools")
     async def get_tool_usage():
         async with Database(db_path) as db:
-            all_messages = await db.get_all_messages()
-        return ToolUsageScanner().scan(all_messages)
+            return (await _analytics_bundle(db))["tools"]
 
     @app.get("/api/analytics/files")
     async def get_file_touches():
         async with Database(db_path) as db:
-            all_messages = await db.get_all_messages()
-        return FileTouchScanner().scan(all_messages)
+            return (await _analytics_bundle(db))["files"]
 
     @app.get("/api/analytics/tips")
     async def get_tips():
         async with Database(db_path) as db:
-            all_messages = await db.get_all_messages()
-        registry = TipRegistry()
-        registry.register(RepeatedFileReadRule())
-        registry.register(OversizedToolResultRule())
-        registry.register(LowCacheHitRule())
-        tips = registry.run(all_messages)
-        return [
-            {
-                "rule_id": t.rule_id,
-                "severity": t.severity,
-                "title": t.title,
-                "detail": t.detail,
-                "evidence": t.evidence,
-            }
-            for t in tips
-        ]
+            return (await _analytics_bundle(db))["tips"]
 
     @app.get("/api/pricing")
     async def get_pricing_table():
@@ -769,6 +1081,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             raise HTTPException(status_code=400, detail="format must be 'json' or 'md'")
         async with Database(db_path) as db:
             detail = await db.get_session_detail(session_id)
+            ephemerals = await db.get_ephemeral_messages(session_id)
         if detail is None:
             raise HTTPException(status_code=404, detail="Session not found")
 
@@ -792,7 +1105,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         ]
 
         if format == "json":
-            data = export_json(detail, cost=cost, prompts=prompts_dicts)
+            data = export_json(detail, cost=cost, prompts=prompts_dicts, ephemerals=ephemerals)
             import json as _json
 
             slug = (detail.title or detail.id).replace(" ", "_").lower()
@@ -804,7 +1117,8 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         else:
             pricing = _pricing_strat.get_pricing(model)
             md = export_markdown(
-                detail, cost=cost, prompts=prompts_dicts, pricing=pricing
+                detail, cost=cost, prompts=prompts_dicts, pricing=pricing,
+                ephemerals=ephemerals,
             )
             slug = (detail.title or detail.id).replace(" ", "_").lower()
             return Response(
@@ -847,6 +1161,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             await db.delete_session_messages(session_id)
             await _scan_one(db, edited_path)
             await _scan_one(db, backup_path)
+            # Parsed updated_at = max(remaining message timestamps); deleting
+            # the latest message regresses it. Force-bump so SSE/dedupe see
+            # the mutation. See db.touch_session_updated_at docstring.
+            await db.touch_session_updated_at(session_id)
         return {"ok": True, "session_id": session_id}
 
     @app.patch("/api/messages/{message_id}")
@@ -868,6 +1186,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             await db.delete_session_messages(session_id)
             await _scan_one(db, edited_path)
             await _scan_one(db, backup_path)
+            # Content edits leave message timestamps untouched, so the
+            # parsed updated_at doesn't move. Force-bump so SSE/dedupe see
+            # the mutation. See db.touch_session_updated_at docstring.
+            await db.touch_session_updated_at(session_id)
         return {"ok": True, "session_id": session_id}
 
     @app.post("/api/sessions/{session_id}/reveal")
@@ -900,9 +1222,15 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             cwd = str(Path(detail.file_path).parent)
         if not Path(cwd).is_dir():
             raise HTTPException(status_code=404, detail=f"Directory not found: {cwd}")
+        _reject_root_cwd(cwd, "open a terminal")
         bin_name = _derive_bin_name(detail.file_path)
         wt = _extract_worktree_name(detail.file_path, detail.cwd) if detail.is_worktree else None
-        cmd = f"{bin_name} -w {wt} -r {session_id}" if wt else f"{bin_name} -r {session_id}"
+        quoted_bin = shlex.quote(bin_name)
+        cmd = f"{quoted_bin} -w {shlex.quote(wt)} -r {session_id}" if wt else f"{quoted_bin} -r {session_id}"
+        # Apply the same API-key cleanup for every terminal launch. Subscription
+        # CLIs avoid unexpected-key prompts; API-key CLIs that need a key can
+        # re-read it from their own shell/keychain setup.
+        unset_key = "unset ANTHROPIC_API_KEY && "
         if sys.platform == "darwin":
             subprocess.Popen(
                 [
@@ -910,7 +1238,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                     "-e",
                     f'tell application "Terminal"\n'
                     f"  activate\n"
-                    f'  do script "cd {cwd} && {cmd}"\n'
+                    f'  do script "{unset_key}cd {shlex.quote(cwd)} && {cmd}"\n'
                     f"end tell",
                 ]
             )
@@ -923,7 +1251,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                             "--",
                             "bash",
                             "-c",
-                            f"cd {cwd} && {cmd}; exec bash",
+                            f"{unset_key}cd {shlex.quote(cwd)} && {cmd}; exec bash",
                         ]
                     )
                     break
@@ -934,7 +1262,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                         "-e",
                         "bash",
                         "-c",
-                        f"cd {cwd} && {cmd}; exec bash",
+                        f"{unset_key}cd {shlex.quote(cwd)} && {cmd}; exec bash",
                     ]
                 )
         else:
@@ -945,7 +1273,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                     "start",
                     "cmd",
                     "/k",
-                    f"cd /d {cwd} && {cmd}",
+                    f'cd /d "{cwd}" && {cmd}',
                 ]
             )
         return {"ok": True}
@@ -961,8 +1289,8 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         This endpoint is a PURE METADATA MINT — it does NOT spawn the CLI and
         does NOT write any JSONL on disk. It stashes a ``_PendingSession`` in
         ``app.state.pending_sessions`` keyed by the new uuid. The user's first
-        real ``/send-message`` for that id is what materialises the session
-        via ``claude --session-id`` (see send-message route).
+        real PTY submit for that id is what materialises the session via
+        ``claude --session-id``.
 
         Why no spawn here: an auto-greeting that materialises the JSONL would
         appear as the user's first turn in the conversation, which is wrong.
@@ -999,12 +1327,15 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         if not Path(cwd).is_dir():
             raise HTTPException(status_code=404, detail=f"Directory not found: {cwd}")
 
-        # We default to plain `claude` for new sessions — the binary that
-        # writes the JSONL determines which data_path the session shows up
-        # under, and `claude` is the conventional default. We validate the
-        # bin up front so the caller learns about a missing CLI now rather
-        # than only on their first message.
-        bin_name = "claude"
+        # The binary that writes the JSONL determines which data_path the
+        # session shows up under, so a brand-new session must use the CLI
+        # whose data root is the active profile's data_path. Otherwise a
+        # ``crad``-profile user clicking "New Task" while the work profile
+        # is active would silently spawn vanilla ``claude`` and the session
+        # would never appear in their active-profile sidebar. We validate
+        # the resolved bin up front so the caller learns about a missing
+        # CLI now rather than only on their first message.
+        bin_name = _active_profile_bin_name(_state["config"])
         if shutil.which(bin_name) is None:
             raise HTTPException(
                 status_code=503, detail=f"{bin_name} not found on PATH"
@@ -1013,7 +1344,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         permission_mode = (
             req.permission_mode
             or _state["config"].claude_default_permission_mode
-            or "dontAsk"
+            or "default"
         )
         new_id = str(uuid.uuid4())
         async with app.state.pending_sessions_lock:
@@ -1028,115 +1359,59 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             "permission_mode": permission_mode,
         }
 
-    @app.post("/api/sessions/{session_id}/send-message")
-    async def send_message(session_id: str, req: _SendMessageRequest):
-        text = req.message.strip()
-        if not text:
-            raise HTTPException(status_code=422, detail="message must not be empty")
-        async with Database(db_path) as db:
-            detail = await db.get_session_detail(session_id)
-        if detail is None:
-            # Existing session row absent — check the pending-session map (issue #9):
-            # a brand-new session minted by /api/sessions/new lives only here until
-            # its first user message lands. Pop atomically so we can't double-spawn
-            # if two clients send concurrently.
-            pending: _PendingSession | None = None
-            async with app.state.pending_sessions_lock:
-                pending = app.state.pending_sessions.pop(session_id, None)
-            if pending is None:
-                raise HTTPException(status_code=404, detail="Session not found")
-            if not Path(pending.cwd).is_dir():
-                # Cwd vanished between mint and first message — restore the entry so
-                # a retry after the user fixes their disk doesn't lose the id.
-                async with app.state.pending_sessions_lock:
-                    app.state.pending_sessions[session_id] = pending
-                raise HTTPException(
-                    status_code=404, detail=f"Directory not found: {pending.cwd}"
-                )
-            if shutil.which(pending.bin_name) is None:
-                async with app.state.pending_sessions_lock:
-                    app.state.pending_sessions[session_id] = pending
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"{pending.bin_name} not found on PATH",
-                )
-            permission_mode = req.permission_mode or pending.permission_mode
-            model = req.model or ""
-            result = await _runner.submit(
-                session_id,
-                cwd=pending.cwd,
-                bin_name=pending.bin_name,
-                text=text,
-                permission_mode=permission_mode,
-                model=model,
-                new_session=True,
-                auto_stop_quiet_default=_state[
-                    "config"
-                ].claude_auto_stop_quiet_default_turns,
-            )
-            response: dict = {"ok": True, "permission_mode": permission_mode}
-            if result is not None:
-                response["result_text"] = result.get("result_text")
-                response["is_error"] = bool(result.get("is_error"))
-            return response
-        if detail.is_fork:
-            raise HTTPException(
-                status_code=422,
-                detail="fork sessions are not valid --resume targets",
-            )
-        if _runner.is_busy(session_id):
-            raise HTTPException(status_code=409, detail="session is busy")
-        cwd = detail.cwd or str(Path(detail.file_path).parent)
-        if not Path(cwd).is_dir():
-            raise HTTPException(status_code=404, detail=f"Directory not found: {cwd}")
-        bin_name = _derive_bin_name(detail.file_path)
-        if shutil.which(bin_name) is None:
-            raise HTTPException(
-                status_code=503,
-                detail=f"{bin_name} not found on PATH",
-            )
-        permission_mode = (
-            req.permission_mode
-            or _state["config"].claude_default_permission_mode
-            or "dontAsk"
-        )
-        model = req.model or ""
-        result = await _runner.submit(
-            session_id,
-            cwd=cwd,
-            bin_name=bin_name,
-            text=text,
-            permission_mode=permission_mode,
-            model=model,
-            auto_stop_quiet_default=_state[
-                "config"
-            ].claude_auto_stop_quiet_default_turns,
-        )
-        response: dict = {"ok": True, "permission_mode": permission_mode}
-        # Slash commands return synchronous result text (e.g. unknown-command
-        # responses from claude that aren't written to JSONL).
-        if result is not None:
-            response["result_text"] = result.get("result_text")
-            response["is_error"] = bool(result.get("is_error"))
-        return response
+    def _pty_busy_snapshot(session_id: str) -> dict:
+        """Return the sidebar busy-badge shape for ``session_id``.
 
-    @app.post("/api/sessions/{session_id}/stop")
-    async def stop_message(session_id: str):
-        stopped = await _runner.stop(session_id)
-        return {"ok": True, "stopped": stopped}
+        Busy state is derived from PtyManager. The FE polls
+        ``/api/runner-status?ids=...`` (kept by name for API compatibility);
+        Phase 7+ may rename the endpoint to ``/api/pty/status-batch``.
 
-    @app.get("/api/sessions/{session_id}/runner-status")
-    async def runner_status(session_id: str):
-        return _runner.status_snapshot(session_id)
+        Busy heuristic: PTY alive, the channel has seen input within
+        ~2 minutes, and it's emitted output within the last 2 seconds.
+        The output window catches streaming (TUI redraws on every chunk);
+        the input bound prevents long-idle channels from being flagged as
+        busy after the user walks away.
+        """
+        if _pty_manager is None:
+            return {
+                "busy": False,
+                "last_error": None,
+                "permission_mode": None,
+            }
+        pty = _pty_manager.status(session_id)
+        now_ms = int(time.time() * 1000)
+        last_in = int(pty.get("last_input_ms") or 0)
+        last_out = int(pty.get("last_pty_output_ms") or 0)
+        pty_busy = (
+            bool(pty.get("alive"))
+            and last_in > 0
+            and (now_ms - last_in) < 120_000
+            and (now_ms - last_out) < 2_000
+        )
+        return {
+            "busy": pty_busy,
+            "last_error": None,
+            "permission_mode": pty.get("permission_mode") or None,
+        }
+
+    @app.get("/api/runner-status")
+    async def runner_status_batch(ids: str = Query("")):
+        """Batch busy-status for a comma-separated id list → ``{id: status}``.
+
+        Drives the sidebar busy-indicator. One shared poll for the whole
+        visible session list, capped to bound a pathological query string.
+        """
+        session_ids = [s for s in ids.split(",") if s][:500]
+        return {sid: _pty_busy_snapshot(sid) for sid in session_ids}
 
     # -----------------------------------------------------------------------
     # Recaps
     # -----------------------------------------------------------------------
 
     _RECAP_PROMPT = (
-        "Provide a concise recap of this conversation in 3-5 short bullets. "
-        "Focus on what was accomplished, what remains open, and any notable "
-        "decisions. Be terse — this is a quick context-restore, not a deep summary."
+        "In 1-2 short sentences, recap where this conversation left off. "
+        "No bullets, no preamble. Just the sentences. This is a glance-and-go "
+        "context-restore inline in the chat view, not a summary document."
     )
 
     @app.post("/api/sessions/{session_id}/recap")
@@ -1164,11 +1439,36 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 detail.messages[-1].id if detail.messages else None
             )
 
-            text = await _runner.generate_recap(
+            # Phase 8: recap runs through a hidden PTY against a forked
+            # session. Pre-mint the fork id and tombstone it so the
+            # watcher doesn't briefly surface the fork JSONL in the
+            # sidebar between file creation and the recap runner's
+            # cleanup unlink.
+            import uuid
+            fork_id = str(uuid.uuid4())
+            _deleted_tombstones.add(fork_id)
+            # Pre-empt the trust-this-folder TUI dialog (same as the
+            # main chat PTY does) — without this the fork's first
+            # spawn into a fresh cwd would eat the recap prompt while
+            # waiting for the user to confirm trust.
+            try:
+                _ensure_trust(
+                    _config_dir_for_bin(_state["config"], bin_name), cwd
+                )
+            except Exception as exc:
+                _log.warning(
+                    "recap: trust pre-flight failed for %s in %s: %s",
+                    bin_name,
+                    cwd,
+                    exc,
+                )
+            text = await _generate_recap(
                 session_id,
                 cwd=cwd,
                 bin_name=bin_name,
                 prompt=_RECAP_PROMPT,
+                source_jsonl_path=Path(detail.file_path),
+                fork_id=fork_id,
             )
             if text is None:
                 raise HTTPException(status_code=502, detail="recap generation failed")
@@ -1197,6 +1497,16 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="Recap not found")
         return {"ok": True, "dismissed": True}
 
+    @app.get("/api/sessions/{session_id}/ephemerals")
+    async def list_ephemerals_route(session_id: str):
+        """Return ordered ephemeral_messages for *session_id* (e.g. /btw pairs).
+
+        Both user and assistant rows are returned; the FE pairs them via
+        ``responds_to`` and interleaves with regular messages by timestamp.
+        """
+        async with Database(db_path) as db:
+            return await db.get_ephemeral_messages(session_id)
+
     @app.put("/api/sessions/{session_id}/title")
     async def set_session_title(session_id: str, req: _SessionTitleRequest):
         """Persist a user-supplied rename and broadcast to other clients.
@@ -1214,6 +1524,209 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         _invalidate_detail_cache(session_id)
         _bus.publish({"type": "session-meta", "id": session_id, "title": stored})
         return {"ok": True, "id": session_id, "custom_title": stored}
+
+    @app.put("/api/sessions/{session_id}/archived")
+    async def set_session_archived(session_id: str, req: _SessionArchivedRequest):
+        """Persist the archived flag server-side and broadcast.
+
+        Body: ``{"archived": bool}``. Returns ``{ok, id, archived_at}``.
+        Replaces the previous localStorage-only state (LS.ARCHIVED), which
+        meant a second browser saw stale state.
+        """
+        async with Database(db_path) as db:
+            if await db.get_session_file_path(session_id) is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            stored = await db.set_archived(session_id, req.archived)
+        _invalidate_detail_cache(session_id)
+        _bus.publish(
+            {"type": "session-meta", "id": session_id, "archived_at": stored}
+        )
+        return {"ok": True, "id": session_id, "archived_at": stored}
+
+    @app.put("/api/sessions/{session_id}/starred")
+    async def set_session_starred(session_id: str, req: _SessionStarredRequest):
+        """Persist the starred flag server-side. Same shape as ``archived``."""
+        async with Database(db_path) as db:
+            if await db.get_session_file_path(session_id) is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            stored = await db.set_starred(session_id, req.starred)
+        _invalidate_detail_cache(session_id)
+        _bus.publish(
+            {"type": "session-meta", "id": session_id, "starred_at": stored}
+        )
+        return {"ok": True, "id": session_id, "starred_at": stored}
+
+    @app.put("/api/sessions/{session_id}/viewed")
+    async def set_session_viewed(session_id: str, req: _SessionViewedRequest):
+        """Record the wall-clock the session was last viewed by the user.
+
+        Body: ``{"viewed_at": str | null}``. Pass ``null`` to mark unread.
+        The FE typically passes the session's current ``updated_at`` so the
+        bell stays dismissed only as long as no new messages have arrived.
+        """
+        async with Database(db_path) as db:
+            if await db.get_session_file_path(session_id) is None:
+                raise HTTPException(status_code=404, detail="Session not found")
+            stored = await db.set_viewed_at(session_id, req.viewed_at)
+        _invalidate_detail_cache(session_id)
+        _bus.publish(
+            {"type": "session-meta", "id": session_id, "viewed_at": stored}
+        )
+        return {"ok": True, "id": session_id, "viewed_at": stored}
+
+    @app.post("/api/sessions/migrate-localstorage")
+    async def migrate_session_localstorage(req: _LocalStorageMigrationRequest):
+        """One-time migration: import localStorage-only meta into the DB.
+
+        Called by the FE on first load after the upgrade so existing users
+        don't lose their archive / star / read-receipt state.  Idempotent —
+        the FE should clear the corresponding localStorage keys only after
+        a 200 response, but calling this twice with overlapping ids just
+        rewrites the same timestamps.
+
+        Body shape:
+            { "archived": [sid, ...],
+              "starred":  [sid, ...],
+              "viewed_at": { sid: iso_timestamp, ... } }
+        Returns counts of rows actually written. Missing sessions are
+        silently skipped (deleted-since-archive is fine — no row needed).
+        """
+        applied = {"archived": 0, "starred": 0, "viewed_at": 0}
+        async with Database(db_path) as db:
+            for sid in req.archived:
+                if await db.get_session_file_path(sid) is not None:
+                    await db.set_archived(sid, True)
+                    applied["archived"] += 1
+            for sid in req.starred:
+                if await db.get_session_file_path(sid) is not None:
+                    await db.set_starred(sid, True)
+                    applied["starred"] += 1
+            for sid, ts in req.viewed_at.items():
+                if await db.get_session_file_path(sid) is not None:
+                    await db.set_viewed_at(sid, ts)
+                    applied["viewed_at"] += 1
+        # No per-session SSE — the FE is expected to refetch its session
+        # list once after migration.  Single broadcast tells other tabs to
+        # do the same.
+        _bus.publish({"type": "session-meta-bulk-migration", "applied": applied})
+        return {"ok": True, "applied": applied}
+
+    @app.post("/api/sessions/delete")
+    async def delete_sessions(req: _SessionDeleteRequest):
+        """Hard-delete sessions: unlinks the on-disk .jsonl file and removes
+        all DB rows (messages, FTS, recaps, session_meta, session).
+
+        Race-free design:
+          1. Every session id is added to ``_deleted_tombstones`` BEFORE any
+             unlink or DB delete, so concurrent ``do_scan`` / ``_scan_one``
+             iterations that are already running skip re-inserting the row.
+          2. All DB work for the whole batch runs inside ONE ``Database``
+             context, eliminating the per-id connection-open/close churn
+             (busy-timeout lock contention).
+
+        Path safety: each file_path is resolved with os.path.realpath and
+        verified to live under one of the configured scan roots AND to end
+        with '.jsonl'.  Any path that fails this check is recorded in
+        ``failed`` and skipped — the file is never touched.
+
+        Returns {"ok": true, "deleted": [...ids], "failed": [...{id, error}]}.
+        """
+        deleted: list[str] = []
+        failed: list[dict] = []
+
+        # Compute the set of allowed root prefixes once for the whole batch.
+        # Sessions live at <root>/projects/<proj>/<session>.jsonl so the file
+        # must resolve under one of the scan roots (which already include the
+        # /projects/ sub-tree by construction).
+        scan_roots = [
+            os.path.realpath(str(Path(p).expanduser()))
+            for p in _state["config"].get_all_scan_paths()
+        ]
+
+        # Phase 0: tombstone ALL requested ids BEFORE touching disk or DB so
+        # that any in-flight do_scan / _scan_one iteration sees the guard
+        # before we do the unlink + row delete.
+        for session_id in req.session_ids:
+            _deleted_tombstones.add(session_id)
+
+        # Kill live PTY channels for all requested sessions (idempotent when
+        # no channel exists) before opening the DB, so an attached claude can't
+        # keep writing to the JSONL we're about to unlink.
+        if _pty_manager is not None:
+            for session_id in req.session_ids:
+                try:
+                    await _pty_manager.kill(session_id)
+                except Exception:
+                    pass
+
+        # Map of session_id -> resolved file path for files that pass safety
+        # checks and should be unlinked AFTER the DB transaction commits.
+        to_unlink: dict[str, str] = {}
+
+        # Single DB connection for the whole batch — no per-id lock churn.
+        try:
+            async with Database(db_path) as db:
+                for session_id in req.session_ids:
+                    try:
+                        fp = await db.get_session_file_path(session_id)
+
+                        if fp is not None:
+                            # --- Path safety check ---
+                            resolved = os.path.realpath(fp)
+                            if not resolved.endswith(".jsonl"):
+                                failed.append(
+                                    {
+                                        "id": session_id,
+                                        "error": "path outside sessions root / not .jsonl",
+                                    }
+                                )
+                                # Do NOT delete row, do NOT unlink.
+                                _deleted_tombstones.discard(session_id)
+                                continue
+                            if not any(
+                                resolved == r or resolved.startswith(r + os.sep)
+                                for r in scan_roots
+                            ):
+                                failed.append(
+                                    {
+                                        "id": session_id,
+                                        "error": "path outside sessions root / not .jsonl",
+                                    }
+                                )
+                                _deleted_tombstones.discard(session_id)
+                                continue
+                            to_unlink[session_id] = resolved
+
+                        await db.delete_session(session_id)
+                        deleted.append(session_id)
+
+                    except Exception as exc:
+                        failed.append({"id": session_id, "error": str(exc)})
+                        _deleted_tombstones.discard(session_id)
+        except Exception as exc:
+            # Whole-batch DB open failure — mark everything not yet handled.
+            handled = {e["id"] for e in failed} | set(deleted)
+            for session_id in req.session_ids:
+                if session_id not in handled:
+                    failed.append({"id": session_id, "error": str(exc)})
+                    _deleted_tombstones.discard(session_id)
+
+        # Unlink on-disk files for successfully deleted sessions.
+        for session_id in deleted:
+            resolved = to_unlink.get(session_id)
+            if resolved:
+                try:
+                    os.unlink(resolved)
+                except FileNotFoundError:
+                    pass  # already gone — still counts as success
+            _invalidate_detail_cache(session_id)
+
+        # Broadcast a single refresh event so all connected clients reload
+        # their session list (same event type the file-watcher uses).
+        if deleted:
+            _bus.publish({"type": "refresh", "path": ""})
+
+        return {"ok": True, "deleted": deleted, "failed": failed}
 
     @app.post("/api/refresh")
     async def refresh():
@@ -1464,6 +1977,356 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             "language": language,
         }
 
+    @app.get("/api/fs/blob")
+    async def fs_blob(path: str = Query(...)):
+        import mimetypes
+
+        prefixes = await _allowed_prefixes()
+        resolved = _validate_fs_path(path, prefixes)
+        if not resolved.is_file():
+            raise HTTPException(status_code=404, detail="Not a file")
+
+        size = resolved.stat().st_size
+        if size > 50 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File too large (max 50MB)")
+
+        mime_type, _ = mimetypes.guess_type(str(resolved))
+        if not mime_type:
+            mime_type = "application/octet-stream"
+
+        from starlette.responses import FileResponse as _BlobFileResponse
+
+        return _BlobFileResponse(
+            str(resolved),
+            media_type=mime_type,
+            headers={"Cache-Control": "private, max-age=60"},
+        )
+
+    # ------------------------------------------------------------------
+    # PTY runner endpoints (Phase 1)
+    # ------------------------------------------------------------------
+
+    async def _resolve_pty_focus_params(
+        session_id: str,
+        *,
+        bin_override: str | None = None,
+        cwd_override: str | None = None,
+        permission_mode_override: str | None = None,
+    ) -> tuple[str, str, str, bool, Path | None]:
+        """Resolve (bin_name, cwd, permission_mode, new_chat, jsonl_path) for PTY focus/submit.
+
+        Priority for PTY focus/submit:
+          1. Explicit override (caller knows best).
+          2. Existing on-disk session detail (resume case → new_chat=False).
+          3. ``app.state.pending_sessions`` entry minted by ``/api/sessions/new``
+             (no JSONL yet → new_chat=True).
+          4. Active profile fallback for ad-hoc calls (treated as resume).
+
+        ``jsonl_path`` is ``None`` when no JSONL exists yet (new_chat=True
+        + pending session). For resumes we hand back the on-disk JSONL
+        path so the PTY runner can run its Phase-0 ownership check.
+        """
+        cfg = _state["config"]
+        bin_name: str | None = bin_override
+        cwd: str | None = cwd_override
+        permission_mode: str | None = permission_mode_override
+        new_chat = False
+        jsonl_path: Path | None = None
+
+        async with Database(db_path) as db:
+            detail = await db.get_session_detail(session_id)
+        if detail is not None:
+            if bin_name is None:
+                bin_name = _derive_bin_name(detail.file_path)
+            if cwd is None:
+                cwd = detail.cwd or str(Path(detail.file_path).parent)
+            if permission_mode is None and detail.permission_mode:
+                permission_mode = detail.permission_mode
+            jsonl_path = Path(detail.file_path)
+        else:
+            async with app.state.pending_sessions_lock:
+                pending = app.state.pending_sessions.get(session_id)
+            if pending is not None:
+                new_chat = True
+                if bin_name is None:
+                    bin_name = pending.bin_name
+                if cwd is None:
+                    cwd = pending.cwd
+                if permission_mode is None:
+                    permission_mode = pending.permission_mode
+            else:
+                if bin_name is None:
+                    bin_name = _active_profile_bin_name(cfg)
+
+        if cwd is None:
+            cwd = os.getcwd()
+        if permission_mode is None:
+            permission_mode = cfg.claude_default_permission_mode or "default"
+        if bin_name is None:
+            bin_name = "claude"
+
+        return bin_name, cwd, permission_mode, new_chat, jsonl_path
+
+    @app.post("/api/pty/focus")
+    async def pty_focus(req: _PtyFocusRequest):
+        bin_name, cwd, permission_mode, resolved_new_chat, jsonl_path = (
+            await _resolve_pty_focus_params(
+                req.session_id,
+                bin_override=req.bin_name,
+                cwd_override=req.cwd,
+                permission_mode_override=req.permission_mode,
+            )
+        )
+        # Caller's explicit req.new_chat wins; otherwise use the resolver's
+        # inferred value (True iff session lives in pending_sessions only).
+        new_chat = req.new_chat or resolved_new_chat
+        # Pre-empt claude's trust-this-folder TUI dialog. Without this the
+        # dialog eats the first user message (Enter selects "Yes, I trust"
+        # and the typed content goes nowhere). See _ensure_trust docstring.
+        try:
+            _ensure_trust(_config_dir_for_bin(_state["config"], bin_name), cwd)
+        except Exception as exc:
+            _log.warning(
+                "pty: trust pre-flight failed for %s in %s: %s",
+                bin_name,
+                cwd,
+                exc,
+            )
+        try:
+            await _pty_manager.focus(
+                req.session_id,
+                cwd=cwd,
+                bin_name=bin_name,
+                model=req.model or "",
+                permission_mode=permission_mode,
+                new_chat=new_chat,
+                jsonl_path=jsonl_path,
+            )
+        except PtyOwnershipConflict as exc:
+            # Foreign claude already owns the JSONL — surface as 409 so
+            # the FE can render its Take-over banner without surprising
+            # the user with a spinner that never finishes.
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "kind": "pty_ownership_conflict",
+                    "session_id": req.session_id,
+                    "foreign_pids": exc.foreign_pids,
+                    "jsonl_path": str(jsonl_path) if jsonl_path else None,
+                },
+            )
+        return {"ok": True}
+
+    @app.post("/api/pty/blur")
+    async def pty_blur(req: _PtyBlurRequest):
+        await _pty_manager.unfocus(req.session_id)
+        return {"ok": True}
+
+    @app.post("/api/pty/submit")
+    async def pty_submit(req: _PtySubmitRequest):
+        # Defensive: if the session's cwd directory was deleted since the
+        # FE last loaded the detail, refuse the submit with a clear 410.
+        # The FE banner + handleSend short-circuit cover the typical path;
+        # this protects against the cwd disappearing mid-session.
+        async with Database(db_path) as db:
+            _detail = await db.get_session_detail(req.session_id)
+        if _detail is not None and _detail.cwd and not _detail.cwd_exists:
+            raise HTTPException(
+                status_code=410,
+                detail=(
+                    f"Session's working directory no longer exists: "
+                    f"{_detail.cwd}. Cannot deliver the message."
+                ),
+            )
+        # Lazily ensure focus. The frontend wires onFocus on the chat input
+        # but that doesn't always fire (autofocus on mount, programmatic
+        # focus, navigation between sessions with cursor still in input).
+        # Auto-focusing on submit keeps the user-facing contract simple:
+        # POST /api/pty/submit just works for any valid session_id.
+        #
+        # Model handling: ``req.model`` reflects the model picker's current
+        # selection at submit time. If the live channel was spawned with a
+        # different ``--model``, kill it so the auto-focus block below
+        # respawns with the user's intended model — claude's TUI is locked
+        # to its spawn-time ``--model``, so a mid-session change requires
+        # a respawn. This costs the next message ~1-3s of spawn time but
+        # honours the user's expectation that the picker matches the reply.
+        requested_model = req.model or ""
+        status = _pty_manager.status(req.session_id)
+        # Heuristic for "turn currently in flight": user input has been
+        # written more recently than the last drained PTY byte. We skip
+        # the model switch during a live turn — sending /model mid-stream
+        # would mean the in-flight reply finishes on the old model and the
+        # *next* turn uses the new one, but the slash command itself shows
+        # up in JSONL out of order. The picker change takes effect on the
+        # next idle submit instead. UX cost: one "wrong-model" turn after
+        # switching mid-stream.
+        last_in = int(status.get("last_input_ms") or 0)
+        last_out = int(status.get("last_pty_output_ms") or 0)
+        turn_in_flight = last_in > 0 and last_in > last_out
+        if (
+            status.get("alive")
+            and requested_model
+            and status.get("model") != requested_model
+            and not turn_in_flight
+        ):
+            # Use claude's /model slash command to switch the live TUI's
+            # model in place. Keeps the TUI alive, conversation context
+            # intact, near-instant — vs the old kill+respawn path that
+            # blocked the submit for 10-15s while the new TUI bootstrapped.
+            await _pty_manager.switch_model(req.session_id, requested_model)
+        if not status.get("alive"):
+            bin_name, cwd, permission_mode, new_chat, jsonl_path = (
+                await _resolve_pty_focus_params(req.session_id)
+            )
+            try:
+                _ensure_trust(_config_dir_for_bin(_state["config"], bin_name), cwd)
+            except Exception as exc:
+                _log.warning("pty: trust pre-flight failed for %s in %s: %s",
+                             bin_name, cwd, exc)
+            try:
+                await _pty_manager.focus(
+                    req.session_id,
+                    cwd=cwd,
+                    bin_name=bin_name,
+                    model=requested_model,
+                    permission_mode=permission_mode,
+                    new_chat=new_chat,
+                    jsonl_path=jsonl_path,
+                )
+            except PtyOwnershipConflict as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "kind": "pty_ownership_conflict",
+                        "session_id": req.session_id,
+                        "foreign_pids": exc.foreign_pids,
+                        "jsonl_path": str(jsonl_path) if jsonl_path else None,
+                    },
+                )
+        try:
+            await _pty_manager.submit(req.session_id, req.content)
+        except PtySubmitInFlight as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except PtyOwnershipConflict as exc:
+            # Auto-respawn inside submit() can hit the same conflict if
+            # a foreign claude attached during our idle-kill window.
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "kind": "pty_ownership_conflict",
+                    "session_id": req.session_id,
+                    "foreign_pids": exc.foreign_pids,
+                },
+            )
+        return {"ok": True}
+
+    @app.post("/api/pty/kill")
+    async def pty_kill(req: _PtyKillRequest):
+        await _pty_manager.kill(req.session_id)
+        return {"ok": True}
+
+    @app.get("/api/pty/native-snapshot")
+    async def pty_native_snapshot(session_id: str = Query(...)):
+        try:
+            return _pty_manager.native_snapshot(session_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    @app.post("/api/pty/input")
+    async def pty_native_input(req: _PtyNativeInputRequest):
+        try:
+            await _pty_manager.write_raw_input(
+                req.session_id,
+                decode_terminal_input(req.data),
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        return {"ok": True}
+
+    @app.post("/api/pty/resize")
+    async def pty_resize(req: _PtyResizeRequest):
+        try:
+            await _pty_manager.resize(req.session_id, req.rows, req.cols)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        return {"ok": True}
+
+    @app.get("/api/pty/status")
+    async def pty_status(session_id: str = Query(...)):
+        return _pty_manager.status(session_id)
+
+    @app.get("/api/pty/ownership/{session_id}")
+    async def pty_ownership(session_id: str):
+        """Phase-0 ownership snapshot. Pure read — never spawns.
+
+        Returns ``{status, foreign_pids, jsonl_path}`` for the FE badge.
+        For sessions whose JSONL doesn't exist yet (brand-new pending
+        sessions, or unknown ids), reports ``status="idle"``.
+        """
+        async with Database(db_path) as db:
+            detail = await db.get_session_detail(session_id)
+        jsonl_path = Path(detail.file_path) if detail is not None else None
+        return _pty_manager.ownership(session_id, jsonl_path)
+
+    @app.post("/api/pty/takeover/{session_id}")
+    async def pty_takeover(session_id: str):
+        """Phase-0 take-over. SIGINTs each foreign claude attached to the
+        session and polls until they release the JSONL fd (or ~3 s
+        elapses).
+
+        Returns 200 on success (the FE follows up with the regular focus
+        call). Returns 409 if any pid is still attached after the poll
+        window — matches the plan's "no SIGTERM/SIGKILL fallback"
+        decision: we don't escalate.
+        """
+        async with Database(db_path) as db:
+            detail = await db.get_session_detail(session_id)
+        if detail is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown session: {session_id}",
+            )
+        jsonl_path = Path(detail.file_path)
+        pids = _session_conflict_pids(session_id, jsonl_path)
+        if not pids:
+            _unlink_fresh_foreign_sidecar(jsonl_path)
+            return {"ok": True, "released_pids": [], "still_held_by": []}
+        released: list[int] = []
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGINT)
+                released.append(pid)
+            except ProcessLookupError:
+                # Already gone — counts as a release.
+                released.append(pid)
+            except PermissionError as exc:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Cannot signal pid {pid}: {exc}. "
+                        "Take over manually from the owning terminal."
+                    ),
+                )
+        # Poll: claude exits in ~300 ms once SIGINT is processed (see
+        # docs/pty-ownership-phase0-findings.md). Budget 3 s.
+        end = time.monotonic() + 3.0
+        still: list[int] = list(pids)
+        while time.monotonic() < end and still:
+            await asyncio.sleep(0.1)
+            still = _session_conflict_pids(session_id, jsonl_path)
+        if still:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "kind": "pty_takeover_timeout",
+                    "session_id": session_id,
+                    "still_held_by": still,
+                },
+            )
+        _unlink_fresh_foreign_sidecar(jsonl_path)
+        return {"ok": True, "released_pids": released, "still_held_by": []}
+
     # ------------------------------------------------------------------
     # Static frontend — must be registered LAST (catch-all route)
     # ------------------------------------------------------------------
@@ -1479,7 +2342,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         async def _spa(full_path: str = ""):
             candidate = static_dir / full_path
             if full_path and candidate.exists() and candidate.is_file():
-                return _FileResponse(str(candidate))
+                return _FileResponse(
+                    str(candidate),
+                    headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+                )
             # Hashed asset misses must 404, NOT fall through to index.html.
             # Otherwise a browser holding a stale chunk hash (e.g. after a
             # rebuild) gets text/html for an /assets/<old-hash>.js request

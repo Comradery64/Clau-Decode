@@ -19,6 +19,7 @@ Legacy in-place helpers are kept for the test suite only.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import uuid as _uuid_mod
 from datetime import datetime, timezone
@@ -97,6 +98,14 @@ def swap_session(
         edited_lines.append(json.dumps(record, ensure_ascii=False))
 
     original_path.write_text("\n".join(edited_lines) + "\n", encoding="utf-8")
+
+    # Force-bump mtime to "now" so downstream consumers (watcher,
+    # _scan_one's stored_mtime == current_mtime fast-path, and any
+    # mtime-based dedupe) always observe the swap as a change, even on
+    # filesystems with coarse mtime resolution where two writes in the
+    # same second can collide. write_text already touches mtime on APFS,
+    # but this guarantees the contract regardless of FS.
+    os.utime(original_path, None)
 
     return original_path, session_id, backup_path, backup_id
 

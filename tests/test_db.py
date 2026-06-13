@@ -141,6 +141,49 @@ class TestMessages:
         detail = await db.get_session_detail("nonexistent-id")
         assert detail is None
 
+    async def test_cwd_exists_true_when_cwd_dir_exists_on_disk(
+        self, db, sample_project, sample_session, sample_messages, tmp_path
+    ):
+        """``cwd_exists`` is computed via a live ``Path.is_dir()`` check at
+        request time, not from any cached DB column. A session whose cwd
+        points at a real directory reports True."""
+        real_cwd_session = sample_session.model_copy(update={"cwd": str(tmp_path)})
+        await db.upsert_project(sample_project)
+        await db.upsert_session(real_cwd_session)
+        await db.upsert_messages(sample_messages)
+        detail = await db.get_session_detail(real_cwd_session.id)
+        assert detail is not None
+        assert detail.cwd_exists is True
+
+    async def test_cwd_exists_false_when_cwd_dir_missing(
+        self, db, sample_project, sample_session, sample_messages, tmp_path
+    ):
+        """A session whose cwd points at a path that doesn't exist on disk
+        reports False — without trusting any DB cache that may have been
+        stale from a previous scan."""
+        gone_cwd_session = sample_session.model_copy(
+            update={"cwd": str(tmp_path / "deleted-dir-that-does-not-exist")}
+        )
+        await db.upsert_project(sample_project)
+        await db.upsert_session(gone_cwd_session)
+        await db.upsert_messages(sample_messages)
+        detail = await db.get_session_detail(gone_cwd_session.id)
+        assert detail is not None
+        assert detail.cwd_exists is False
+
+    async def test_cwd_exists_true_when_session_cwd_is_null(
+        self, db, sample_project, sample_session, sample_messages
+    ):
+        """Legacy / corrupted sessions with no cwd default to True so we
+        don't false-positive an undeliverable banner on them."""
+        no_cwd_session = sample_session.model_copy(update={"cwd": None})
+        await db.upsert_project(sample_project)
+        await db.upsert_session(no_cwd_session)
+        await db.upsert_messages(sample_messages)
+        detail = await db.get_session_detail(no_cwd_session.id)
+        assert detail is not None
+        assert detail.cwd_exists is True
+
     async def test_messages_ordered_by_timestamp(
         self, db, sample_project, sample_session, sample_messages
     ):
@@ -372,3 +415,138 @@ class TestGetSessionFilePathForMessage:
             "unknown-0000-0000-0000-000000000000"
         )
         assert path is None
+
+
+# ---------------------------------------------------------------------------
+# Session flags — archived / starred / viewed (server-backed)
+#
+# These were originally localStorage-only on the frontend (LS.ARCHIVED,
+# LS.STARRED, LS.VIEWED_AT), making them invisible across browsers.
+# ---------------------------------------------------------------------------
+
+
+class TestSessionFlags:
+    async def test_set_archived_round_trips(self, db, sample_project, sample_session):
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        sid = sample_session.id
+
+        # Initially unset.
+        meta = await db.get_session_meta(sid)
+        assert meta["archived_at"] is None
+
+        ts = await db.set_archived(sid, True)
+        assert ts is not None and len(ts) > 0
+        meta = await db.get_session_meta(sid)
+        assert meta["archived_at"] == ts
+
+        cleared = await db.set_archived(sid, False)
+        assert cleared is None
+        meta = await db.get_session_meta(sid)
+        assert meta["archived_at"] is None
+
+    async def test_set_starred_round_trips(self, db, sample_project, sample_session):
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        sid = sample_session.id
+        ts = await db.set_starred(sid, True)
+        assert ts is not None
+        meta = await db.get_session_meta(sid)
+        assert meta["starred_at"] == ts
+        await db.set_starred(sid, False)
+        meta = await db.get_session_meta(sid)
+        assert meta["starred_at"] is None
+
+    async def test_set_viewed_at_accepts_explicit_timestamp(
+        self, db, sample_project, sample_session
+    ):
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        sid = sample_session.id
+        # Caller supplies the timestamp (typically message_updated_at) so the
+        # bell-dismiss logic can compare exact wall-clocks.
+        ts = "2026-05-28T15:00:00"
+        stored = await db.set_viewed_at(sid, ts)
+        assert stored == ts
+        meta = await db.get_session_meta(sid)
+        assert meta["viewed_at"] == ts
+
+        # Clearing.
+        cleared = await db.set_viewed_at(sid, None)
+        assert cleared is None
+        meta = await db.get_session_meta(sid)
+        assert meta["viewed_at"] is None
+
+    async def test_flags_are_independent(self, db, sample_project, sample_session):
+        """Setting archived must not clobber starred / custom_title / viewed_at,
+        and vice versa — each upsert touches only its own column."""
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        sid = sample_session.id
+
+        await db.set_custom_title(sid, "my title")
+        await db.set_archived(sid, True)
+        await db.set_starred(sid, True)
+        await db.set_viewed_at(sid, "2026-05-28T10:00:00")
+
+        meta = await db.get_session_meta(sid)
+        assert meta["custom_title"] == "my title"
+        assert meta["archived_at"] is not None
+        assert meta["starred_at"] is not None
+        assert meta["viewed_at"] == "2026-05-28T10:00:00"
+
+        # Toggling one field must leave the others intact.
+        await db.set_archived(sid, False)
+        meta = await db.get_session_meta(sid)
+        assert meta["archived_at"] is None
+        assert meta["custom_title"] == "my title"
+        assert meta["starred_at"] is not None
+        assert meta["viewed_at"] == "2026-05-28T10:00:00"
+
+    async def test_flags_project_into_session_list(
+        self, db, sample_project, sample_session
+    ):
+        """Database.get_sessions includes the flags via the LEFT JOIN so the
+        FE gets them on first paint without a separate request."""
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        sid = sample_session.id
+        await db.set_archived(sid, True)
+        await db.set_starred(sid, True)
+        await db.set_viewed_at(sid, "2026-05-28T11:00:00")
+
+        sessions = await db.get_sessions()
+        target = next((s for s in sessions if s.id == sid), None)
+        assert target is not None, "session must appear in list"
+        assert target.archived_at is not None, (
+            "archived_at must be projected from session_meta into the list payload"
+        )
+        assert target.starred_at is not None
+        assert target.viewed_at == "2026-05-28T11:00:00"
+
+    async def test_unsupported_column_rejected(
+        self, db, sample_project, sample_session
+    ):
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        with pytest.raises(ValueError):
+            await db._set_meta_flag(sample_session.id, "evil_column", "x")
+
+    async def test_get_session_meta_returns_default_dict_when_missing(self, db):
+        """No session_meta row → returns a dict with all-None values rather
+        than raising or returning None.  Lets callers branch on field truthiness."""
+        meta = await db.get_session_meta("nonexistent-sid")
+        assert meta == {
+            "custom_title": None,
+            "archived_at": None,
+            "starred_at": None,
+            "viewed_at": None,
+        }
+
+    async def test_migration_idempotent(self, db):
+        """Running init_schema twice must not error or duplicate columns."""
+        await db.init_schema()
+        await db.init_schema()
+        # Should still work after re-init.
+        meta = await db.get_session_meta("any-sid")
+        assert meta["archived_at"] is None

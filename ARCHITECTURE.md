@@ -11,10 +11,11 @@ Clau-Decode is a single-process, local-first application. A FastAPI server
 assistant's JSONL session files into a SQLite index, exposes them through a
 JSON HTTP API plus a Server-Sent Events stream, and serves a pre-built React +
 TypeScript SPA from the same origin. A `watchfiles`-based watcher detects
-session-file changes in real time, and an optional headless runner spawns the
-local Claude CLI as a subprocess (stream-json mode) so users can send messages
-from the web UI. Nothing leaves the machine — there is no remote backend, no
-telemetry, and no authentication layer.
+session-file changes in real time, and a PTY manager drives the local Claude
+CLI in interactive TUI mode through a hidden pseudo-terminal so users can send
+messages from the web UI with subscription-backed interactive behavior.
+Nothing leaves the machine — there is no remote
+backend, no telemetry, and no authentication layer.
 
 ## Component diagram
 
@@ -29,7 +30,8 @@ flowchart LR
     DB[(SQLite index<br/>FTS5)]
     Scanner[Scanner + Parser]
     Watcher[watchfiles watcher]
-    Runner[Claude CLI runner<br/>stream-json subprocess]
+    PtyManager[PTY manager<br/>hidden TUI per chat]
+    Recap[Recap runner<br/>PTY fork-session]
   end
 
   subgraph Filesystem[Filesystem]
@@ -46,8 +48,11 @@ flowchart LR
   Watcher -->|fsevents / inotify| JSONL
   Watcher -->|asyncio.Queue| Server
   Server -->|SSE /api/events| SPA
-  Server -->|spawn| Runner
-  Runner -->|appends turns| JSONL
+  Server -->|focus/submit| PtyManager
+  PtyManager -->|hidden PTY| ClaudeTUI[claude TUI]
+  ClaudeTUI -->|appends turns| JSONL
+  Server -->|recap on demand| Recap
+  Recap -->|spawns claude --fork-session in hidden PTY| JSONL
   Server --> Cfg
   DB --- Cache
 ```
@@ -84,7 +89,8 @@ flowchart LR
 | `parser.py` | Parses JSONL into `Session` + `list[Message]`; builds message trees |
 | `db.py` | Async SQLite layer (`aiosqlite`) with FTS5 for search |
 | `watcher.py` | `watchfiles.awatch` wrapper that emits `WatchEvent`s |
-| `claude_runner.py` | Subprocess driver for the local CLI binary in stream-json mode |
+| `pty_runner.py` | PTY-attached interactive `claude` driver — canonical send path |
+| `recap_runner.py` | Fire-and-forget PTY-on-fork-session driver for inline recaps |
 | `editor.py` | Sandboxed file editing (used by `--enable-edit`) |
 | `reporter.py` | JSON / Markdown export of conversations |
 | `analytics/` | Token + cost engine, daily/weekly aggregators, tool/file/model stats, tip rules |
@@ -131,9 +137,13 @@ refresh in the analytics module.
   are refused. A backup is written next to the original before any edit.
 - **JSONL parsing.** Treated as untrusted input. Malformed lines are skipped
   with a warning; the parser never `eval`s and does not follow URLs.
-- **Headless runner.** Spawns the local CLI binary on the user's behalf. The
-  binary name is derived from the session's filesystem layout, not from
-  user-supplied input; `shell=True` is never used.
+- **PTY runner.** Spawns the local CLI binary on the user's behalf, attached
+  to a hidden pseudo-terminal. The binary name is derived from the session's
+  filesystem layout, not from user-supplied input; `shell=True` is never used.
+  `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` are stripped from the spawned
+  child's env (unless the active profile is API-key authenticated) so a user
+  with one of those exported in their shell doesn't accidentally bill against
+  the static API key.
 - **No telemetry.** No analytics, no error reporting, no remote logging. The
   CI test suite asserts there are no outbound calls to remote services.
 

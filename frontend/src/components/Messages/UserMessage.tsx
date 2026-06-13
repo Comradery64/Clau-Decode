@@ -397,7 +397,7 @@ export function UserMessage({ message }: UserMessageProps) {
           <div
             style={{
               background: "var(--bg-user-msg)",
-              borderRadius: "18px 18px 4px 18px",
+              borderRadius: "18px 4px 18px 18px",
               padding: "10px 16px",
               maxWidth: "88%",
             }}

@@ -16,11 +16,30 @@
 import React from "react";
 import { api } from "../../api/client";
 import { navigateTo } from "../../router";
+import { useAppStore } from "../../store";
+import { isNativePtyFocused } from "../../utils/nativePtyFocus";
 
-/** Kick off a new session and navigate to it. Returns the new id on success. */
+/** Kick off a new session and navigate to it. Returns the new id on success.
+ *
+ * cwd inheritance: if the user is currently viewing a chat, the new chat
+ * defaults to that chat's cwd. Without this the backend falls back to the
+ * globally most-recent session's cwd, which feels wrong when the user has
+ * just navigated to an older chat in a different directory. The detail
+ * fetch costs one extra round-trip but only fires on the + click. */
 export async function startNewSession(): Promise<string | null> {
   try {
-    const r = await api.newSession();
+    let cwd: string | undefined;
+    const currentSid = useAppStore.getState().selectedSessionId;
+    if (currentSid) {
+      try {
+        const detail = await api.getSession(currentSid);
+        cwd = detail.cwd ?? undefined;
+      } catch {
+        // Fall through to backend default — better than blocking the new
+        // chat over a transient detail-fetch failure.
+      }
+    }
+    const r = await api.newSession(cwd ? { cwd } : undefined);
     navigateTo(`/chat/${r.session_id}`);
     return r.session_id;
   } catch {
@@ -48,6 +67,25 @@ function IconPlus() {
   );
 }
 
+function IconSpinner() {
+  // Inline CSS keyframes keep this self-contained — no global style needed.
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      style={{ animation: "ntb-spin 0.7s linear infinite" }}
+    >
+      <style>{`@keyframes ntb-spin { to { transform: rotate(360deg); } }`}</style>
+      <path d="M12 3 a 9 9 0 0 1 9 9" />
+    </svg>
+  );
+}
+
 const btnStyle: React.CSSProperties = {
   background: "none",
   border: "none",
@@ -63,6 +101,18 @@ const btnStyle: React.CSSProperties = {
 };
 
 export function NewTaskButton() {
+  const [pending, setPending] = React.useState(false);
+
+  const trigger = React.useCallback(async () => {
+    if (pending) return;  // double-click guard
+    setPending(true);
+    try {
+      await startNewSession();
+    } finally {
+      setPending(false);
+    }
+  }, [pending]);
+
   // Cmd+Shift+O — sits next to the existing Cmd+O (toggle tool/thinking
   // blocks) and mirrors VS Code's "Open" convention. Registered in the
   // capture phase so it beats focused-input handlers, matching the rest
@@ -70,22 +120,30 @@ export function NewTaskButton() {
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
+      if (isNativePtyFocused()) return;
       if (!e.shiftKey) return;
       if (e.key.toLowerCase() !== "o") return;
       e.preventDefault();
-      void startNewSession();
+      void trigger();
     };
     document.addEventListener("keydown", onKey, { capture: true });
     return () => document.removeEventListener("keydown", onKey, { capture: true });
-  }, []);
+  }, [trigger]);
 
   return (
     <button
-      onClick={() => void startNewSession()}
+      onClick={() => void trigger()}
+      disabled={pending}
       aria-label="New task (Cmd+Shift+O)"
+      aria-busy={pending}
       title="New task — Cmd+Shift+O"
-      style={btnStyle}
+      style={{
+        ...btnStyle,
+        cursor: pending ? "wait" : "pointer",
+        opacity: pending ? 0.7 : 1,
+      }}
       onMouseEnter={(e) => {
+        if (pending) return;
         (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-sidebar-hover)";
         (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
       }}
@@ -94,7 +152,7 @@ export function NewTaskButton() {
         (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)";
       }}
     >
-      <IconPlus />
+      {pending ? <IconSpinner /> : <IconPlus />}
     </button>
   );
 }

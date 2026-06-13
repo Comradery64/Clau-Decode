@@ -37,6 +37,10 @@ interface AppState {
   activeProfileId: string | null;
   hostInfo: HostInfo | null;
 
+  // Multi-select mode
+  selectionMode: boolean;
+  selectedSessionIds: Set<string>;
+
   selectSession: (id: string | null) => void;
   setPendingScrollMessageId: (id: string | null) => void;
   selectProject: (id: string | null) => void;
@@ -62,6 +66,13 @@ interface AppState {
   setProfiles: (profiles: Profile[]) => void;
   setActiveProfileId: (id: string | null) => void;
   setHostInfo: (info: HostInfo | null) => void;
+
+  // Multi-select actions
+  enterSelectionMode: () => void;
+  exitSelectionMode: () => void;
+  toggleSessionSelected: (id: string) => void;
+  clearSelection: () => void;
+  setSelectedSessionIds: (ids: string[]) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -84,6 +95,10 @@ export const useAppStore = create<AppState>((set) => ({
   profiles: [],
   activeProfileId: null,
   hostInfo: null,
+
+  // Multi-select mode
+  selectionMode: false,
+  selectedSessionIds: new Set<string>(),
 
   selectSession: (id) => set({ selectedSessionId: id }),
   setPendingScrollMessageId: (id) => set({ pendingScrollMessageId: id }),
@@ -118,4 +133,17 @@ export const useAppStore = create<AppState>((set) => ({
   setProfiles: (profiles) => set({ profiles }),
   setActiveProfileId: (id) => set({ activeProfileId: id }),
   setHostInfo: (info) => set({ hostInfo: info }),
+
+  // Multi-select actions
+  enterSelectionMode: () => set({ selectionMode: true, selectedSessionIds: new Set<string>() }),
+  exitSelectionMode: () => set({ selectionMode: false, selectedSessionIds: new Set<string>() }),
+  toggleSessionSelected: (id) =>
+    set((s) => {
+      const next = new Set(s.selectedSessionIds);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return { selectedSessionIds: next };
+    }),
+  clearSelection: () => set({ selectedSessionIds: new Set<string>() }),
+  setSelectedSessionIds: (ids) => set({ selectedSessionIds: new Set(ids) }),
 }));

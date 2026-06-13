@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 from .models import AppConfig
@@ -42,19 +43,47 @@ def get_config_path() -> Path:
     return Path(xdg_config) / "clau-decode" / "config.json"
 
 
-def get_db_path() -> Path:
-    """Return the path to the clau-decode SQLite database.
-
-    Respects the XDG Base Directory specification: uses ``XDG_CACHE_HOME`` if
-    set, otherwise falls back to ``~/.cache``.
-
-    Returns:
-        ``<xdg_cache>/clau-decode/index.db``
-    """
+def _legacy_cache_db_path() -> Path:
+    """The old DB location under the disposable cache dir (XDG_CACHE_HOME /
+    ~/.cache). Kept only to migrate data out of it — see ``get_db_path``."""
     xdg_cache = os.environ.get("XDG_CACHE_HOME", "") or str(
         Path("~/.cache").expanduser()
     )
     return Path(xdg_cache) / "clau-decode" / "index.db"
+
+
+def get_db_path() -> Path:
+    """Return the path to the clau-decode SQLite database.
+
+    Stored under the DURABLE data dir (``XDG_DATA_HOME`` / ``~/.local/share``),
+    NOT the cache dir: the DB holds non-regenerable user intent (archived /
+    starred / viewed flags + custom titles in ``session_meta``), which an OS or
+    cache cleaner could otherwise wipe. The message index is regenerable but
+    lives here too so it persists across cache clears (no rescan needed).
+
+    On first use we transparently migrate a legacy ``~/.cache`` DB to the new
+    location (one-time copy, including any WAL/SHM sidecars so un-checkpointed
+    writes survive). The legacy file is left in place as a backstop.
+
+    Returns:
+        ``<xdg_data>/clau-decode/index.db``
+    """
+    xdg_data = os.environ.get("XDG_DATA_HOME", "") or str(
+        Path("~/.local/share").expanduser()
+    )
+    db_path = Path(xdg_data) / "clau-decode" / "index.db"
+
+    if not db_path.exists():
+        legacy = _legacy_cache_db_path()
+        if legacy.exists():
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            # Copy the main DB plus WAL/SHM so recent (un-checkpointed) writes
+            # — e.g. the latest archive/star — aren't lost in the move.
+            for suffix in ("", "-wal", "-shm"):
+                src = Path(str(legacy) + suffix)
+                if src.exists():
+                    shutil.copy2(src, Path(str(db_path) + suffix))
+    return db_path
 
 
 def load_config(

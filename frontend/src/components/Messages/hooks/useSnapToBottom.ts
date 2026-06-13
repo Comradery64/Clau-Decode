@@ -9,6 +9,7 @@ export function useSnapToBottom(
   detail: SessionDetail | null,
   sessionId: string,
   pendingScrollMessageId: string | null,
+  optimisticActive: boolean = false,
 ) {
   const scrolledSessionRef = useRef<string | null>(null);
   const nearBottomRef = useRef(true);
@@ -33,6 +34,19 @@ export function useSnapToBottom(
     const container = containerRef?.current;
     if (container) container.scrollTop = container.scrollHeight;
   }, [detail, sessionId]);
+
+  // Snap when the optimistic "thinking" indicator first appears. The
+  // indicator is mounted at the bottom of the messages container and is
+  // not part of `detail`, so the detail-driven effect above doesn't see
+  // its growth. Bypass the near-bottom gate: the user just hit Send, so
+  // they expect to see the indicator regardless of prior scroll position.
+  useEffect(() => {
+    if (!optimisticActive) return;
+    if (scrolledSessionRef.current !== sessionId) return;
+    const container = containerRef?.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+  }, [optimisticActive, sessionId]);
 
   // Scroll to bottom on first load of each session. Depends on a stable
   // derived flag (`hasCurrentDetail`) instead of `detail` itself so that

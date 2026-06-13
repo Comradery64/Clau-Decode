@@ -69,6 +69,7 @@
   --accent-orange: #8b7355;
   --accent-orange-hover: #7a6548;
   --accent-orange-subtle: rgba(139, 115, 85, 0.08);
+  --accent-green: #2ea043;
 
   /* --- Tool blocks --- */
   --tool-name-color: #484846;
@@ -95,9 +96,15 @@
   --shadow-md: 0 4px 12px rgba(75, 75, 74, 0.06);
   --shadow-lg: 0 8px 32px rgba(75, 75, 74, 0.08);
 
-  /* --- Transitions --- */
+  /* --- Transitions ---
+     `--transition-medium` is the unified curve for sidebar width and
+     fade-text opacity transitions. Plain `ease` because the original
+     fast-out cubic-bezier (`(0, 0.9, 0.1, 1.0)`) front-loaded ~75% of
+     the transition in the first ~50 ms, which made opacity fades feel
+     abrupt even at the same 352 ms total. */
   --transition-fast: 120ms ease;
   --transition-normal: 200ms ease;
+  --transition-medium: 352ms ease;
 }
 
 /* ============================================================
@@ -159,6 +166,7 @@
   --accent-orange: #d97706;
   --accent-orange-hover: #f59e0b;
   --accent-orange-subtle: rgba(217, 119, 6, 0.13);
+  --accent-green: #3fb950;
 
   /* --- Tool blocks --- */
   --tool-name-color: #dedcd1;

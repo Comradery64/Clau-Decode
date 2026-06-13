@@ -1,5 +1,5 @@
 import { useState, Children, isValidElement } from "react";
-import type { ReactNode, ReactElement } from "react";
+import type { CSSProperties, ReactNode, ReactElement } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -222,11 +222,16 @@ const components: Components = {
 interface TextBlockProps {
   text: string;
   isUser?: boolean;
+  className?: string;
+  style?: CSSProperties;
 }
 
-export function TextBlock({ text }: TextBlockProps) {
+export function TextBlock({ text, className, style }: TextBlockProps) {
   return (
-    <div className="prose-content">
+    <div
+      className={["prose-content", className].filter(Boolean).join(" ")}
+      style={style}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
