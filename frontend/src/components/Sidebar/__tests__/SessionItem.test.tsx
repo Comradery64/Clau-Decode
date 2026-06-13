@@ -9,6 +9,9 @@ const baseSession: Session = {
   file_path: "/tmp/test.jsonl",
   title: "Test Session Title",
   custom_title: null,
+  archived_at: null,
+  starred_at: null,
+  viewed_at: null,
   model: "claude-sonnet-4-6",
   started_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
@@ -121,8 +124,6 @@ describe("SessionItem", () => {
       busy: true,
       last_error: null,
       permission_mode: "default",
-      quiet_age_seconds: 1.5,
-      quiet_warning: false,
     };
     render(
       <SessionItem
@@ -145,8 +146,6 @@ describe("SessionItem", () => {
       busy: false,
       last_error: null,
       permission_mode: null,
-      quiet_age_seconds: null,
-      quiet_warning: false,
     };
     render(
       <SessionItem
@@ -158,26 +157,6 @@ describe("SessionItem", () => {
     );
     expect(screen.queryByTestId("runner-busy-marker")).not.toBeInTheDocument();
   });
-
-  it("adds the quiet-warning attribute on the marker when watchdog fires", () => {
-    const status: RunnerStatus = {
-      busy: true,
-      last_error: null,
-      permission_mode: "default",
-      quiet_age_seconds: 180,
-      quiet_warning: true,
-    };
-    render(
-      <SessionItem
-        session={baseSession}
-        isActive={false}
-        onClick={() => {}}
-        runnerStatus={status}
-      />
-    );
-    const marker = screen.getByTestId("runner-busy-marker");
-    expect(marker.getAttribute("data-quiet-warning")).toBe("true");
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -185,17 +164,22 @@ describe("SessionItem", () => {
 // ---------------------------------------------------------------------------
 
 describe("formatRelativeDate", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-03T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("returns 'Today' for current timestamp", () => {
     expect(formatRelativeDate(new Date().toISOString())).toBe("Today");
   });
 
   it("returns 'Yesterday' for 25 hours ago", () => {
     const d = new Date(Date.now() - 25 * 60 * 60 * 1000);
-    // Only reliable if yesterday is still within this week — handle edge
-    const result = formatRelativeDate(d.toISOString());
-    expect(["Yesterday", "Today", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]).toContain(
-      result
-    );
+    expect(formatRelativeDate(d.toISOString())).toBe("Yesterday");
   });
 
   it("returns a month/day string for old dates", () => {

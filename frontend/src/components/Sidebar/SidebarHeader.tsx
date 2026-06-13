@@ -80,63 +80,71 @@ export function SidebarHeader({ collapsed }: { collapsed?: boolean }) {
   return (
     <div
       style={{
-        position: "relative",
         flexShrink: 0,
+        height: "var(--header-height)",
+        display: "flex",
+        alignItems: "center",
+        padding: "0 12px",
+        overflow: "hidden",
       }}
     >
-      <div
+      {/* Wordmark — flex:1 fills remaining space, clips when narrow */}
+      <button
+        onClick={goHome}
         style={{
-          height: "var(--header-height)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: collapsed ? "0" : "0 12px",
+          flex: 1,
+          minWidth: 0,
           overflow: "hidden",
+          fontFamily: "var(--font-ui)",
+          fontSize: "18px",
+          fontWeight: 600,
+          color: "var(--text-primary)",
+          letterSpacing: "-0.02em",
+          userSelect: "none",
+          whiteSpace: "nowrap",
+          opacity: collapsed ? 0 : 1,
+          transition: "opacity var(--transition-medium)",
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          padding: 0,
+          textAlign: "left" as const,
         }}
       >
-        <button
-          onClick={goHome}
-          style={{
-            fontFamily: "var(--font-ui)",
-            fontSize: "18px",
-            fontWeight: 600,
-            color: "var(--text-primary)",
-            letterSpacing: "-0.02em",
-            userSelect: "none",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            opacity: collapsed ? 0 : 1,
-            transition: "opacity 352ms ease",
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: 0,
-            borderRadius: "var(--radius-sm)",
-          }}
+        Clau-Decode
+      </button>
+
+      {/* Action buttons — smooth max-width + opacity collapse in sync with sidebar */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          flexShrink: 0,
+          overflow: "hidden",
+          maxWidth: collapsed ? 0 : 80,
+          opacity: collapsed ? 0 : 1,
+          transition: "opacity var(--transition-medium), max-width var(--transition-medium)",
+          pointerEvents: collapsed ? "none" as const : "auto" as const,
+        }}
+      >
+        <NewTaskButton />
+        <HeaderBtn
+          label={sidebarMode === "chat" ? "File explorer" : "Session list"}
+          onClick={toggleMode}
+          active={sidebarMode === "folder"}
         >
-          Clau-Decode
-        </button>
-        <div style={{ display: "flex", alignItems: "center" }}>
-          {!collapsed && <NewTaskButton />}
-          {!collapsed && (
-            <HeaderBtn
-              label={sidebarMode === "chat" ? "File explorer" : "Session list"}
-              onClick={toggleMode}
-              active={sidebarMode === "folder"}
-            >
-              {sidebarMode === "chat" ? <IconFolder /> : <IconChat />}
-            </HeaderBtn>
-          )}
-          <HeaderBtn
-            label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            onClick={toggleSidebar}
-            active={collapsed}
-            collapsedStyle={collapsed}
-          >
-            <IconSidebarCollapse />
-          </HeaderBtn>
-        </div>
+          {sidebarMode === "chat" ? <IconFolder /> : <IconChat />}
+        </HeaderBtn>
       </div>
+
+      {/* Collapse toggle — always visible */}
+      <HeaderBtn
+        label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        onClick={toggleSidebar}
+        active={collapsed}
+      >
+        <IconSidebarCollapse />
+      </HeaderBtn>
     </div>
   );
 }

@@ -3,8 +3,14 @@ import { useAppStore } from "./store";
 import { api, createEventSource, getConfigCached } from "./api/client";
 import { useRoute, getChatIdFromRoute } from "./router";
 import { emit } from "./utils/events";
+import { applySessionMetaEvent, refetchSessionMeta } from "./utils/sessionMeta";
+import { LS, lsGetMap, lsGetRaw } from "./utils/localStorage";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { lazyWithRetry } from "./utils/lazyWithRetry";
+import { isNativePtyFocused } from "./utils/nativePtyFocus";
+import { toggleBlocksExpanded } from "./store/blocksState";
+import { DelayedSkeleton } from "./components/ui/DelayedSkeleton";
+import { Toast } from "./components/Toast";
 
 function applyTheme(theme: string) {
   if (theme === "dark") {
@@ -28,7 +34,6 @@ const settingsModalImport = () => import("./components/Settings/SettingsModal");
 // render a reload prompt in-place instead of crashing the whole ErrorBoundary.
 const Sidebar = lazyWithRetry(() => import("./components/Sidebar/Sidebar"));
 const ChatView = lazyWithRetry(chatViewImport);
-const AnalyticsPanel = lazyWithRetry(() => import("./components/Analytics/AnalyticsPanel"));
 const Dashboard = lazyWithRetry(() => import("./components/Dashboard/Dashboard"));
 const SettingsModal = lazyWithRetry(settingsModalImport);
 const SearchOverlay = lazyWithRetry(searchOverlayImport);
@@ -78,13 +83,95 @@ export default function App() {
     settingsModalImport();
   }, []);
 
+  // One-time migration: archive / star / viewed-at used to live in
+  // localStorage only — a second browser couldn't see them (the reported
+  // "archive is not consistent" symptom).  On first load post-upgrade,
+  // upload whatever we have to the server, then clear the LS keys so the
+  // server stays the only source of truth.  Idempotent + guarded by its
+  // own LS flag so it only ever runs once per browser.
+  useEffect(() => {
+    const MIGRATED_FLAG = "clau-decode:session-meta-migrated-v1";
+    if (lsGetRaw(MIGRATED_FLAG) === "1") return;
+    let archived: string[] = [];
+    let starred: string[] = [];
+    let viewed_at: Record<string, string> = {};
+    try {
+      archived = JSON.parse(localStorage.getItem(LS.ARCHIVED) ?? "[]");
+    } catch { /* ignore */ }
+    try {
+      starred = JSON.parse(localStorage.getItem(LS.STARRED) ?? "[]");
+    } catch { /* ignore */ }
+    viewed_at = lsGetMap(LS.VIEWED_AT);
+    const hasLegacyState =
+      archived.length > 0 || starred.length > 0 || Object.keys(viewed_at).length > 0;
+    if (!hasLegacyState) {
+      // Nothing to migrate; still set the flag so we don't keep checking.
+      localStorage.setItem(MIGRATED_FLAG, "1");
+      return;
+    }
+    void api
+      .migrateLocalStorage({ archived, starred, viewed_at })
+      .then(() => {
+        // Clear LS only after server confirms.  Keep the migrated flag so
+        // we never re-run the migration even if the cache is later cold.
+        localStorage.removeItem(LS.ARCHIVED);
+        localStorage.removeItem(LS.STARRED);
+        localStorage.removeItem(LS.VIEWED_AT);
+        localStorage.setItem(MIGRATED_FLAG, "1");
+        // Refetch the shared cache so the migrated flags appear in this
+        // browser's session list without a page reload.
+        void refetchSessionMeta();
+      })
+      .catch((err) => {
+        // Leave LS intact so a retry on next reload can run.  Don't set
+        // the flag — we want another shot.
+        console.warn("session-meta migration failed; will retry on next load", err);
+      });
+  }, []);
+
   useEffect(() => {
     const es = createEventSource({
       onRefresh: () => emit("refresh", undefined),
       // Remote renames (issue #11) — fan into the same `rename` bus the
       // local SessionItem.commitRename emits on, so every view (ChatView,
       // SessionItem, ProjectGroup …) reconciles via the existing handler.
-      onSessionMeta: ({ id, title }) => emit("rename", { id, title: title ?? "" }),
+      onSessionMeta: (payload) => {
+        // Rename: fan into the existing "rename" bus event for issue #11.
+        if ("title" in payload) {
+          emit("rename", { id: payload.id, title: payload.title ?? "" });
+        }
+        // Server-backed flag changes (2026-05-28): forward to the shared
+        // sessionMeta cache so all hook subscribers re-render with the
+        // server's new value.  The cache filters identical updates so an
+        // echo of our own PUT is a no-op.
+        applySessionMetaEvent(payload);
+      },
+      onSessionMetaBulkMigration: () => {
+        // Another tab just ran the localStorage migration — refetch the
+        // shared cache so our session list reflects the imported flags.
+        void refetchSessionMeta();
+      },
+      // PTY input watchdog signals — ChatView listens to "pty-input-stalled"
+      // to hide the optimistic Thinking indicator + surface an error when
+      // the TUI fails to react to a submit within ~5s.
+      onPtyInputAcknowledged: ({ session_id }) =>
+        emit("pty-input-acknowledged", { session_id }),
+      onPtyInputStalled: ({ session_id, elapsed_ms }) =>
+        emit("pty-input-stalled", { session_id, elapsed_ms }),
+      onPtySubmitCompleted: ({ session_id, kind, status, input_id, response_id }) =>
+        emit("pty-submit-completed", { session_id, kind, status, input_id, response_id }),
+      onPtyOutputChunk: ({ session_id, data_b64 }) =>
+        emit("pty-output-chunk", { session_id, data_b64 }),
+      onPtyNativeState: ({ session_id, state, decoded_input_safe }) =>
+        emit("pty-native-state", { session_id, state, decoded_input_safe }),
+      // Phase 2: /btw input captured — show the pending inline panel in
+      // every connected client before the response finalizes.
+      onEphemeralInputPersisted: ({ session_id, input_id, kind }) =>
+        emit("ephemeral-input-persisted", { session_id, input_id, kind }),
+      // Phase 2: /btw ephemeral pair captured — fan out to the event bus so
+      // any mounted ChatView for this session can refetch its ephemerals.
+      onEphemeralPairPersisted: ({ session_id, input_id, response_id, kind }) =>
+        emit("ephemeral-pair-persisted", { session_id, input_id, response_id, kind }),
     });
     return () => es.close();
   }, []);
@@ -123,6 +210,12 @@ export default function App() {
       const ctrl = e.metaKey || e.ctrlKey;
       if (!ctrl || e.repeat) return;
 
+      // When the native PTY terminal is focused, every Ctrl/Cmd combo belongs
+      // to claude (Ctrl+C/R/L, etc.) — don't steal them. Our shortcuts stay
+      // live in the Decoded view, where no PTY is focused. (Escape, handled
+      // above, still closes overlays since an open overlay holds focus.)
+      if (isNativePtyFocused()) return;
+
       // Skip readline-style Ctrl shortcuts when focus is in a text input
       const tag = (e.target as HTMLElement)?.tagName;
       const inText = e.ctrlKey && !e.metaKey && (tag === "TEXTAREA" || tag === "INPUT");
@@ -140,7 +233,17 @@ export default function App() {
       } else if (e.key.toLowerCase() === "b" && e.metaKey) {
         e.preventDefault();
         useAppStore.getState().toggleSidebar();
-      } else if (e.shiftKey && e.key === ",") {
+      } else if (e.key.toLowerCase() === "o") {
+        // Expand/collapse all tool + thinking blocks. The scroll-preserve
+        // layout side-effect lives in `useExpandPreserveAnchor` (subscribed
+        // to blocksState), so we only flip the flag here.
+        e.preventDefault();
+        toggleBlocksExpanded();
+      } else if (e.code === "Comma") {
+        // Cmd/Ctrl+, (macOS preferences convention). Use e.code, not e.key:
+        // with Shift held, e.key for the comma key is "<", so the old
+        // `e.key === ","` check never matched. e.code is layout-independent, so
+        // both Cmd+, and Cmd+Shift+, open Settings.
         e.preventDefault();
         useAppStore.getState().openSettings();
       }
@@ -164,30 +267,36 @@ export default function App() {
       }}
     >
       {/* Main content in its own boundary so overlay lazy-loads never blank it. */}
-      <React.Suspense fallback={null}>
+      <React.Suspense fallback={<DelayedSkeleton />}>
         {/* Keep Sidebar mounted when collapsed so we don't refetch every project
             and session each time the user toggles. The Sidebar reads
             sidebarCollapsed itself and hides via display:none. */}
         <Sidebar />
         <div style={{ flex: 1, display: "flex", minWidth: 200, overflow: "hidden" }}>
           <ErrorBoundary>
-            {route === "/analytics" ? <AnalyticsPanel /> : chatIdFromUrl ? <ChatView /> : <Dashboard />}
+            {chatIdFromUrl ? <ChatView /> : <Dashboard />}
           </ErrorBoundary>
         </div>
         {viewingFilePath && (
           <ErrorBoundary>
-            <React.Suspense fallback={null}>
+            <React.Suspense fallback={<DelayedSkeleton />}>
               <FileViewer />
             </React.Suspense>
           </ErrorBoundary>
         )}
       </React.Suspense>
       {/* Each overlay gets its own error boundary + Suspense — a crash or lazy
-          load in one overlay never blanks the page behind it. */}
+          load in one overlay never blanks the page behind it.
+          fallback is `null`, NOT a skeleton: these overlays are fixed-position,
+          but the skeleton is an in-flow flex element — as a flex sibling of the
+          main region it briefly stole ~52px and shifted the centered content
+          left on the first (un-warmed) open. The chunks are preloaded, so the
+          modal pops in fast; a null fallback keeps the layout perfectly stable. */}
       {isSettingsOpen && <ErrorBoundary><React.Suspense fallback={null}><SettingsModal /></React.Suspense></ErrorBoundary>}
       {isSearchOpen && <ErrorBoundary><React.Suspense fallback={null}><SearchOverlay /></React.Suspense></ErrorBoundary>}
       {isHelpOpen && <ErrorBoundary><React.Suspense fallback={null}><HelpPopup /></React.Suspense></ErrorBoundary>}
       {isShortcutsOpen && <ErrorBoundary><React.Suspense fallback={null}><ShortcutsPopup /></React.Suspense></ErrorBoundary>}
+      <Toast />
     </div>
   );
 }

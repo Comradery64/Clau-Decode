@@ -32,7 +32,7 @@ SOLID notes:
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -57,6 +57,10 @@ from .models import (
 # ---------------------------------------------------------------------------
 # Content block (de)serialization helpers
 # ---------------------------------------------------------------------------
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _serialize_content_blocks(blocks: list[ContentBlock]) -> str:
@@ -95,6 +99,44 @@ def _extract_text_for_fts(blocks: list[ContentBlock]) -> str:
         if isinstance(block, TextBlock) and block.text:
             parts.append(block.text)
     return " ".join(parts)
+
+
+def _result_char_count(block: ToolResultBlock) -> int:
+    """Char count of a tool_result's content. Mirrors
+    ``analytics.tips._result_char_count``; the oversized-tip parity test
+    (tests/analytics/test_fast_parity.py) guards the two against drift."""
+    if block.content is None:
+        return 0
+    if isinstance(block.content, str):
+        return len(block.content)
+    return sum(
+        len(item.get("text", "")) for item in block.content if isinstance(item, dict)
+    )
+
+
+def _block_facts(
+    message_id: str, session_id: str, blocks: list[ContentBlock]
+) -> list[tuple]:
+    """Materialized ``message_blocks`` rows for one message: one tuple per
+    tool_use / tool_result block, in content-block order. Field extraction
+    mirrors the scanners (tool name, file_path-or-path, result char count) so
+    SQL aggregation over ``message_blocks`` equals the in-memory scanners.
+    """
+    facts: list[tuple] = []
+    for i, block in enumerate(blocks):
+        if isinstance(block, ToolUseBlock):
+            path = block.input.get("file_path") or block.input.get("path") or ""
+            facts.append((
+                message_id, session_id, i, "tool_use",
+                block.name, path if isinstance(path, str) and path else None,
+                None, None,
+            ))
+        elif isinstance(block, ToolResultBlock):
+            facts.append((
+                message_id, session_id, i, "tool_result",
+                None, None, _result_char_count(block), block.tool_use_id,
+            ))
+    return facts
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +249,10 @@ class Database:
                 git_branch TEXT,
                 source_tool_assistant_uuid TEXT,
                 usage_json TEXT,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cache_creation_tokens INTEGER,
+                cache_read_tokens INTEGER,
                 FOREIGN KEY (session_id) REFERENCES sessions(id)
             );
 
@@ -221,6 +267,27 @@ class Database:
             -- Without this, each session row triggered a full messages-table scan.
             CREATE INDEX IF NOT EXISTS idx_messages_session_timestamp
                 ON messages (session_id, timestamp DESC);
+
+            -- Materialized per-block facts for whole-corpus analytics: one row
+            -- per tool_use / tool_result block, written at ingest so the
+            -- dashboard never re-scans content_json. See analytics/fast.py.
+            CREATE TABLE IF NOT EXISTS message_blocks (
+                message_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                block_index INTEGER NOT NULL,
+                btype TEXT NOT NULL,
+                tool_name TEXT,
+                file_path TEXT,
+                result_chars INTEGER,
+                tool_use_id TEXT,
+                PRIMARY KEY (message_id, block_index)
+            );
+            CREATE INDEX IF NOT EXISTS idx_blocks_tool
+                ON message_blocks (btype, tool_name);
+            CREATE INDEX IF NOT EXISTS idx_blocks_file
+                ON message_blocks (btype, file_path);
+            CREATE INDEX IF NOT EXISTS idx_blocks_session
+                ON message_blocks (session_id);
 
             CREATE TABLE IF NOT EXISTS _meta (
                 key TEXT PRIMARY KEY,
@@ -246,11 +313,88 @@ class Database:
             CREATE TABLE IF NOT EXISTS session_meta (
                 session_id TEXT PRIMARY KEY,
                 custom_title TEXT,
+                -- Server-side persistence for the formerly-localStorage flags.
+                -- NULL = not set; ISO-8601 string = wall-clock when set.
+                archived_at TEXT,
+                starred_at TEXT,
+                viewed_at TEXT,
                 updated_at TEXT NOT NULL
             );
+
+            -- Ephemeral exchanges that never land in JSONL (e.g. /btw).
+            -- Both user input and assistant response are stored here, linked
+            -- via responds_to (self-FK on the paired input row).
+            -- Excluded from analytics (no tokens / cost contribution).
+            CREATE TABLE IF NOT EXISTS ephemeral_messages (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id    TEXT NOT NULL,
+                kind          TEXT NOT NULL,
+                role          TEXT NOT NULL,
+                content       TEXT NOT NULL,
+                responds_to   INTEGER REFERENCES ephemeral_messages(id),
+                timestamp     TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ephemeral_session
+                ON ephemeral_messages (session_id, timestamp);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS ephemeral_messages_fts USING fts5(
+                content,
+                session_id UNINDEXED,
+                kind UNINDEXED,
+                ephemeral_id UNINDEXED
+            );
         """)
+
+        # FTS5 triggers must be created outside executescript because
+        # CREATE TRIGGER is not supported inside a multi-statement string
+        # in some SQLite versions. Use separate execute calls instead.
+        await self._ensure_ephemeral_triggers()
+
         await self._conn.commit()
         await self._migrate_add_is_fork()
+        await self._migrate_add_session_meta_flags()
+
+    async def _ensure_ephemeral_triggers(self) -> None:
+        """Create INSERT/UPDATE/DELETE triggers keeping ephemeral_messages_fts in sync.
+
+        Uses IF NOT EXISTS guard so init_schema() is fully idempotent.
+        Mirrors the approach used for messages_fts (manual rebuild on upsert)
+        but uses SQL triggers so any direct INSERT/UPDATE/DELETE also stays
+        in sync without requiring a Python-side rebuild call.
+        """
+        assert self._conn is not None
+        await self._conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS ephemeral_fts_insert
+            AFTER INSERT ON ephemeral_messages
+            BEGIN
+                INSERT INTO ephemeral_messages_fts
+                    (content, session_id, kind, ephemeral_id)
+                VALUES
+                    (NEW.content, NEW.session_id, NEW.kind, NEW.id);
+            END
+        """)
+        await self._conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS ephemeral_fts_update
+            AFTER UPDATE OF content ON ephemeral_messages
+            BEGIN
+                DELETE FROM ephemeral_messages_fts
+                    WHERE ephemeral_id = OLD.id;
+                INSERT INTO ephemeral_messages_fts
+                    (content, session_id, kind, ephemeral_id)
+                VALUES
+                    (NEW.content, NEW.session_id, NEW.kind, NEW.id);
+            END
+        """)
+        await self._conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS ephemeral_fts_delete
+            BEFORE DELETE ON ephemeral_messages
+            BEGIN
+                DELETE FROM ephemeral_messages_fts
+                    WHERE ephemeral_id = OLD.id;
+            END
+        """)
 
     async def _migrate_add_is_fork(self) -> None:
         """Idempotent: add is_fork column to existing DBs."""
@@ -263,6 +407,26 @@ class Database:
                     "ALTER TABLE sessions ADD COLUMN is_fork INTEGER NOT NULL DEFAULT 0"
                 )
                 await self._conn.commit()
+
+    async def _migrate_add_session_meta_flags(self) -> None:
+        """Idempotent: add archived_at, starred_at, viewed_at to session_meta.
+
+        These were originally localStorage-only on the frontend (LS.ARCHIVED,
+        LS.STARRED, LS.VIEWED_AT), which meant a second browser saw stale
+        state.  Moving them server-side fixes that.  Each is a nullable ISO
+        timestamp: NULL = not set, string = wall-clock when last set.
+        """
+        assert self._conn is not None
+        for col in ("archived_at", "starred_at", "viewed_at"):
+            async with self._conn.execute(
+                "SELECT name FROM pragma_table_info('session_meta') WHERE name=?",
+                (col,),
+            ) as cur:
+                if not await cur.fetchone():
+                    await self._conn.execute(
+                        f"ALTER TABLE session_meta ADD COLUMN {col} TEXT"
+                    )
+        await self._conn.commit()
 
     async def reset_xml_title_mtimes(self) -> int:
         """Clear file_mtime for sessions whose title contains XML tags.
@@ -327,6 +491,76 @@ class Database:
             return  # already migrated
         await self._conn.execute(
             "INSERT OR REPLACE INTO _meta (key, value) VALUES ('project_id_v2', '1')"
+        )
+        await self._conn.commit()
+
+    async def migrate_materialize_v1(self) -> None:
+        """One-time backfill of the materialized analytics columns + table for
+        databases created before they existed. Idempotent via a ``_meta`` flag.
+
+        Token columns come straight from ``usage_json`` (an exact, cheap
+        ``UPDATE``). ``message_blocks`` is rebuilt by streaming each message's
+        ``content_json`` through the SAME extractor the ingest path uses, so
+        the backfilled rows match what new writes produce. This reads the whole
+        corpus once — the only expensive content pass, and it happens exactly
+        once per database.
+        """
+        assert self._conn is not None
+        # Pre-existing messages tables won't have the token columns yet.
+        async with self._conn.execute("PRAGMA table_info(messages)") as cursor:
+            cols = {r["name"] for r in await cursor.fetchall()}
+        for col in (
+            "input_tokens", "output_tokens",
+            "cache_creation_tokens", "cache_read_tokens",
+        ):
+            if col not in cols:
+                await self._conn.execute(
+                    f"ALTER TABLE messages ADD COLUMN {col} INTEGER"
+                )
+
+        async with self._conn.execute(
+            "SELECT value FROM _meta WHERE key = 'materialize_v1'"
+        ) as cursor:
+            if await cursor.fetchone() is not None:
+                return  # already backfilled
+
+        await self._conn.execute(
+            """
+            UPDATE messages SET
+                input_tokens = json_extract(usage_json,'$.input_tokens'),
+                output_tokens = json_extract(usage_json,'$.output_tokens'),
+                cache_creation_tokens =
+                    json_extract(usage_json,'$.cache_creation_input_tokens'),
+                cache_read_tokens =
+                    json_extract(usage_json,'$.cache_read_input_tokens')
+            WHERE usage_json IS NOT NULL
+            """
+        )
+
+        insert_sql = (
+            "INSERT OR REPLACE INTO message_blocks (message_id, session_id, "
+            "block_index, btype, tool_name, file_path, result_chars, tool_use_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        await self._conn.execute("DELETE FROM message_blocks")
+        batch: list[tuple] = []
+        async with self._conn.execute(
+            "SELECT id, session_id, content_json FROM messages"
+        ) as cursor:
+            async for row in cursor:
+                facts = _block_facts(
+                    row["id"], row["session_id"],
+                    _deserialize_content_blocks(row["content_json"]),
+                )
+                batch.extend(facts)
+                if len(batch) >= 5000:
+                    await self._conn.executemany(insert_sql, batch)
+                    batch.clear()
+        if batch:
+            await self._conn.executemany(insert_sql, batch)
+
+        await self._conn.execute(
+            "INSERT OR REPLACE INTO _meta (key, value) VALUES ('materialize_v1', '1')"
         )
         await self._conn.commit()
 
@@ -448,9 +682,13 @@ class Database:
             params.extend(data_sources)
         where = " AND ".join(conditions)
         # LEFT JOIN session_meta so each session row already carries any
-        # server-side rename — clients see the override on first paint.
+        # server-side rename + archive/star/viewed flags on first paint.
         query = (
-            f"SELECT s.*, {_lmr}, sm.custom_title AS custom_title "
+            f"SELECT s.*, {_lmr}, "
+            "sm.custom_title AS custom_title, "
+            "sm.archived_at AS archived_at, "
+            "sm.starred_at AS starred_at, "
+            "sm.viewed_at AS viewed_at "
             "FROM sessions s LEFT JOIN session_meta sm ON sm.session_id = s.id "
             f"WHERE {where} ORDER BY s.updated_at DESC"
         )
@@ -485,6 +723,48 @@ class Database:
         if row is None:
             return None
         return row["file_path"]
+
+    async def touch_session_updated_at(
+        self, session_id: str, when: Optional[datetime] = None
+    ) -> Optional[datetime]:
+        """Force ``sessions.updated_at`` to ``when`` (default: now, UTC).
+
+        Used after edit/delete swaps where the JSONL's parsed
+        ``updated_at`` (max of remaining message timestamps) would either
+        stay flat (content edit) or regress (delete of latest), missing
+        the mutation for downstream SSE/dedupe consumers that key on
+        ``detail.updated_at``.
+
+        Only advances the value — never moves it backwards — to preserve
+        the "most recent activity" invariant if the parsed timestamp is
+        already newer than ``when`` (shouldn't happen in practice, but
+        defensive).
+
+        Returns the value actually stored (or ``None`` if the session
+        row does not exist).
+        """
+        assert self._conn is not None
+        if when is None:
+            when = datetime.now().astimezone()
+        when_str = _dt_to_str(when)
+        async with self._conn.execute(
+            "SELECT updated_at FROM sessions WHERE id = ?", (session_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        current = _str_to_dt(row["updated_at"])
+        # Only advance — never regress.
+        if current is not None and current.tzinfo is None:
+            current = current.replace(tzinfo=when.tzinfo)
+        if current is not None and current >= when:
+            return current
+        await self._conn.execute(
+            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            (when_str, session_id),
+        )
+        await self._conn.commit()
+        return when
 
     # -----------------------------------------------------------------------
     # Session metadata override (rename — issue #11)
@@ -532,6 +812,99 @@ class Database:
         return row["custom_title"] if row else None
 
     # -----------------------------------------------------------------------
+    # Session flags — archived / starred / viewed
+    #
+    # All three live in ``session_meta`` as nullable ISO timestamps so the FE
+    # gets the same shape it expects (boolean for archived/starred, optional
+    # timestamp for viewed-at).  Originally localStorage-only — moved
+    # server-side so a second browser sees consistent state.
+    # -----------------------------------------------------------------------
+
+    async def _set_meta_flag(
+        self, session_id: str, column: str, value: Optional[str]
+    ) -> Optional[str]:
+        """Internal: upsert a single nullable timestamp column on session_meta.
+
+        ``column`` is validated against a fixed allow-list to keep this off
+        the user-input attack surface.
+        """
+        assert self._conn is not None
+        if column not in {"archived_at", "starred_at", "viewed_at"}:
+            raise ValueError(f"unsupported session_meta column: {column!r}")
+        now_iso = datetime.now().isoformat()
+        # Use a parameterised query for the value; the column name is f-string
+        # interpolated but allow-listed above.  ON CONFLICT preserves the
+        # other flag columns + custom_title — only the target column updates.
+        await self._conn.execute(
+            f"""
+            INSERT INTO session_meta (session_id, {column}, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                {column} = excluded.{column},
+                updated_at = excluded.updated_at
+            """,
+            (session_id, value, now_iso),
+        )
+        await self._conn.commit()
+        return value
+
+    async def set_archived(self, session_id: str, archived: bool) -> Optional[str]:
+        """Mark a session archived (True) or unarchive it (False).
+
+        Returns the stored timestamp (ISO string when archived, None when
+        cleared).  An unarchive preserves the rest of the session_meta row
+        (custom_title, starred_at, viewed_at).
+        """
+        value = datetime.now().isoformat() if archived else None
+        return await self._set_meta_flag(session_id, "archived_at", value)
+
+    async def set_starred(self, session_id: str, starred: bool) -> Optional[str]:
+        """Mark a session starred (True) or unstar it (False)."""
+        value = datetime.now().isoformat() if starred else None
+        return await self._set_meta_flag(session_id, "starred_at", value)
+
+    async def set_viewed_at(
+        self, session_id: str, viewed_at: Optional[str]
+    ) -> Optional[str]:
+        """Record when the session was last viewed by the user.
+
+        Unlike archived/starred this accepts an explicit timestamp because the
+        bell-dismiss logic wants to record "viewed at message_updated_at"
+        rather than "viewed at now".  Pass ``None`` to clear (mark unread).
+        """
+        return await self._set_meta_flag(session_id, "viewed_at", viewed_at)
+
+    async def get_session_meta(self, session_id: str) -> dict:
+        """Return the full session_meta row for ``session_id`` as a dict.
+
+        Returns ``{"custom_title": None, "archived_at": None, "starred_at": None,
+        "viewed_at": None}`` if no row exists — callers can check truthiness
+        on each field rather than handling missing-row separately.
+        """
+        assert self._conn is not None
+        async with self._conn.execute(
+            """
+            SELECT custom_title, archived_at, starred_at, viewed_at
+            FROM session_meta WHERE session_id = ?
+            """,
+            (session_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return {
+                "custom_title": None,
+                "archived_at": None,
+                "starred_at": None,
+                "viewed_at": None,
+            }
+        return {
+            "custom_title": row["custom_title"],
+            "archived_at": row["archived_at"],
+            "starred_at": row["starred_at"],
+            "viewed_at": row["viewed_at"],
+        }
+
+    # -----------------------------------------------------------------------
     # Messages
     # -----------------------------------------------------------------------
 
@@ -550,8 +923,9 @@ class Database:
             INSERT OR REPLACE INTO messages
                 (id, session_id, parent_id, role, content_json, timestamp, model,
                  is_sidechain, is_meta, cwd, git_branch, source_tool_assistant_uuid,
-                 usage_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 usage_json, input_tokens, output_tokens, cache_creation_tokens,
+                 cache_read_tokens)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -568,6 +942,10 @@ class Database:
                     m.git_branch,
                     m.source_tool_assistant_uuid,
                     m.usage.model_dump_json() if m.usage else None,
+                    m.usage.input_tokens if m.usage else None,
+                    m.usage.output_tokens if m.usage else None,
+                    m.usage.cache_creation_input_tokens if m.usage else None,
+                    m.usage.cache_read_input_tokens if m.usage else None,
                 )
                 for m in messages
             ],
@@ -590,6 +968,24 @@ class Database:
                 fts_rows,
             )
 
+        # Rebuild materialized block facts for this session (same delete +
+        # re-insert pattern as FTS, so a re-parse replaces stale rows).
+        await self._conn.execute(
+            "DELETE FROM message_blocks WHERE session_id = ?", (session_id,)
+        )
+        block_rows = [
+            row
+            for m in messages
+            for row in _block_facts(m.id, m.session_id, m.content_blocks)
+        ]
+        if block_rows:
+            await self._conn.executemany(
+                "INSERT OR REPLACE INTO message_blocks (message_id, session_id, "
+                "block_index, btype, tool_name, file_path, result_chars, tool_use_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                block_rows,
+            )
+
         await self._conn.commit()
 
     async def get_session_detail_json_bytes(self, session_id: str) -> Optional[bytes]:
@@ -606,7 +1002,10 @@ class Database:
             """SELECT s.*,
                    (SELECT role FROM messages WHERE session_id = s.id
                     ORDER BY timestamp DESC LIMIT 1) AS last_message_role,
-                   sm.custom_title AS custom_title
+                   sm.custom_title AS custom_title,
+                   sm.archived_at AS archived_at,
+                   sm.starred_at AS starred_at,
+                   sm.viewed_at AS viewed_at
                FROM sessions s
                LEFT JOIN session_meta sm ON sm.session_id = s.id
                WHERE s.id = ?""",
@@ -617,7 +1016,14 @@ class Database:
             return None
 
         async with self._conn.execute(
-            "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC",
+            # Tie-break by rowid (insertion order = JSONL file order) so a
+            # thinking + text pair claude writes at the same ms timestamp
+            # surfaces in the order the model produced them. Without this,
+            # SQLite's tie-break is non-deterministic and the UI's
+            # "is-session-active" heuristic (which inspects the LAST message
+            # of a turn) can latch the indicator on permanently when the
+            # trailing message happens to be a thinking-only one.
+            "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC, rowid ASC",
             (session_id,),
         ) as cur:
             mrows = await cur.fetchall()
@@ -628,6 +1034,9 @@ class Database:
             "file_path": srow["file_path"],
             "title": srow["title"],
             "custom_title": srow["custom_title"],
+            "archived_at": srow["archived_at"] if "archived_at" in srow.keys() else None,
+            "starred_at": srow["starred_at"] if "starred_at" in srow.keys() else None,
+            "viewed_at": srow["viewed_at"] if "viewed_at" in srow.keys() else None,
             "model": srow["model"],
             "started_at": srow["started_at"],
             "updated_at": srow["updated_at"],
@@ -639,6 +1048,16 @@ class Database:
             "is_fork": bool(srow["is_fork"]) if "is_fork" in srow.keys() else False,
             "permission_mode": srow["permission_mode"],
             "last_message_role": srow["last_message_role"],
+            # Live filesystem check, NOT a cached DB value. The previous
+            # version read projects.resolved_path, which is set once at
+            # scan time — it stayed stale (False) long after a removable
+            # volume was remounted or a directory recreated. The cost is
+            # one isdir() syscall per session-detail request, which is
+            # cheap compared to the rest of the response build.
+            "cwd_exists": (
+                True if not srow["cwd"]
+                else Path(srow["cwd"]).is_dir()
+            ),
         }
         session_bytes = json.dumps(
             session_dict, ensure_ascii=False, separators=(",", ":")
@@ -687,7 +1106,10 @@ class Database:
             """SELECT s.*,
                    (SELECT role FROM messages WHERE session_id = s.id
                     ORDER BY timestamp DESC LIMIT 1) AS last_message_role,
-                   sm.custom_title AS custom_title
+                   sm.custom_title AS custom_title,
+                   sm.archived_at AS archived_at,
+                   sm.starred_at AS starred_at,
+                   sm.viewed_at AS viewed_at
                FROM sessions s
                LEFT JOIN session_meta sm ON sm.session_id = s.id
                WHERE s.id = ?""",
@@ -725,7 +1147,8 @@ class Database:
         else:
             total_count = None  # no truncation needed
             async with self._conn.execute(
-                "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC",
+                # See get_session_detail's matching ORDER BY — same tie-break.
+                "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC, rowid ASC",
                 (session_id,),
             ) as cursor:
                 msg_rows = await cursor.fetchall()
@@ -733,10 +1156,15 @@ class Database:
         messages = [_row_to_message(row) for row in msg_rows]
 
         session = _row_to_session(session_row)
+        # Live filesystem check — see ``get_session_detail_json_bytes`` for
+        # the rationale (stale projects.resolved_path was reporting cwd
+        # missing on volumes that had since been remounted).
+        cwd_exists = True if not session.cwd else Path(session.cwd).is_dir()
         return SessionDetail(
             **session.model_dump(),
             messages=messages,
             total_message_count=total_count,
+            cwd_exists=cwd_exists,
         )
 
     async def delete_message(self, message_id: str) -> None:
@@ -779,6 +1207,50 @@ class Database:
             "DELETE FROM messages WHERE session_id = ?", (session_id,)
         )
         await self._conn.commit()
+
+    async def delete_session(self, session_id: str) -> bool:
+        """Hard-delete a session: its messages, FTS entries, recaps,
+        session_meta override, and the session row itself — all in one
+        transaction.
+
+        Returns True if a session row was actually deleted, False if the
+        session did not exist in the DB (idempotent: caller may still want
+        to unlink the on-disk file).
+        """
+        assert self._conn is not None
+        # Check existence first so we can return an accurate bool without
+        # relying on rowcount after the DELETE (which is always 0-or-1 here).
+        async with self._conn.execute(
+            "SELECT id FROM sessions WHERE id = ?", (session_id,)
+        ) as cursor:
+            exists = await cursor.fetchone() is not None
+
+        # Delete child rows in dependency order before the parent session row.
+        await self._conn.execute(
+            "DELETE FROM messages_fts WHERE session_id = ?", (session_id,)
+        )
+        await self._conn.execute(
+            "DELETE FROM messages WHERE session_id = ?", (session_id,)
+        )
+        await self._conn.execute(
+            "DELETE FROM recaps WHERE session_id = ?", (session_id,)
+        )
+        # ephemeral_messages and its FTS table — the BEFORE DELETE trigger
+        # on ephemeral_messages keeps ephemeral_messages_fts in sync, so we
+        # only DELETE the parent rows here.  PRAGMA foreign_keys is off
+        # project-wide; without this explicit DELETE the rows would orphan
+        # on session-delete (Phase 2 live-smoke finding).
+        await self._conn.execute(
+            "DELETE FROM ephemeral_messages WHERE session_id = ?", (session_id,)
+        )
+        await self._conn.execute(
+            "DELETE FROM session_meta WHERE session_id = ?", (session_id,)
+        )
+        await self._conn.execute(
+            "DELETE FROM sessions WHERE id = ?", (session_id,)
+        )
+        await self._conn.commit()
+        return exists
 
     async def update_message_content(
         self, message_id: str, new_blocks: list[ContentBlock]
@@ -833,10 +1305,30 @@ class Database:
         """Fetch all messages from all sessions ordered by timestamp."""
         assert self._conn is not None
         async with self._conn.execute(
-            "SELECT * FROM messages ORDER BY timestamp ASC"
+            "SELECT * FROM messages ORDER BY timestamp ASC, rowid ASC"
         ) as cursor:
             rows = await cursor.fetchall()
         return [_row_to_message(row) for row in rows]
+
+    async def analytics_signature(self) -> tuple:
+        """Cheap fingerprint of the message corpus for analytics caching.
+
+        Computed over the small ``sessions`` table (one row per session),
+        so it stays sub-millisecond regardless of message count. The tuple
+        changes whenever a session is added, removed, or re-indexed — which
+        is exactly when the all-message analytics need recomputing:
+          - ``COUNT(*)``           → session added/removed
+          - ``SUM(message_count)`` → messages appended within a session
+          - ``MAX(file_mtime)``    → a session's JSONL was re-parsed
+          - ``MAX(updated_at)``    → activity timestamp moved
+        """
+        assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(message_count), 0) AS c, "
+            "MAX(file_mtime) AS m, MAX(updated_at) AS u FROM sessions"
+        ) as cursor:
+            row = await cursor.fetchone()
+        return (row["n"], row["c"], row["m"], row["u"])
 
     # -----------------------------------------------------------------------
     # Search
@@ -854,6 +1346,7 @@ class Database:
         # space-separated word tokens so queries like "eye-candy" or "a:b" are
         # interpreted as ordinary terms (AND'd by default), not column filters
         # or NOT operators. This is a search-quality fix, not a security fix.
+        # The same sanitiser is applied to both messages and ephemeral queries.
         import re as _re
 
         sanitized = _re.sub(r"[^\w\s]", " ", query).strip()
@@ -861,8 +1354,14 @@ class Database:
             return []
         match_query = sanitized
 
+        # Strategy (b): run two separate queries (messages_fts and
+        # ephemeral_messages_fts) and merge in Python.  This keeps the SQL
+        # simple (avoids a UNION between tables with different column shapes)
+        # and lets us attach source/kind/responds_to metadata cleanly.
+        # Merged result is sorted by timestamp DESC, then truncated to `limit`.
+
         if project_id is not None:
-            sql = """
+            msg_sql = """
                 SELECT
                     snippet(messages_fts, 0, '<b>', '</b>', '...', 20) AS snippet,
                     f.session_id,
@@ -879,9 +1378,9 @@ class Database:
                 ORDER BY m.timestamp DESC
                 LIMIT ?
             """
-            params: tuple = (match_query, project_id, limit)
+            msg_params: tuple = (match_query, project_id, limit)
         else:
-            sql = """
+            msg_sql = """
                 SELECT
                     snippet(messages_fts, 0, '<b>', '</b>', '...', 20) AS snippet,
                     f.session_id,
@@ -897,13 +1396,13 @@ class Database:
                 ORDER BY m.timestamp DESC
                 LIMIT ?
             """
-            params = (match_query, limit)
+            msg_params = (match_query, limit)
 
-        async with self._conn.execute(sql, params) as cursor:
-            rows = await cursor.fetchall()
+        async with self._conn.execute(msg_sql, msg_params) as cursor:
+            msg_rows = await cursor.fetchall()
 
         hits: list[SearchHit] = []
-        for row in rows:
+        for row in msg_rows:
             hits.append(
                 SearchHit(
                     session_id=row["session_id"],
@@ -913,9 +1412,76 @@ class Database:
                     role=row["role"],
                     snippet=row["snippet"],
                     timestamp=_str_to_dt(row["timestamp"]),
+                    source="message",
                 )
             )
-        return hits
+
+        # --- Ephemeral search ---
+        # Ephemerals have no project_id in their own table; we join via sessions.
+        if project_id is not None:
+            eph_sql = """
+                SELECT
+                    snippet(ephemeral_messages_fts, 0, '<b>', '</b>', '...', 20) AS snippet,
+                    e.session_id,
+                    CAST(e.id AS TEXT) AS message_id,
+                    e.role,
+                    s.title AS session_title,
+                    s.project_id,
+                    e.timestamp,
+                    e.kind,
+                    e.responds_to
+                FROM ephemeral_messages_fts f
+                JOIN ephemeral_messages e ON e.id = f.ephemeral_id
+                JOIN sessions s ON s.id = e.session_id
+                WHERE ephemeral_messages_fts MATCH ?
+                  AND s.project_id = ?
+                ORDER BY e.timestamp DESC
+                LIMIT ?
+            """
+            eph_params: tuple = (match_query, project_id, limit)
+        else:
+            eph_sql = """
+                SELECT
+                    snippet(ephemeral_messages_fts, 0, '<b>', '</b>', '...', 20) AS snippet,
+                    e.session_id,
+                    CAST(e.id AS TEXT) AS message_id,
+                    e.role,
+                    s.title AS session_title,
+                    s.project_id,
+                    e.timestamp,
+                    e.kind,
+                    e.responds_to
+                FROM ephemeral_messages_fts f
+                JOIN ephemeral_messages e ON e.id = f.ephemeral_id
+                JOIN sessions s ON s.id = e.session_id
+                WHERE ephemeral_messages_fts MATCH ?
+                ORDER BY e.timestamp DESC
+                LIMIT ?
+            """
+            eph_params = (match_query, limit)
+
+        async with self._conn.execute(eph_sql, eph_params) as cursor:
+            eph_rows = await cursor.fetchall()
+
+        for row in eph_rows:
+            hits.append(
+                SearchHit(
+                    session_id=row["session_id"],
+                    session_title=row["session_title"],
+                    project_id=row["project_id"],
+                    message_id=row["message_id"],
+                    role=row["role"],
+                    snippet=row["snippet"],
+                    timestamp=_str_to_dt(row["timestamp"]),
+                    source="ephemeral",
+                    kind=row["kind"],
+                    responds_to=row["responds_to"],
+                )
+            )
+
+        # Merge: sort all hits by timestamp DESC (None timestamps sort last).
+        hits.sort(key=lambda h: h.timestamp or datetime.min, reverse=True)
+        return hits[:limit]
 
     # -----------------------------------------------------------------------
     # Stats
@@ -1003,6 +1569,164 @@ class Database:
         await self._conn.commit()
         return cursor.rowcount > 0
 
+    # -----------------------------------------------------------------------
+    # Ephemeral messages (/btw and similar side-channel exchanges)
+    # -----------------------------------------------------------------------
+
+    async def record_ephemeral_input(
+        self,
+        session_id: str,
+        content: str,
+        kind: str = "btw",
+        timestamp: Optional[str] = None,
+    ) -> int:
+        """Persist a user-side ephemeral message (e.g. /btw input).
+
+        Returns the new row id.  ``timestamp`` defaults to now (ISO format,
+        same as other tables).  The INSERT trigger keeps ``ephemeral_messages_fts``
+        in sync automatically.
+        """
+        assert self._conn is not None
+        ts = timestamp if timestamp is not None else _utc_now_iso()
+        cursor = await self._conn.execute(
+            """
+            INSERT INTO ephemeral_messages
+                (session_id, kind, role, content, responds_to, timestamp)
+            VALUES (?, ?, 'user', ?, NULL, ?)
+            """,
+            (session_id, kind, content, ts),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid  # type: ignore[return-value]
+
+    async def record_ephemeral_response(
+        self,
+        input_row_id: int,
+        content: str,
+        timestamp: Optional[str] = None,
+    ) -> int:
+        """Persist an assistant-side ephemeral response paired with *input_row_id*.
+
+        Inherits ``session_id`` and ``kind`` from the input row to guarantee
+        consistency (avoids the caller having to re-pass them and risk skew).
+        Raises ``aiosqlite.IntegrityError`` (wrapping ``sqlite3.IntegrityError``)
+        if *input_row_id* does not exist — the self-FK is enforced explicitly
+        via the lookup below rather than relying on SQLite FK pragma being on.
+
+        Returns the new row id.
+        """
+        assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT session_id, kind FROM ephemeral_messages WHERE id = ?",
+            (input_row_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            import sqlite3
+            raise sqlite3.IntegrityError(
+                f"record_ephemeral_response: input_row_id {input_row_id!r} does not exist"
+            )
+        session_id = row["session_id"]
+        kind = row["kind"]
+        ts = timestamp if timestamp is not None else _utc_now_iso()
+        cursor = await self._conn.execute(
+            """
+            INSERT INTO ephemeral_messages
+                (session_id, kind, role, content, responds_to, timestamp)
+            VALUES (?, ?, 'assistant', ?, ?, ?)
+            """,
+            (session_id, kind, content, input_row_id, ts),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid  # type: ignore[return-value]
+
+    async def get_ephemeral_messages(self, session_id: str) -> list[dict]:
+        """Return all ephemeral messages for *session_id* ordered by timestamp.
+
+        Returns plain dicts (mirroring ``list_recaps``) so callers don't need
+        to import a separate Pydantic model.
+        """
+        assert self._conn is not None
+        async with self._conn.execute(
+            """
+            SELECT id, session_id, kind, role, content, responds_to, timestamp
+            FROM ephemeral_messages
+            WHERE session_id = ?
+            ORDER BY timestamp ASC, id ASC
+            """,
+            (session_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "session_id": row["session_id"],
+                "kind": row["kind"],
+                "role": row["role"],
+                "content": row["content"],
+                "responds_to": row["responds_to"],
+                "timestamp": row["timestamp"],
+            }
+            for row in rows
+        ]
+
+    async def search_ephemeral(
+        self,
+        query: str,
+        session_id: Optional[str] = None,
+    ) -> list[dict]:
+        """FTS5 search over ephemeral messages.
+
+        Sanitises the query the same way ``search()`` does (strips FTS5
+        operators).  Optional *session_id* narrows to a single session.
+        Returns plain dicts matching the shape of ``get_ephemeral_messages``.
+        """
+        assert self._conn is not None
+        import re as _re
+
+        sanitized = _re.sub(r"[^\w\s]", " ", query).strip()
+        if not sanitized:
+            return []
+
+        if session_id is not None:
+            sql = """
+                SELECT
+                    e.id, e.session_id, e.kind, e.role,
+                    e.content, e.responds_to, e.timestamp
+                FROM ephemeral_messages_fts f
+                JOIN ephemeral_messages e ON e.id = f.ephemeral_id
+                WHERE ephemeral_messages_fts MATCH ?
+                  AND f.session_id = ?
+                ORDER BY e.timestamp ASC, e.id ASC
+            """
+            params: tuple = (sanitized, session_id)
+        else:
+            sql = """
+                SELECT
+                    e.id, e.session_id, e.kind, e.role,
+                    e.content, e.responds_to, e.timestamp
+                FROM ephemeral_messages_fts f
+                JOIN ephemeral_messages e ON e.id = f.ephemeral_id
+                WHERE ephemeral_messages_fts MATCH ?
+                ORDER BY e.timestamp ASC, e.id ASC
+            """
+            params = (sanitized,)
+
+        async with self._conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "session_id": row["session_id"],
+                "kind": row["kind"],
+                "role": row["role"],
+                "content": row["content"],
+                "responds_to": row["responds_to"],
+                "timestamp": row["timestamp"],
+            }
+            for row in rows
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Private row → model converters
@@ -1010,15 +1734,19 @@ class Database:
 
 
 def _row_to_session(row: aiosqlite.Row) -> Session:
-    # custom_title is only present on rows from the JOIN'd selects (issue #11).
-    # Detail/list rows include it; rows from upsert-time round-trips don't.
-    custom_title = row["custom_title"] if "custom_title" in row.keys() else None
+    # custom_title + meta-flag columns are only present on rows from the
+    # JOIN'd selects.  Detail/list rows include them; upsert-time round-trips
+    # don't.  Each column is keys()-guarded so older call sites stay valid.
+    keys = row.keys()
     return Session(
         id=row["id"],
         project_id=row["project_id"],
         file_path=row["file_path"],
         title=row["title"],
-        custom_title=custom_title,
+        custom_title=row["custom_title"] if "custom_title" in keys else None,
+        archived_at=row["archived_at"] if "archived_at" in keys else None,
+        starred_at=row["starred_at"] if "starred_at" in keys else None,
+        viewed_at=row["viewed_at"] if "viewed_at" in keys else None,
         model=row["model"],
         started_at=_str_to_dt(row["started_at"]),
         updated_at=_str_to_dt(row["updated_at"]),
@@ -1027,7 +1755,7 @@ def _row_to_session(row: aiosqlite.Row) -> Session:
         cwd=row["cwd"],
         git_branch=row["git_branch"],
         is_worktree=bool(row["is_worktree"]),
-        is_fork=bool(row["is_fork"]) if "is_fork" in row.keys() else False,
+        is_fork=bool(row["is_fork"]) if "is_fork" in keys else False,
         permission_mode=row["permission_mode"],
         last_message_role=row["last_message_role"],
     )

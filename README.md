@@ -102,11 +102,12 @@ Requires Python 3.10+. The wheel ships the pre-built frontend, so **no Node.js i
 - UI auto-refreshes when new messages arrive
 - Notification bell for unread updates
 
-### Headless runner
-- Send messages to sessions directly from the web UI
-- Drives the CLI in stream-json mode for live responses
-- Auto-stop watchdog for stuck sessions
-- Slash command support with fallback to plain text
+### Sending messages
+- Send messages to any session directly from the web UI
+- Drives the local `claude` CLI in interactive TUI mode through a hidden PTY,
+  so messages use subscription-backed interactive behavior
+- Lazy spawn on chat-input focus; idle PTYs auto-kill after 5 minutes
+- Login required on the host (the web UI doesn't surface OAuth)
 
 ### Export
 - Export any conversation as JSON or Markdown — includes token counts and cost estimates
@@ -183,8 +184,8 @@ full rescan, or run `clau-decode --force-refresh`.
 
 Clau-Decode is a local-first FastAPI server that scans your AI coding
 assistant's JSONL session files into a SQLite index, serves a React +
-TypeScript SPA, and optionally drives the Claude CLI in stream-json mode for
-in-app sessions.
+TypeScript SPA, and drives the Claude CLI through a hidden PTY for in-app
+sessions.
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for a system diagram and deeper notes.
 
@@ -199,6 +200,9 @@ make dev
 
 # Run the app from source
 make run
+
+# Ad-hoc Python commands launched from the checkout also resolve this src tree
+python -c 'from clau_decode.cli import main; main()' --no-open
 
 # Run tests
 make test
@@ -262,8 +266,23 @@ Clau-Decode is **inspired by, and built around the file format of, [Claude](http
 - [highlight.js](https://highlightjs.org/) — syntax highlighter behind rehype-highlight
 - [Apache ECharts](https://echarts.apache.org/) — analytics charts
 - [OverlayScrollbars](https://kingsora.github.io/OverlayScrollbars/) — custom scrollbars
+- [ghostty-web](https://github.com/coder/ghostty-web) — browser terminal renderer for the Native view, embedding [Ghostty](https://ghostty.org/)'s VT engine (by [Mitchell Hashimoto](https://mitchellh.com/) and the Ghostty contributors) compiled to WebAssembly
 - [clsx](https://github.com/lukeed/clsx) — conditional class names
 - [Node.js](https://nodejs.org/) and [npm](https://www.npmjs.com/) — JS runtime and package manager
+
+**Fonts (bundled — [SIL Open Font License 1.1](frontend/src/assets/fonts/LICENSES.md))**
+
+The Native view ships these monospace fonts so the in-app font picker works on any machine (a canvas terminal can only paint fonts the browser has). Each is © its respective authors and redistributed under OFL-1.1; the full copyright notices and license text live in [`frontend/src/assets/fonts/LICENSES.md`](frontend/src/assets/fonts/LICENSES.md).
+
+- [Monaspace](https://github.com/githubnext/monaspace) (Argon) — GitHub
+- [Source Code Pro](https://github.com/adobe-fonts/source-code-pro) — Adobe
+- [Fira Code](https://github.com/tonsky/FiraCode) — Nikita Prokopov & the Fira Code authors
+- [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) — JetBrains
+- [Libertinus Mono](https://github.com/alerque/libertinus) — The Libertinus Project authors
+- [Xanh Mono](https://github.com/yellow-type-foundry/xanhmono) — Yellow Type Foundry
+- [JuliaMono](https://github.com/cormullion/juliamono) — cormullion
+- [Spline Sans Mono](https://github.com/SorkinType/SplineSansMono) — Sorkin Type
+- [Ioskeley Mono](https://github.com/ahatem/IoskeleyMono) — Ahmed Hatem (an Iosevka custom build)
 
 **Demo reel pipeline**
 

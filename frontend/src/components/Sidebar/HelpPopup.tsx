@@ -25,13 +25,6 @@ const sections = [
     ],
   },
   {
-    title: "Analytics",
-    items: [
-      "View token usage, cost estimates, and usage trends over time.",
-      "Open Analytics from the bottom-left menu.",
-    ],
-  },
-  {
     title: "Reading Conversations",
     items: [
       "Tool use blocks show files read, commands run, and edits made.",

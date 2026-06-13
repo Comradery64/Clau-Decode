@@ -97,6 +97,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Only include sessions on or after this date",
     )
     parser.add_argument(
+        "--log-level",
+        choices=("debug", "info", "warning", "error"),
+        default="info",
+        help="Verbosity for clau_decode loggers (independent of uvicorn). "
+        "Default 'info' surfaces operational signals (PTY runner warnings, "
+        "/btw finalize/timeout, ephemeral persistence). Use 'debug' when "
+        "diagnosing a live issue.",
+    )
+    parser.add_argument(
         "--demo",
         nargs="?",
         const="__AUTO__",
@@ -148,8 +157,54 @@ def _resolve_host(args: argparse.Namespace, config=None) -> str:
     return "127.0.0.1"
 
 
+def _configure_clau_decode_logging(level_name: str) -> None:
+    """Attach an explicit stderr handler to the ``clau_decode`` logger.
+
+    Uvicorn's default ``log_config`` reconfigures Python logging when
+    ``uvicorn.run`` is invoked, which drops the implicit ``lastResort``
+    handler that would otherwise route our ``_log.warning(...)`` /
+    ``_log.info(...)`` calls to stderr.  Without this, every PTY runner
+    signal (e.g. ``_finalize_btw_capture``, ``_btw_stuck_timeout``,
+    ``record_ephemeral_*`` failures) goes nowhere — verified during the
+    Phase 2 live smoke when 220 s of polling yielded zero log lines.
+
+    ``propagate=False`` keeps uvicorn's root handlers from emitting a
+    second copy of every line.
+    """
+    import logging as _logging
+    # When stderr is redirected to a file (e.g. ``nohup ... > /tmp/log 2>&1``)
+    # Python defaults to block-buffering, so log lines accumulate in-memory
+    # until shutdown.  This was the second half of the Phase 2 smoke
+    # invisibility: even after we configured the handler, lines never reached
+    # the file until the process exited.  Switch to line buffering so each
+    # ``\n`` flushes the underlying fd.
+    try:
+        sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    level = getattr(_logging, level_name.upper(), _logging.INFO)
+    logger = _logging.getLogger("clau_decode")
+    logger.setLevel(level)
+    if not any(
+        isinstance(h, _logging.StreamHandler) and getattr(h, "_clau_decode_attached", False)
+        for h in logger.handlers
+    ):
+        handler = _logging.StreamHandler(sys.stderr)
+        handler.setFormatter(
+            _logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+        )
+        handler._clau_decode_attached = True  # type: ignore[attr-defined]
+        logger.addHandler(handler)
+    logger.propagate = False
+
+
 def _run_dashboard(args: argparse.Namespace, config) -> None:
     """Launch the web UI with uvicorn."""
+    _configure_clau_decode_logging(args.log_level)
+    import logging as _logging
+    _logging.getLogger("clau_decode").info(
+        "logger configured (level=%s)", args.log_level
+    )
     host = _resolve_host(args, config)
 
     db_path = get_db_path()
@@ -177,7 +232,7 @@ def _run_dashboard(args: argparse.Namespace, config) -> None:
 
         threading.Thread(target=_open_browser, daemon=True).start()
 
-    print(f"Clau-Decode running at http://{host}:{config.port}")
+    print(f"Clau-Decode running at http://{host}:{config.port}", flush=True)
     uvicorn.run(app, host=host, port=config.port, log_level="warning")
 
 

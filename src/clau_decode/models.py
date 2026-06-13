@@ -104,6 +104,12 @@ class Session(BaseModel):
     # of `title` so the original parsed title stays available for display
     # fallback and search debugging.
     custom_title: Optional[str] = None
+    # Server-persisted session flags (previously localStorage-only on the FE).
+    # ISO-8601 string when set, None when unset.  See Database.set_archived /
+    # set_starred / set_viewed_at + db._migrate_add_session_meta_flags.
+    archived_at: Optional[str] = None
+    starred_at: Optional[str] = None
+    viewed_at: Optional[str] = None
     model: Optional[str] = None
     started_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -122,6 +128,12 @@ class SessionDetail(Session):
 
     messages: list[Message] = Field(default_factory=list)
     total_message_count: Optional[int] = None  # set when messages are truncated
+    # Resolved from the session's project ``resolved_path`` in the DB.
+    # True if the cwd (working directory) still exists on disk; False if
+    # the project directory has been deleted since the session was last
+    # scanned. The FE uses this to short-circuit submit with a clear
+    # error rather than letting the PTY spawn fail downstream.
+    cwd_exists: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +164,12 @@ class SearchHit(BaseModel):
     role: str
     snippet: str  # FTS5 highlighted excerpt
     timestamp: Optional[datetime]
+    # Distinguishes regular messages from ephemeral (/btw) exchanges.
+    source: Literal["message", "ephemeral"] = "message"
+    # Only set for ephemeral hits: the kind tag (e.g. "btw") and the
+    # responds_to id linking user/assistant pairs.
+    kind: Optional[str] = None
+    responds_to: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +196,33 @@ class AppConfig(BaseModel):
     port: int = 4242
     host: str = "127.0.0.1"
     edit_enabled: bool = True
-    claude_default_permission_mode: str = "dontAsk"
+    claude_default_permission_mode: str = "default"
+    chat_send_shortcut: Literal["enter", "modEnter"] = "enter"
+    native_pty_font_family: Literal[
+        "monaspace-argon",
+        "source-code-pro",
+        "fira-code",
+        "jetbrains-mono",
+        "ioskeley-mono",
+        "libertinus-mono",
+        "antithesis",
+        "thesansmono-condensed",
+        "xanh-mono",
+        "julia-mono",
+        "spline-sans-mono",
+        "system-monospace",
+    ] = "monaspace-argon"
+    native_pty_cols: int = Field(
+        default=100,
+        ge=20,
+        le=400,
+        description=(
+            "Native PTY width in terminal columns. Single source of truth: the "
+            "PTY is spawned at this width (TIOCSWINSZ) and the browser terminal "
+            "renders at the same width. The terminal never reflows its width, so "
+            "Claude's output is displayed exactly as a native session would."
+        ),
+    )
     claude_auto_stop_quiet_default_turns: bool = False
     claude_recap_enabled: bool = False
     claude_recap_idle_minutes: int = 5

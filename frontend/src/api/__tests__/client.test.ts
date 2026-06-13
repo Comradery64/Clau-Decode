@@ -145,4 +145,98 @@ describe("createEventSource — SSE payload contract", () => {
     MockEventSource.lastInstance!.emit(JSON.stringify({ type: "refresh" }));
     expect(onRefresh).toHaveBeenCalledOnce();
   });
+
+  it("calls onPtySubmitCompleted for submit lifecycle events", async () => {
+    const { createEventSource } = await import("../client");
+    const onPtySubmitCompleted = vi.fn();
+    createEventSource({ onRefresh: vi.fn(), onPtySubmitCompleted });
+
+    MockEventSource.lastInstance!.emit(
+      JSON.stringify({
+        type: "pty_submit_completed",
+        session_id: "sess-1",
+        kind: "btw",
+        status: "completed",
+        input_id: 1,
+        response_id: 2,
+      }),
+    );
+
+    expect(onPtySubmitCompleted).toHaveBeenCalledWith({
+      session_id: "sess-1",
+      kind: "btw",
+      status: "completed",
+      input_id: 1,
+      response_id: 2,
+    });
+  });
+
+  it("calls onPtyOutputChunk for native PTY output events", async () => {
+    const { createEventSource } = await import("../client");
+    const onPtyOutputChunk = vi.fn();
+    createEventSource({ onRefresh: vi.fn(), onPtyOutputChunk });
+
+    MockEventSource.lastInstance!.emit(
+      JSON.stringify({
+        type: "pty_output_chunk",
+        session_id: "sess-1",
+        data_b64: "aGVsbG8=",
+      }),
+    );
+
+    expect(onPtyOutputChunk).toHaveBeenCalledWith({
+      session_id: "sess-1",
+      data_b64: "aGVsbG8=",
+    });
+  });
+});
+
+describe("api — native PTY contract", () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            session_id: "sid",
+            ring_b64: "",
+            rows: 40,
+            cols: 120,
+            alive: true,
+            native_state: "idle_chat_input",
+            decoded_input_safe: true,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    ) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("ptyNativeSnapshot calls the native snapshot route", async () => {
+    const { api } = await import("../client");
+
+    await api.ptyNativeSnapshot("sid");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/pty/native-snapshot?session_id=sid",
+    );
+  });
+
+  it("ptyInput posts raw terminal input", async () => {
+    const { api } = await import("../client");
+
+    await api.ptyInput("sid", "\x1b[A");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/pty/input", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: "sid", data: "\x1b[A" }),
+    });
+  });
 });

@@ -2,6 +2,7 @@ import { useAppStore } from "../../store";
 
 const shortcuts = [
   { keys: "⌘K", action: "Open search" },
+  { keys: "⇧⌘\\", action: "Cycle view: Decoded → Native → Split" },
   { keys: "⇧⌘,", action: "Open settings" },
   { keys: "⇧⌘O", action: "Start new task (new Claude session)" },
   { keys: "⌘O", action: "Expand / collapse all tool blocks" },

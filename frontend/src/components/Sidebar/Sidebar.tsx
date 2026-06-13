@@ -4,32 +4,25 @@ import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
 import type { Project, Session } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
-import { useRoute, navigateTo } from "../../router";
-import { LS } from "../../utils/localStorage";
-import { useLsSet } from "../../utils/useLsSet";
-import { on } from "../../utils/events";
+import { navigateTo } from "../../router";
+import { LS, lsGetRaw, lsSetRaw } from "../../utils/localStorage";
+import { useArchivedSet, useStarredSet } from "../../utils/sessionMeta";
+import { on, emit } from "../../utils/events";
+import { SIDEBAR } from "../../config/ui";
 import { SCROLLBAR_OPTIONS } from "../ScrollContainer";
 import { SidebarHeader } from "./SidebarHeader";
 import { ProjectGroup } from "./ProjectGroup";
 import { SessionItem } from "./SessionItem";
 import { FileExplorer } from "./FileExplorer";
 import { useRunnerStatuses } from "./hooks/useRunnerStatuses";
-
-const SIDEBAR_WIDTH_STORAGE_KEY = "clau-decode:sidebar-width";
-const SIDEBAR_MIN_WIDTH = 200;
-const SIDEBAR_COLLAPSED_WIDTH = 52;
-const SIDEBAR_SNAP_THRESHOLD = 130; // within this many px of collapsed, snap
-const SIDEBAR_DEFAULT_WIDTH = 260;
-// Keep at least this much room for the main pane (chat / dashboard) so the
-// sidebar can't be dragged to cover the whole viewport.
-const SIDEBAR_MIN_MAIN_PANE = 360;
+import { ConfirmDialog } from "../Messages/ConfirmDialog";
 
 function loadStoredSidebarWidth(): number {
-  if (typeof window === "undefined") return SIDEBAR_DEFAULT_WIDTH;
-  const raw = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+  if (typeof window === "undefined") return SIDEBAR.DEFAULT_WIDTH;
+  const raw = lsGetRaw(LS.SIDEBAR_WIDTH);
   const n = raw ? Number(raw) : NaN;
-  if (!Number.isFinite(n)) return SIDEBAR_DEFAULT_WIDTH;
-  return Math.max(SIDEBAR_MIN_WIDTH, n);
+  if (!Number.isFinite(n)) return SIDEBAR.DEFAULT_WIDTH;
+  return Math.max(SIDEBAR.MIN_WIDTH, n);
 }
 
 function IconSearch() {
@@ -57,14 +50,6 @@ function IconSettings() {
   );
 }
 
-function IconAnalytics() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="12" width="4" height="9"/><rect x="10" y="7" width="4" height="14"/><rect x="17" y="3" width="4" height="18"/>
-    </svg>
-  );
-}
-
 function IconHelp() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -78,6 +63,198 @@ function IconKeyboard() {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="8" y1="12" x2="8.01" y2="12"/><line x1="12" y1="12" x2="12.01" y2="12"/><line x1="16" y1="12" x2="16.01" y2="12"/><line x1="7" y1="16" x2="17" y2="16"/>
     </svg>
+  );
+}
+
+// Section header for the flat session list ("Recents" / "Archived").
+// On hover it reveals a "Select" affordance on the right that enters
+// multi-select mode — replacing the old dedicated nav button.
+function RecentsHeader({
+  label,
+  onSelect,
+  selectionMode,
+}: {
+  label: string;
+  onSelect: () => void;
+  selectionMode: boolean;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        width: "100%",
+        padding: "6px 18px 4px",
+        fontSize: "11px",
+        fontWeight: 600,
+        textTransform: "uppercase",
+        letterSpacing: "0.06em",
+        color: "var(--text-tertiary)",
+        fontFamily: "var(--font-ui)",
+        gap: "4px",
+        minHeight: "22px",
+      }}
+    >
+      <span style={{ flex: 1, textAlign: "left" }}>{label}</span>
+      {!selectionMode && (
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-label="Select sessions"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "4px",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: "2px 4px",
+            margin: "-2px -4px -2px 0",
+            borderRadius: "var(--radius-sm)",
+            color: hovered ? "var(--accent-orange)" : "var(--text-tertiary)",
+            fontFamily: "var(--font-ui)",
+            fontSize: "10px",
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            opacity: hovered ? 1 : 0,
+            pointerEvents: hovered ? "auto" : "none",
+            transition: "opacity var(--transition-fast), color var(--transition-fast)",
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="5" width="4" height="4" rx="1"/>
+            <line x1="10" y1="7" x2="21" y2="7"/>
+            <rect x="3" y="13" width="4" height="4" rx="1"/>
+            <line x1="10" y1="15" x2="21" y2="15"/>
+          </svg>
+          Select
+        </button>
+      )}
+    </div>
+  );
+}
+
+function BulkActionToolbar({
+  selectedCount,
+  onSelectAll,
+  onArchive,
+  onDelete,
+  onCancel,
+}: {
+  selectedCount: number;
+  onSelectAll: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+  onCancel: () => void;
+}) {
+  const noneSelected = selectedCount === 0;
+  return (
+    <div style={{
+      padding: "8px 10px",
+      background: "var(--bg-sidebar-active)",
+      borderBottom: "1px solid var(--border-subtle)",
+      borderRadius: "var(--radius-sm)",
+      margin: "0 6px 4px",
+      display: "flex",
+      flexDirection: "column",
+      gap: "6px",
+    }}>
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        fontSize: "12px",
+        color: "var(--text-secondary)",
+        fontFamily: "var(--font-ui)",
+      }}>
+        <span style={{ fontWeight: 500 }}>
+          {selectedCount} selected
+        </span>
+        <button
+          onClick={onSelectAll}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            fontSize: "12px",
+            color: "var(--accent-orange)",
+            fontFamily: "var(--font-ui)",
+            padding: "0",
+          }}
+        >
+          Select all
+        </button>
+      </div>
+      <div style={{ display: "flex", gap: "6px" }}>
+        <BulkActionBtn
+          label="Archive"
+          disabled={noneSelected}
+          onClick={onArchive}
+        />
+        <BulkActionBtn
+          label="Delete"
+          disabled={noneSelected}
+          danger
+          onClick={onDelete}
+        />
+        <BulkActionBtn
+          label="Cancel"
+          disabled={false}
+          onClick={onCancel}
+        />
+      </div>
+    </div>
+  );
+}
+
+function BulkActionBtn({
+  label,
+  disabled,
+  danger,
+  onClick,
+}: {
+  label: string;
+  disabled: boolean;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        flex: 1,
+        padding: "4px 6px",
+        fontSize: "12px",
+        fontFamily: "var(--font-ui)",
+        background: disabled
+          ? "none"
+          : danger
+          ? hovered ? "#b85c5c" : "#c47a7a"
+          : hovered
+          ? "var(--bg-sidebar-hover)"
+          : "var(--bg-tool-block)",
+        color: disabled
+          ? "var(--text-tertiary)"
+          : danger
+          ? "#fff"
+          : "var(--text-primary)",
+        border: disabled ? "1px solid var(--border-subtle)" : "1px solid var(--border-default)",
+        borderRadius: "var(--radius-sm)",
+        cursor: disabled ? "default" : "pointer",
+        transition: "background var(--transition-fast), color var(--transition-fast)",
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -124,7 +301,7 @@ function NavItem({
         fontFamily: "var(--font-ui)",
         fontWeight: active ? 500 : 400,
         textAlign: "left",
-        transition: "background var(--transition-fast), color var(--transition-fast), opacity 352ms ease",
+        transition: "background var(--transition-fast), color var(--transition-fast), opacity var(--transition-medium)",
         margin: "1px 6px",
         opacity: fade ? 0 : undefined,
         overflow: "hidden",
@@ -137,7 +314,7 @@ function NavItem({
         overflow: "hidden",
         whiteSpace: "nowrap",
         opacity: collapsed ? 0 : 1,
-        transition: "opacity 352ms ease",
+        transition: "opacity var(--transition-medium)",
       }}>{label}</span>
       {shortcut && (
         <kbd style={{
@@ -145,7 +322,7 @@ function NavItem({
           color: "var(--text-tertiary)",
           fontFamily: "var(--font-ui)",
           opacity: collapsed ? 0 : 1,
-          transition: "opacity 352ms ease",
+          transition: "opacity var(--transition-medium)",
         }}>
           {shortcut}
         </kbd>
@@ -161,7 +338,6 @@ function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
   const profiles = useAppStore((s) => s.profiles);
   const activeProfileId = useAppStore((s) => s.activeProfileId);
   const setActiveProfileId = useAppStore((s) => s.setActiveProfileId);
-  const route = useRoute();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -200,7 +376,7 @@ function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
   const activeProfile = profiles.find((p) => p.id === activeProfileId);
   const displayName = activeProfile ? activeProfile.name : profiles.length > 0 ? "All Profiles" : "Clau-Decode";
   const displayColor = activeProfile ? activeProfile.color : "var(--accent-orange)";
-  const initial = activeProfile ? activeProfile.name[0].toUpperCase() : "C";
+  const initial = activeProfile ? (activeProfile.name?.[0] ?? "?").toUpperCase() : "C";
 
   const menuItemStyle = (highlight?: boolean): React.CSSProperties => ({
     display: "flex",
@@ -265,7 +441,7 @@ function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
           textAlign: "left",
           overflow: "hidden",
           opacity: collapsed ? 0 : 1,
-          transition: "opacity 352ms ease",
+          transition: "opacity var(--transition-medium)",
           whiteSpace: "nowrap",
         }}>
           <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-primary)" }}>{displayName}</div>
@@ -298,18 +474,6 @@ function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
             </div>
           </button>
 
-          {/* Analytics */}
-          <button
-            onClick={() => { navigateTo(route === "/analytics" ? "/" : "/analytics"); setMenuOpen(false); }}
-            style={menuItemStyle()}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-sidebar-hover)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "none"; }}
-          >
-            <span style={{ flexShrink: 0, display: "flex", color: "var(--text-tertiary)" }}><IconAnalytics /></span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 500 }}>Analytics</div>
-            </div>
-          </button>
 
           {/* Get Help */}
           <button
@@ -356,7 +520,7 @@ function SidebarFooter({ collapsed }: { collapsed?: boolean }) {
                   style={menuItemStyle(activeProfileId === p.id)}
                 >
                   <span style={{ width: 22, height: 22, borderRadius: "50%", background: p.color, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-on-accent)", fontSize: "10px", fontWeight: 700, flexShrink: 0 }}>
-                    {p.name[0].toUpperCase()}
+                    {(p.name?.[0] ?? "?").toUpperCase()}
                   </span>
                   <span style={{ fontWeight: activeProfileId === p.id ? 500 : 400 }}>{p.name}</span>
                 </button>
@@ -385,17 +549,15 @@ export default function Sidebar() {
 
   // Archive view
   const [showArchive, setShowArchive] = useState(false);
-  const archived = useLsSet(LS.ARCHIVED, "archive");
-  const starred = useLsSet(LS.STARRED, "star");
+  const archived = useArchivedSet();
+  const starred = useStarredSet();
 
   // Collapsible section headers
   const [starredCollapsed, setStarredCollapsed] = useState(false);
-  const [recentsCollapsed, setRecentsCollapsed] = useState(false);
 
   const openSearch = useAppStore((s) => s.openSearch);
   const sessionSortOrder = useAppStore((s) => s.sessionSortOrder);
   const selectedSessionId = useAppStore((s) => s.selectedSessionId);
-  const selectSession = useAppStore((s) => s.selectSession);
   const selectProject = useAppStore((s) => s.selectProject);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const sidebarMode = useAppStore((s) => s.sidebarMode);
@@ -404,8 +566,18 @@ export default function Sidebar() {
   const setProfiles = useAppStore((s) => s.setProfiles);
   const setActiveProfileId = useAppStore((s) => s.setActiveProfileId);
 
+  // Multi-select
+  const selectionMode = useAppStore((s) => s.selectionMode);
+  const selectedSessionIds = useAppStore((s) => s.selectedSessionIds);
+  const enterSelectionMode = useAppStore((s) => s.enterSelectionMode);
+  const exitSelectionMode = useAppStore((s) => s.exitSelectionMode);
+  const clearSelection = useAppStore((s) => s.clearSelection);
+  const setSelectedSessionIds = useAppStore((s) => s.setSelectedSessionIds);
+
+  // Bulk-delete confirm dialog
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+
   const showParentFolder = useAppStore((s) => s.showParentFolder);
-  const route = useRoute();
 
   const showFlat = sessionSortOrder !== "alpha";
 
@@ -416,8 +588,14 @@ export default function Sidebar() {
   sidebarWidthRef.current = sidebarWidth;
   const [resizingSidebar, setResizingSidebar] = useState(false);
 
-  // When dragging narrow, treat components as collapsed so text fades but icons stay
-  const fadeCollapsed = resizingSidebar && sidebarWidth < 141;
+  // When dragging narrow, treat components as collapsed so text fades but icons stay.
+  // Uses a ref so once fading starts during a drag it stays faded (prevents flashing
+  // when dragging near the threshold).
+  const fadeCollapsedRef = useRef(false);
+  if (resizingSidebar && sidebarWidth < SIDEBAR.FADE_TEXT_MIN_PX) fadeCollapsedRef.current = true;
+  if (resizingSidebar && sidebarWidth > SIDEBAR.FADE_TEXT_MAX_PX) fadeCollapsedRef.current = false;
+  if (!resizingSidebar) fadeCollapsedRef.current = false;
+  const fadeCollapsed = fadeCollapsedRef.current;
   const textCollapsed = sidebarCollapsed || fadeCollapsed;
 
   // Clamp stored width into a sane range for the current viewport. Runs on
@@ -427,13 +605,13 @@ export default function Sidebar() {
     const clamp = () => {
       const vw = window.innerWidth;
       // Auto-collapse when the window is too narrow for both sidebar + main pane.
-      if (vw < SIDEBAR_COLLAPSED_WIDTH + SIDEBAR_MIN_MAIN_PANE) {
+      if (vw < SIDEBAR.COLLAPSED_WIDTH + SIDEBAR.MIN_MAIN_PANE) {
         useAppStore.getState().setSidebarCollapsed(true);
         return;
       }
       // Only viewport-derived cap: leave room for the main pane.
-      const maxByViewport = Math.max(SIDEBAR_MIN_WIDTH, vw - SIDEBAR_MIN_MAIN_PANE);
-      setSidebarWidth((w) => Math.max(SIDEBAR_MIN_WIDTH, Math.min(w, maxByViewport)));
+      const maxByViewport = Math.max(SIDEBAR.MIN_WIDTH, vw - SIDEBAR.MIN_MAIN_PANE);
+      setSidebarWidth((w) => Math.max(SIDEBAR.MIN_WIDTH, Math.min(w, maxByViewport)));
     };
     clamp();
     window.addEventListener("resize", clamp);
@@ -445,35 +623,35 @@ export default function Sidebar() {
   // always reflects the last fully-committed user width.
   useEffect(() => {
     if (resizingSidebar) return;
-    if (sidebarWidth < SIDEBAR_SNAP_THRESHOLD) return;
-    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+    if (sidebarWidth < SIDEBAR.SNAP_THRESHOLD) return;
+    lsSetRaw(LS.SIDEBAR_WIDTH, String(sidebarWidth));
   }, [sidebarWidth, resizingSidebar]);
 
   const startSidebarResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
     const wasCollapsed = sidebarCollapsed;
-    const startWidth = wasCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidthRef.current;
+    const startWidth = wasCollapsed ? SIDEBAR.COLLAPSED_WIDTH : sidebarWidthRef.current;
     const storedExpanded = loadStoredSidebarWidth();
     setResizingSidebar(true);
     if (wasCollapsed) {
-      setSidebarWidth(SIDEBAR_COLLAPSED_WIDTH);
+      setSidebarWidth(SIDEBAR.COLLAPSED_WIDTH);
     }
     document.body.style.userSelect = "none";
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - startX;
-      const maxByViewport = Math.max(SIDEBAR_MIN_WIDTH, window.innerWidth - SIDEBAR_MIN_MAIN_PANE);
-      const anchor = wasCollapsed ? SIDEBAR_COLLAPSED_WIDTH : startWidth;
-      const raw = Math.max(SIDEBAR_COLLAPSED_WIDTH, Math.min(anchor + dx, maxByViewport));
+      const maxByViewport = Math.max(SIDEBAR.MIN_WIDTH, window.innerWidth - SIDEBAR.MIN_MAIN_PANE);
+      const anchor = wasCollapsed ? SIDEBAR.COLLAPSED_WIDTH : startWidth;
+      const raw = Math.max(SIDEBAR.COLLAPSED_WIDTH, Math.min(anchor + dx, maxByViewport));
       setSidebarWidth(raw);
       // Uncollapse only once the user drags past the snap threshold
-      if (wasCollapsed && raw >= SIDEBAR_SNAP_THRESHOLD) {
+      if (wasCollapsed && raw >= SIDEBAR.SNAP_THRESHOLD) {
         useAppStore.getState().setSidebarCollapsed(false);
       }
     };
     const onUp = () => {
       const final = sidebarWidthRef.current;
-      if (final < SIDEBAR_SNAP_THRESHOLD) {
+      if (final < SIDEBAR.SNAP_THRESHOLD) {
         useAppStore.getState().setSidebarCollapsed(true);
         setResizingSidebar(false);
         setSidebarWidth(storedExpanded);
@@ -490,17 +668,52 @@ export default function Sidebar() {
     document.addEventListener("mouseup", onUp);
   }, [sidebarCollapsed]);
 
+  // Bulk archive: add all selected ids via the server-backed handle.
+  // Each .add() fires a PUT and updates the shared cache; the SSE echo
+  // syncs other tabs/browsers automatically.
+  const handleBulkArchive = useCallback(() => {
+    for (const id of selectedSessionIds) {
+      archived.add(id);
+    }
+    clearSelection();
+    exitSelectionMode();
+  }, [selectedSessionIds, archived, clearSelection, exitSelectionMode]);
+
+  const handleBulkDelete = useCallback(() => {
+    setBulkDeleteDialogOpen(true);
+  }, []);
+
+  const handleConfirmBulkDelete = useCallback(() => {
+    const ids = [...selectedSessionIds];
+    setBulkDeleteDialogOpen(false);
+    clearSelection();
+    exitSelectionMode();
+    // Optimistic: drop the rows from every list immediately (the backend delete
+    // of messages + FTS can take a few seconds for large sessions). "refresh"
+    // reconciles once the request resolves, re-adding any that actually failed.
+    emit("sessions-removed", ids);
+    api.deleteSessions(ids)
+      .then((res) => {
+        if (res.failed.length > 0) {
+          console.error("[bulk-delete] Some sessions failed to delete:", res.failed);
+          emit("toast", {
+            message: `Couldn't delete ${res.failed.length} session${res.failed.length === 1 ? "" : "s"}.`,
+            kind: "error",
+          });
+        }
+        emit("refresh", undefined);
+      })
+      .catch((err: unknown) => {
+        console.error("[bulk-delete] deleteSessions error:", err);
+        emit("toast", { message: "Couldn't delete sessions — see console for details.", kind: "error" });
+        emit("refresh", undefined); // restore optimistically-removed rows
+      });
+  }, [selectedSessionIds, clearSelection, exitSelectionMode]);
+
   const handleSelectSession = (session: Session) => {
     selectProject(session.project_id);
     setFileExplorerRoot(session.cwd);
-    // On the Analytics view, clicking a session should re-scope the analytics
-    // to that session — not navigate away to the chat. Update the store
-    // directly and stay on /analytics.
-    if (route === "/analytics") {
-      selectSession(session.id);
-    } else {
-      navigateTo(`/chat/${session.id}`);
-    }
+    navigateTo(`/chat/${session.id}`);
   };
 
   // When switching to folder mode with a session already selected, set the root.
@@ -594,6 +807,15 @@ export default function Sidebar() {
     });
   }, []);
 
+  // Optimistic delete — drop rows from the flat list the instant the user
+  // confirms, before the (potentially slow) backend delete resolves.
+  useEffect(() => {
+    return on("sessions-removed", (ids) => {
+      const gone = new Set(ids);
+      setFlatSessions((prev) => prev.filter((s) => !gone.has(s.id)));
+    });
+  }, []);
+
   const starredSessions = useMemo(() =>
     flatSessions.filter((s) => starred.has(s.id) && !archived.has(s.id)),
     [flatSessions, starred, archived]
@@ -615,7 +837,7 @@ export default function Sidebar() {
     return filtered;
   }, [flatSessions, sessionSortOrder, showArchive, archived]);
 
-  // Issue #12 — poll runner-status for sessions visible in the flat list
+  // Issue #12 — poll busy snapshots for sessions visible in the flat list
   // (recents / archive) and the starred section. Project groups poll their
   // own sessions separately so we don't have to predict expansion here.
   // Two coalesced timers worst case; far better than per-item polling.
@@ -626,6 +848,12 @@ export default function Sidebar() {
     return [...ids];
   }, [sortedFlatSessions, starredSessions]);
   const runnerStatuses = useRunnerStatuses(visibleFlatIds);
+
+  const handleSelectAll = useCallback(() => {
+    // Select all sessions currently visible (flat list or archive view)
+    const visibleIds = sortedFlatSessions.map((s) => s.id);
+    setSelectedSessionIds(visibleIds);
+  }, [sortedFlatSessions, setSelectedSessionIds]);
 
   const toggleProject = (projectId: string) => {
     setExpandedProjects((prev) => {
@@ -640,7 +868,7 @@ export default function Sidebar() {
     <aside
       aria-label="Navigation"
       style={{
-        width: sidebarCollapsed && !resizingSidebar ? `${SIDEBAR_COLLAPSED_WIDTH}px` : `${Math.max(SIDEBAR_COLLAPSED_WIDTH, sidebarWidth)}px`,
+        width: sidebarCollapsed && !resizingSidebar ? `${SIDEBAR.COLLAPSED_WIDTH}px` : `${Math.max(SIDEBAR.COLLAPSED_WIDTH, sidebarWidth)}px`,
         height: "100vh",
         display: "flex",
         flexDirection: "column",
@@ -649,7 +877,7 @@ export default function Sidebar() {
         flexShrink: 0,
         overflow: "hidden",
         position: "relative",
-        transition: resizingSidebar ? "none" : "width 352ms cubic-bezier(0.0, 0.9, 0.1, 1.0)",
+        transition: resizingSidebar ? "none" : "width var(--transition-medium)",
       }}
     >
       {/* Drag handle — always visible so you can expand from collapsed. */}
@@ -749,13 +977,24 @@ export default function Sidebar() {
           padding: sidebarMode === "folder" ? "0" : "8px 0",
           display: sidebarCollapsed ? "none" : undefined,
           opacity: textCollapsed ? 0 : 1,
-          transition: "opacity 352ms ease",
+          transition: "opacity var(--transition-medium)",
         }}
       >
         {sidebarMode === "folder" ? (
           <FileExplorer />
         ) : (
             <>
+              {/* Bulk-action toolbar — shown when selection mode is active */}
+              {selectionMode && (
+                <BulkActionToolbar
+                  selectedCount={selectedSessionIds.size}
+                  onSelectAll={handleSelectAll}
+                  onArchive={handleBulkArchive}
+                  onDelete={handleBulkDelete}
+                  onCancel={exitSelectionMode}
+                />
+              )}
+
               {loading && (
                 <div style={{ padding: "16px", fontSize: "13px", color: "var(--text-tertiary)", textAlign: "center" }}>
                   Loading…
@@ -770,35 +1009,17 @@ export default function Sidebar() {
               {/* Flat sorted list (recent / oldest) — also used for archive view in any sort mode */}
               {!loading && !error && (showFlat || showArchive) && (
                 <>
-                  <button
-                    onClick={() => setRecentsCollapsed((v) => !v)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      width: "100%",
-                      padding: "6px 18px 4px",
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.06em",
-                      color: "var(--text-tertiary)",
-                      background: "none",
-                      border: "none",
-                      cursor: "pointer",
-                      fontFamily: "var(--font-ui)",
-                      gap: "4px",
-                    }}
-                  >
-                    <span style={{ flex: 1, textAlign: "left" }}>
-                      {showArchive ? "Archived" : "Recents"}
-                    </span>
-                  </button>
-                  {!recentsCollapsed && flatLoading && (
+                  <RecentsHeader
+                    label={showArchive ? "Archived" : "Recents"}
+                    onSelect={enterSelectionMode}
+                    selectionMode={selectionMode}
+                  />
+                  {flatLoading && (
                     <div style={{ padding: "8px 16px", fontSize: "12px", color: "var(--text-tertiary)" }}>
                       Loading…
                     </div>
                   )}
-                  {!recentsCollapsed && !flatLoading && sortedFlatSessions.map((session) => (
+                  {!flatLoading && sortedFlatSessions.map((session) => (
                     <SessionItem
                       key={session.id}
                       session={session}
@@ -807,7 +1028,7 @@ export default function Sidebar() {
                       runnerStatus={runnerStatuses.get(session.id)}
                     />
                   ))}
-                  {!recentsCollapsed && !flatLoading && sortedFlatSessions.length === 0 && (
+                  {!flatLoading && sortedFlatSessions.length === 0 && (
                     <div style={{ padding: "24px 16px", fontSize: "13px", color: "var(--text-tertiary)", textAlign: "center", lineHeight: 1.6 }}>
                       {showArchive ? "No archived sessions." : "No sessions found."}
                     </div>
@@ -842,6 +1063,16 @@ export default function Sidebar() {
       {sidebarCollapsed && <div style={{ flex: 1 }} />}
 
       <SidebarFooter collapsed={textCollapsed} />
+
+      {bulkDeleteDialogOpen && (
+        <ConfirmDialog
+          title={`Delete ${selectedSessionIds.size} session${selectedSessionIds.size === 1 ? "" : "s"}?`}
+          body="This permanently deletes the session transcript files from disk and cannot be undone."
+          confirmLabel="Delete"
+          onConfirm={handleConfirmBulkDelete}
+          onCancel={() => setBulkDeleteDialogOpen(false)}
+        />
+      )}
     </aside>
   );
 }

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import type { Project, Session } from "../../api/types";
 import { api } from "../../api/client";
 import { useAppStore } from "../../store";
+import { on } from "../../utils/events";
 import { SessionItem } from "./SessionItem";
 import { useRunnerStatuses } from "./hooks/useRunnerStatuses";
 
@@ -56,6 +57,15 @@ export function ProjectGroup({ project, displayName, isExpanded, onToggle, archi
       cancelled = true;
     };
   }, [isExpanded, project.id]);
+
+  // Optimistic delete — drop removed rows immediately so the grouped view
+  // matches the flat list's instant feedback (server reconciles via "refresh").
+  useEffect(() => {
+    return on("sessions-removed", (ids) => {
+      const gone = new Set(ids);
+      setSessions((prev) => prev.filter((s) => !gone.has(s.id)));
+    });
+  }, []);
 
   // Issue #12 — only poll while the group is expanded; collapsed groups
   // have no SessionItems mounted, so spending HTTP on them is pure waste.

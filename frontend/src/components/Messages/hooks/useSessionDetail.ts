@@ -1,10 +1,9 @@
-import { useEffect, useState } from "react";
-import type { SessionDetail } from "../../../api/types";
+import { useCallback, useEffect, useState } from "react";
+import type { EphemeralMessage, SessionDetail } from "../../../api/types";
 import { api } from "../../../api/client";
 import { getCached, setCached, invalidateCached, fetchSession } from "../../../api/sessionCache";
-import { groupMessages, type Turn } from "../groupMessages";
+import { type Turn } from "../groupMessages";
 import { on } from "../../../utils/events";
-import { SSE } from "../../../config/ui";
 
 const XML_TAG_RE = /<[a-z][a-z0-9-]*>[\s\S]*?<\/[a-z][a-z0-9-]*>/g;
 
@@ -45,6 +44,16 @@ export function useSessionDetail(sessionId: string) {
   const cached = getCached(sessionId);
   const [detail, setDetail] = useState<SessionDetail | null>(cached ?? null);
   const [loading, setLoading] = useState(!cached);
+  const [ephemerals, setEphemerals] = useState<EphemeralMessage[]>([]);
+  const refetchEphemerals = useCallback((clearOnFailure = false) => {
+    api.ptyEphemerals(sessionId)
+      .then(setEphemerals)
+      .catch(() => {
+        // Ephemeral fetch failure is non-fatal (table may not yet exist
+        // if this is a session from before Phase 2 shipped).
+        if (clearOnFailure) setEphemerals([]);
+      });
+  }, [sessionId]);
 
   // Fetch session when sessionId changes
   useEffect(() => {
@@ -61,15 +70,22 @@ export function useSessionDetail(sessionId: string) {
       .catch(logUnlessExpected404);
   }, [sessionId]);
 
+  // Fetch ephemerals once on mount / session-id change
+  useEffect(() => {
+    refetchEphemerals(true);
+  }, [refetchEphemerals]);
+
   // Listen for live-reload refresh events
   useEffect(() => {
     return on("refresh", () => {
       invalidateCached(sessionId);
       api.getSession(sessionId).then((d) => {
         setCached(sessionId, d);
-        setDetail((prev) =>
-          prev?.id === d.id && prev.messages.length === d.messages.length ? prev : d
-        );
+        // A refresh means the server observed a file-system change and
+        // reparsed the session. Always accept the authoritative detail:
+        // title/model metadata can change after message shape stabilizes,
+        // and streaming can update text inside an existing content block.
+        setDetail(d);
       }).catch(logUnlessExpected404);
     });
   }, [sessionId]);
@@ -86,23 +102,35 @@ export function useSessionDetail(sessionId: string) {
     });
   }, [sessionId]);
 
-  // Streaming indicator timeout
-  const [sseTimedOut, setSseTimedOut] = useState(false);
+  // Refetch ephemerals as soon as a /btw input row exists. The response may
+  // still be pending, but the UI should show the inline Capturing response…
+  // panel in every connected window immediately.
   useEffect(() => {
-    if (!detail) { setSseTimedOut(false); return; }
-    const active = isSessionActive(groupMessages(detail.messages));
-    if (!active) { setSseTimedOut(false); return; }
-    const updatedMs = detail.updated_at ? Date.parse(detail.updated_at) : 0;
-    if (Date.now() - updatedMs > SSE.DEAD_SESSION_MS) {
-      setSseTimedOut(true);
-      return;
-    }
-    setSseTimedOut(false);
-    const id = setTimeout(() => setSseTimedOut(true), SSE.WATCHDOG_MS);
-    return () => clearTimeout(id);
-  }, [detail]);
+    return on("ephemeral-input-persisted", ({ session_id }) => {
+      if (session_id !== sessionId) return;
+      refetchEphemerals();
+    });
+  }, [sessionId, refetchEphemerals]);
 
-  return { detail, loading, sseTimedOut };
+  // Refetch ephemerals when a /btw capture completes for this session.
+  useEffect(() => {
+    return on("ephemeral-pair-persisted", ({ session_id }) => {
+      if (session_id !== sessionId) return;
+      refetchEphemerals();
+    });
+  }, [sessionId, refetchEphemerals]);
+
+  // Refetch ephemerals when /btw reaches any terminal submit state. Successful
+  // captures also emit ephemeral-pair-persisted, but timeout/failure leaves an
+  // input-only row that the current window must still learn about.
+  useEffect(() => {
+    return on("pty-submit-completed", ({ session_id, kind }) => {
+      if (session_id !== sessionId || kind !== "btw") return;
+      refetchEphemerals();
+    });
+  }, [sessionId, refetchEphemerals]);
+
+  return { detail, loading, ephemerals };
 }
 
 export { isSessionActive };
