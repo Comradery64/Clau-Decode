@@ -9,7 +9,6 @@ import {
   createNativeFitAddon,
   createNativeTerminal,
   createNativeUnicodeAddon,
-  prepareTerminalWrite,
   type ITheme,
   type NativeTerminal,
   writeNativeTerminalBytes,
@@ -215,18 +214,21 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
     if (wroteSnapshotRef.current === snapshot.session_id) return;
     wroteSnapshotRef.current = snapshot.session_id;
     const terminal = terminalRef.current;
-    // Replay the captured ring (trimmed to the last full repaint so a partial /
-    // overflowed ring still starts on a clean frame). xterm's VT engine renders
-    // it at the pinned width — no reflow.
+    // Replay the FULL captured ring so all of claude's history lands in xterm's
+    // scrollback — a re-attach must be scrollable just like a cold spawn. We used
+    // to trim to the LAST full repaint, which discarded everything above it and
+    // left a one-screen buffer with nothing to scroll on re-attach (the bug:
+    // reopen a session in Native and you couldn't scroll the history). Replaying
+    // the whole ring reconstructs the same scrollback the cold-spawn path builds
+    // by streaming. The terminal is freshly created per session, so there's no
+    // stale buffer to clear first; xterm's VT engine renders at the pinned width.
     //
     // Chunked write: xterm's write() is synchronous on the VT parsing pass — a
     // large snapshot (hundreds of KB of escape sequences) blocks the main thread
     // for 800ms+. We write in 16KB chunks using xterm's built-in write callback,
     // which fires after each chunk is parsed+rendered, yielding frames between
     // chunks so the browser stays responsive throughout the replay.
-    const prepared = prepareTerminalWrite(snapshotBytes);
-    if (prepared.clearsRedrawHistory) terminal.clear();
-    const data = prepared.data;
+    const data = snapshotBytes;
     const CHUNK_SIZE = 16384; // 16 KB per frame
     let offset = 0;
     const writeNextChunk = () => {
