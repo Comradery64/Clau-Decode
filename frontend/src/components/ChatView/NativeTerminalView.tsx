@@ -262,14 +262,17 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
   }, [alive, resize, writeInput, nativeCols]);
 
   // Any claude scroll/jump (wheel, clicking the "Jump to bottom" hint, or the
-  // Ctrl+End/Ctrl+Home/PageUp/PageDown keys) repaints incrementally and desyncs
-  // xterm (garbled/blank bottom rows) until a full redraw. We can't synthesize
-  // Ctrl+L (two in a row triggers /clear and wipes the conversation). Instead,
-  // once the interaction settles, toggle the PTY one row smaller and back — a
-  // real SIGWINCH that forces claude to re-lay-out the whole screen cleanly,
-  // preserving the scroll position. Capture phase so it fires even though xterm
-  // consumes these events in mouse-tracking mode. Keydown is filtered to the
-  // scroll keys so ordinary typing never triggers a redraw.
+  // Ctrl+End/Ctrl+Home/PageUp/PageDown keys) can leave xterm's canvas showing
+  // stale/blank bottom rows: the renderer doesn't always repaint on a
+  // programmatic / mid-scroll update, so the buffer is correct but the canvas
+  // is stale. Once the interaction settles, force a cheap canvas repaint with
+  // terminal.refresh() — NOT a resize. (An earlier version toggled the PTY one
+  // row smaller and back to force a SIGWINCH re-layout; it worked, but that
+  // resize is a full reflow on every scroll/click, which made scrolling janky.
+  // refresh() repaints the existing buffer to the canvas without reflowing.)
+  // Capture phase so it fires even though xterm consumes these events in
+  // mouse-tracking mode. Keydown is filtered to the scroll keys so ordinary
+  // typing never triggers a redraw.
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return undefined;
@@ -281,20 +284,15 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
     // value if small scrolls still trigger it / long scrolls don't.
     const WHEEL_REDRAW_THRESHOLD_PX = 800;
     let settleTimer = 0;
-    let restoreTimer = 0;
     let wheelAccumPx = 0;
     const scheduleRedraw = () => {
       window.clearTimeout(settleTimer);
       settleTimer = window.setTimeout(() => {
         const terminal = terminalRef.current;
         if (!terminal || terminal.rows <= 1) return;
-        const rows = terminal.rows;
-        const cols = terminal.cols;
         wheelAccumPx = 0;
-        void resize(rows - 1, cols);
-        restoreTimer = window.setTimeout(() => {
-          void resize(rows, cols);
-        }, 80);
+        // Cheap canvas repaint of the whole viewport — no resize/reflow.
+        terminal.refresh(0, terminal.rows - 1);
       }, 100);
     };
     const onWheel = (event: WheelEvent) => {
@@ -318,9 +316,8 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
       host.removeEventListener("mouseup", scheduleRedraw, opts);
       host.removeEventListener("keydown", onScrollKey, opts);
       window.clearTimeout(settleTimer);
-      window.clearTimeout(restoreTimer);
     };
-  }, [resize, terminalReady]);
+  }, [terminalReady]);
 
   useEffect(() => {
     const text = error
