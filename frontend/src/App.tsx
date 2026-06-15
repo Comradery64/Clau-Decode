@@ -132,6 +132,15 @@ export default function App() {
   useEffect(() => {
     const es = createEventSource({
       onRefresh: () => emit("refresh", undefined),
+      // SSE reconnected after a drop (e.g. the server restarted) — the tab
+      // missed events while down, so re-sync: a "refresh" refetches the
+      // session list and the open conversation (useSessionDetail listens for
+      // it), and refetchSessionMeta repopulates the starred/archived/title
+      // cache. Fixes the "open session looks empty after a restart" symptom.
+      onReconnect: () => {
+        emit("refresh", undefined);
+        void refetchSessionMeta();
+      },
       // Remote renames (issue #11) — fan into the same `rename` bus the
       // local SessionItem.commitRename emits on, so every view (ChatView,
       // SessionItem, ProjectGroup …) reconciles via the existing handler.

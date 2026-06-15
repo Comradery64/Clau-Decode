@@ -37,6 +37,11 @@ class MockEventSource {
     this.listeners.get("message")?.forEach((fn) => fn({ data }));
   }
 
+  /** Helper: simulate the connection opening (initial connect or reconnect). */
+  emitOpen() {
+    this.listeners.get("open")?.forEach((fn) => fn({ data: "" }));
+  }
+
   close() {
     this.closed = true;
   }
@@ -81,6 +86,24 @@ describe("createEventSource — SSE payload contract", () => {
     );
 
     expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it("fires onReconnect only on re-open, not the initial connect", async () => {
+    const { createEventSource } = await import("../client");
+    const onReconnect = vi.fn();
+    createEventSource({ onRefresh: vi.fn(), onReconnect });
+
+    // Initial connect — must NOT count as a reconnect.
+    MockEventSource.lastInstance!.emitOpen();
+    expect(onReconnect).not.toHaveBeenCalled();
+
+    // Drop + auto-reconnect: EventSource fires "open" again.
+    MockEventSource.lastInstance!.emitOpen();
+    expect(onReconnect).toHaveBeenCalledOnce();
+
+    // A second reconnect fires it again.
+    MockEventSource.lastInstance!.emitOpen();
+    expect(onReconnect).toHaveBeenCalledTimes(2);
   });
 
   it("does not call onRefresh for malformed JSON", async () => {

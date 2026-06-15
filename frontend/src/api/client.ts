@@ -335,6 +335,12 @@ export const api = {
 /** Handlers for the SSE event types we know about (issue #11). */
 export interface EventSourceHandlers {
   onRefresh: () => void;
+  // Fired when the SSE stream RE-connects after a drop (e.g. the server was
+  // restarted). The browser's EventSource auto-reconnects, but while it was
+  // down the tab missed every refresh/meta event, so its session list and the
+  // open conversation can be stale. Use this to re-sync (refetch list + open
+  // session). NOT fired on the initial connect.
+  onReconnect?: () => void;
   // Fired when another client mutates session metadata on the server (or
   // our own PUT echoes back). Each event carries the id plus only the
   // fields that changed (the rest are absent from the payload, NOT null).
@@ -575,5 +581,18 @@ export function createEventSource(
       // ignore malformed events
     }
   });
+
+  // Reconnect self-heal. EventSource fires "open" on the first connect AND on
+  // every auto-reconnect after a drop (e.g. the server restarted). On a
+  // reconnect — but not the first open — fire onReconnect so the app can
+  // re-sync the events it missed while disconnected.
+  let hasOpened = false;
+  es.addEventListener("open", () => {
+    if (hasOpened) {
+      handlers.onReconnect?.();
+    }
+    hasOpened = true;
+  });
+
   return es;
 }
