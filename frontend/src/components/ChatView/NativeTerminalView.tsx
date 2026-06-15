@@ -154,6 +154,13 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
     terminal.loadAddon(createNativeUnicodeAddon());
     terminal.unicode.activeVersion = "11";
     terminal.open(hostRef.current);
+    // We use xterm's default DOM renderer — it renders the stream faithfully and
+    // never smears. We deliberately do NOT attach the WebGL renderer: addon-webgl
+    // against xterm 6 produced glyph-atlas corruption (smeared / "crossed-out"
+    // cells until a full repaint), and the scroll latency it was meant to fix was
+    // actually a backend hot-path block (classify_screen over the whole ring),
+    // fixed in pty_runner. A faithful renderer + an unblocked event loop is the
+    // fix; a GPU renderer that draws garbage is not.
     terminalRef.current = terminal;
     setTerminalReady((key) => key + 1);
 
@@ -164,8 +171,28 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
       attributes: true,
       attributeFilter: ["data-theme", "style"],
     });
-    const inputDisposable = terminal.onData((data) => {
+    // Coalesce PTY input. xterm fires onData once PER input event, and in
+    // claude's alt-screen mouse-tracking mode every wheel tick is its own mouse
+    // sequence. One HTTP POST per event (api.ptyInput) floods the round-trip
+    // under wheel scroll — dozens of POSTs/sec, each making claude repaint and
+    // stream the repaint back, which is the live-TUI scroll lag. We buffer
+    // onData within a frame and flush once per rAF, so a burst of mouse events
+    // becomes a single ordered POST (claude then sees all the scroll deltas at
+    // once and can collapse the repaints). Keystroke cost is at most one frame
+    // (~16ms, imperceptible); byte order is preserved by concatenation, and one
+    // POST is more order-safe than N racing POSTs.
+    let inputBuffer = "";
+    let inputFlushRaf = 0;
+    const flushInput = () => {
+      inputFlushRaf = 0;
+      if (!inputBuffer) return;
+      const data = inputBuffer;
+      inputBuffer = "";
       void writeInput(data);
+    };
+    const inputDisposable = terminal.onData((data) => {
+      inputBuffer += data;
+      if (!inputFlushRaf) inputFlushRaf = requestAnimationFrame(flushInput);
     });
 
     const setInitialTerminalSize = (nextInitialSize: { rows: number; cols: number }) => {
@@ -196,6 +223,8 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
       resizeObserver.disconnect();
       cancelAnimationFrame(raf);
       inputDisposable.dispose();
+      if (inputFlushRaf) cancelAnimationFrame(inputFlushRaf);
+      flushInput(); // best-effort: send anything buffered before teardown
       terminal.dispose();
       if (terminalRef.current === terminal) terminalRef.current = null;
       wroteSnapshotRef.current = null;
@@ -275,63 +304,12 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
     void resize(terminal.rows, nativeCols);
   }, [alive, resize, nativeCols]);
 
-  // Any claude scroll/jump (wheel, clicking the "Jump to bottom" hint, or the
-  // Ctrl+End/Ctrl+Home/PageUp/PageDown keys) can leave xterm's canvas showing
-  // stale/blank bottom rows: the renderer doesn't always repaint on a
-  // programmatic / mid-scroll update, so the buffer is correct but the canvas
-  // is stale. Once the interaction settles, force a cheap canvas repaint with
-  // terminal.refresh() — NOT a resize. (An earlier version toggled the PTY one
-  // row smaller and back to force a SIGWINCH re-layout; it worked, but that
-  // resize is a full reflow on every scroll/click, which made scrolling janky.
-  // refresh() repaints the existing buffer to the canvas without reflowing.)
-  // Capture phase so it fires even though xterm consumes these events in
-  // mouse-tracking mode. Keydown is filtered to the scroll keys so ordinary
-  // typing never triggers a redraw.
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return undefined;
-    // The desync is cumulative — it only shows after a longer scroll, not a
-    // small flick. So a wheel only schedules the (costly, slightly jumpy)
-    // redraw once accumulated scroll distance crosses this threshold; the
-    // accumulator resets after each redraw. Discrete jumps (clicking "Jump to
-    // bottom", or Ctrl+End/Home/PageUp/PageDown) always redraw. Tune this px
-    // value if small scrolls still trigger it / long scrolls don't.
-    const WHEEL_REDRAW_THRESHOLD_PX = 800;
-    let settleTimer = 0;
-    let wheelAccumPx = 0;
-    const scheduleRedraw = () => {
-      window.clearTimeout(settleTimer);
-      settleTimer = window.setTimeout(() => {
-        const terminal = terminalRef.current;
-        if (!terminal || terminal.rows <= 1) return;
-        wheelAccumPx = 0;
-        // Cheap canvas repaint of the whole viewport — no resize/reflow.
-        terminal.refresh(0, terminal.rows - 1);
-      }, 100);
-    };
-    const onWheel = (event: WheelEvent) => {
-      wheelAccumPx += Math.abs(event.deltaY);
-      if (wheelAccumPx >= WHEEL_REDRAW_THRESHOLD_PX) scheduleRedraw();
-    };
-    const onScrollKey = (event: KeyboardEvent) => {
-      if (
-        event.key === "PageUp" || event.key === "PageDown"
-        || event.key === "Home" || event.key === "End"
-      ) {
-        scheduleRedraw();
-      }
-    };
-    const opts: AddEventListenerOptions = { capture: true, passive: true };
-    host.addEventListener("wheel", onWheel, opts);
-    host.addEventListener("mouseup", scheduleRedraw, opts);
-    host.addEventListener("keydown", onScrollKey, opts);
-    return () => {
-      host.removeEventListener("wheel", onWheel, opts);
-      host.removeEventListener("mouseup", scheduleRedraw, opts);
-      host.removeEventListener("keydown", onScrollKey, opts);
-      window.clearTimeout(settleTimer);
-    };
-  }, [terminalReady]);
+  // NOTE: there used to be a scroll-settle hack here that called
+  // terminal.refresh() after wheel/scroll-key bursts to repaint "stale canvas"
+  // rows left by the DOM renderer. It was a DOM-renderer band-aid (and a janky
+  // one — it repainted the whole viewport on a timer). The GPU/WebGL renderer
+  // composites scroll on the GPU and doesn't leave stale rows, so the hack is
+  // gone. Scrolling is now whatever xterm does natively — the faithful pipe.
 
   useEffect(() => {
     const text = error

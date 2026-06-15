@@ -238,11 +238,29 @@ describe("NativeTerminalView", () => {
     });
   });
 
-  it("forwards terminal input to api.ptyInput", async () => {
+  it("forwards terminal input to api.ptyInput (coalesced per animation frame)", async () => {
     render(<NativeTerminalView sessionId="sess-native" />);
     await waitFor(() => expect(terminalInstances[0]?.dataHandler).toBeTruthy());
+    // Input is buffered and flushed on requestAnimationFrame so a burst of
+    // mouse/wheel events becomes one POST, not one per event. A single keystroke
+    // therefore lands on the next frame rather than synchronously.
     terminalInstances[0].dataHandler?.("x");
-    expect(api.ptyInput).toHaveBeenCalledWith("sess-native", "x");
+    await waitFor(() => expect(api.ptyInput).toHaveBeenCalledWith("sess-native", "x"));
+  });
+
+  it("coalesces a burst of input events into a single api.ptyInput POST", async () => {
+    render(<NativeTerminalView sessionId="sess-native" />);
+    await waitFor(() => expect(terminalInstances[0]?.dataHandler).toBeTruthy());
+    vi.mocked(api.ptyInput).mockClear();
+    // Several events within the same frame (the mouse-flood-scroll case).
+    terminalInstances[0].dataHandler?.("\x1b[<64;1;1M");
+    terminalInstances[0].dataHandler?.("\x1b[<64;1;2M");
+    terminalInstances[0].dataHandler?.("\x1b[<64;1;3M");
+    await waitFor(() => expect(api.ptyInput).toHaveBeenCalledTimes(1));
+    expect(api.ptyInput).toHaveBeenCalledWith(
+      "sess-native",
+      "\x1b[<64;1;1M\x1b[<64;1;2M\x1b[<64;1;3M",
+    );
   });
 
   it("applies theme changes in place without recreating the terminal", async () => {

@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.3.1.3] - 2026-06-15
+
+### Fixed
+
+- **Native terminal scrolling is no longer choppy/laggy in claude's live TUI.**
+  The root cause was a backend hot path: on every PTY output chunk the server
+  re-decoded and re-classified the *entire* output ring (up to 4 MB) on the
+  event loop — ~290 ms per chunk on a long session — which starved PTY reads,
+  SSE delivery, and input handling during a scroll. The classifier now reads
+  only the last screenful (64 KB), making it constant-time (~4 ms) regardless of
+  session length.
+
+### Changed
+
+- **PTY output is coalesced before broadcast.** claude emits a TUI repaint as
+  many tiny (~1 KB) writes; each was becoming its own SSE event + reclassification
+  + frontend repaint (~360 events per scroll flick). Reads are now batched and
+  flushed once per ~12 ms frame as a single chunk, and `pty_native_state` is
+  emitted only when the classified state actually changes (none during a scroll).
+- **Native-view input is coalesced per animation frame** — a burst of wheel/mouse
+  events becomes one ordered PTY write instead of one HTTP POST per event.
+- Removed the `terminal.refresh()` scroll-settle workaround; it's unnecessary once
+  the event loop is no longer blocked, and the default DOM renderer repaints
+  faithfully on its own.
+
 ## [0.3.1.2] - 2026-06-15
 
 ### Fixed
