@@ -46,13 +46,20 @@ recap engine.
 ## Quickstart
 
 ```bash
-git clone https://github.com/Comradery64/Clau-Decode.git
-cd Clau-Decode
-pip install -e .           # or: uv sync
+# Install as an isolated tool — its own virtualenv, on your PATH, nothing
+# touches your system Python. Use whichever you already have:
+uv tool install git+https://github.com/Comradery64/Clau-Decode.git
+# or:
+pipx install git+https://github.com/Comradery64/Clau-Decode.git
+
 clau-decode                 # opens http://localhost:4242
+# update later:  uv tool upgrade clau-decode    (or: pipx upgrade clau-decode)
 ```
 
 Requires Python 3.10+. The wheel ships the pre-built frontend, so **no Node.js is needed** — only for development. All data stays on your machine — no telemetry.
+
+> Prefer not to install? Run it straight from a clone — see [Development](#development).
+> Advanced: `pip install` works too, but only **inside an activated virtualenv** — never your system/Homebrew Python (PEP 668 will block it, and a global install can shadow other checkouts).
 
 ## Features
 
@@ -195,14 +202,15 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for a system diagram and deeper notes.
 git clone https://github.com/Comradery64/Clau-Decode
 cd Clau-Decode
 
-# Install backend deps + build the frontend
-make dev
+# Install backend deps (into an isolated .venv) + build the frontend
+make dev                      # = uv sync && build frontend
 
-# Run the app from source
-make run
-
-# Ad-hoc Python commands launched from the checkout also resolve this src tree
-python -c 'from clau_decode.cli import main; main()' --no-open
+# Run the app from source — in the project venv, so it always runs THIS
+# checkout (no global install, no shadowing):
+uv run clau-decode --no-open
+# equivalently, as a module from the checkout root:
+uv run python -m clau_decode --no-open
+# (make run wraps this)
 
 # Run tests
 make test
