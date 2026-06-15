@@ -6,12 +6,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.3.1.2] - 2026-06-15
+
 ### Fixed
 
 - **Open session no longer looks empty/stale after the server restarts.** When
   the SSE event stream reconnects after a drop, the frontend now re-syncs —
   refetching the session list and the open conversation — instead of showing
   the view it had cached while disconnected.
+- **Native terminal's first row is no longer clipped** by the conversation
+  header's gradient fade — a small top inset on the terminal keeps claude's
+  first prompt box fully visible.
 
 ### Changed
 
@@ -19,6 +24,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   pass re-indexes any session files whose mtime moved while the live watcher was
   down or whose change events the OS dropped, across all profile data paths — so
   the Decoded view converges without requiring a restart.
+- Refreshed the in-app app icon (Settings ▸ About).
 
 ## [0.3.1.1] - 2026-06-14
 
@@ -156,6 +162,7 @@ Initial public release.
 
 - License changed from MIT to [FSL-1.1-Apache-2.0](LICENSE). All prior unreleased history was developed under MIT; the 0.1.0 release and everything after it ship under FSL-1.1-Apache-2.0, which converts to Apache 2.0 two years after each release.
 
+[0.3.1.2]: https://github.com/Comradery64/Clau-Decode/compare/v0.3.1.1...v0.3.1.2
 [0.3.1.1]: https://github.com/Comradery64/Clau-Decode/compare/v0.3.1...v0.3.1.1
 [0.3.1]: https://github.com/Comradery64/Clau-Decode/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Comradery64/Clau-Decode/compare/v0.2.0...v0.3.0
