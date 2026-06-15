@@ -31,54 +31,19 @@ export function applyNativeTerminalTheme(terminal: NativeTerminal, theme: ITheme
   terminal.options.theme = theme;
 }
 
-const terminalTextDecoder = new TextDecoder();
-const terminalTextEncoder = new TextEncoder();
-
-// Claude's TUI periodically repaints the whole screen (form-feed, alt-screen
-// enter, full-screen erase, or home+erase). Everything before the LAST such
-// boundary in a buffer is about to be overwritten, so replaying it just churns
-// scrollback. Find that boundary so the caller can clear() + write only the
-// live remainder. (Carried over from the original xterm renderer — xterm's VT
-// engine renders the rest correctly on its own.)
-function lastRedrawBoundary(text: string): number {
-  const patterns = [
-    /\x0c/g, // form feed
-    /\x1b\[\?1049h/g, // enter alternate screen
-    /\x1b\[(?:2|3)J/g, // erase entire screen / scrollback
-    /\x1b\[(?:H|1;1H)(?=\x1b\[[0-9;?]*[JK])/g, // cursor home immediately followed by erase
-  ];
-  let boundary = -1;
-  for (const pattern of patterns) {
-    pattern.lastIndex = 0;
-    let match = pattern.exec(text);
-    while (match) {
-      boundary = Math.max(boundary, match.index);
-      match = pattern.exec(text);
-    }
-  }
-  return boundary;
-}
-
-export interface PreparedTerminalWrite {
-  data: Uint8Array;
-  clearsRedrawHistory: boolean;
-}
-
-export function prepareTerminalWrite(data: Uint8Array): PreparedTerminalWrite {
-  const text = terminalTextDecoder.decode(data);
-  const boundary = lastRedrawBoundary(text);
-  if (boundary < 0) return { data, clearsRedrawHistory: false };
-  if (boundary === 0) return { data, clearsRedrawHistory: true };
-  return {
-    data: terminalTextEncoder.encode(text.slice(boundary)),
-    clearsRedrawHistory: true,
-  };
-}
-
-// Write bytes to the terminal, collapsing claude's full-screen repaints so
-// scrollback holds real history rather than every redraw frame.
+// Write PTY bytes straight through to xterm's VT engine. A real terminal does
+// nothing to the byte stream, and xterm is a faithful VT emulator, so claude's
+// output renders — and accumulates scrollback — exactly as it does in iTerm /
+// Terminal.app.
+//
+// We used to scan each write for a "redraw boundary" (cursor-home+erase,
+// full-screen erase, alt-screen, form-feed) and call terminal.clear() when one
+// was found. That was the scroll bug: claude routinely repaints its bottom
+// chrome (status line / input box) with cursor-home + per-line erase AFTER its
+// history has scrolled into xterm's scrollback. Each repaint tripped the
+// boundary and clear() wiped ALL accumulated scrollback — so the native view
+// had nothing above the fold. Proven: a home+erase repaint after 225 scrolled
+// lines keeps 225 with raw write() but collapses to 0 with the clear() path.
 export function writeNativeTerminalBytes(terminal: NativeTerminal, bytes: Uint8Array): void {
-  const prepared = prepareTerminalWrite(bytes);
-  if (prepared.clearsRedrawHistory) terminal.clear();
-  terminal.write(prepared.data);
+  terminal.write(bytes);
 }

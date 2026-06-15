@@ -211,6 +211,16 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
 
   useEffect(() => {
     if (!snapshot || !snapshotBytes || !terminalRef.current) return;
+    // Only replay a snapshot that belongs to the CURRENTLY selected session.
+    // On a session switch the new terminal is recreated synchronously, but
+    // `snapshot` state lags one commit behind the `sessionId` prop (it resets
+    // via an effect). Without this guard the previous session's snapshot gets
+    // written into the new terminal — its scrollback bleeds in until the
+    // correct snapshot arrives. That window is invisible when switching to an
+    // already-live PTY (its snapshot resolves immediately) but very visible on
+    // the FIRST switch to a cold-spawning PTY, whose snapshot is delayed by the
+    // spawn — "the other session is already there," gone on subsequent flips.
+    if (snapshot.session_id !== sessionId) return;
     if (wroteSnapshotRef.current === snapshot.session_id) return;
     wroteSnapshotRef.current = snapshot.session_id;
     const terminal = terminalRef.current;
@@ -241,15 +251,21 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
       terminal.write(chunk, writeNextChunk);
     };
     writeNextChunk();
-  }, [snapshot, snapshotBytes, terminalReady]);
+  }, [snapshot, snapshotBytes, terminalReady, sessionId]);
 
   // The PTY is spawned at the backend's default size, then resized to the
-  // fitted row count. claude does not always repaint the newly-revealed rows
-  // cleanly after that SIGWINCH (stale bottom rows until a manual Ctrl+L, and
-  // scroll/mouse-tracking can fail to engage). Once the PTY is alive, re-assert
-  // the fitted size and send Ctrl+L (\f) so claude does one clean full repaint
-  // at the correct dimensions. Fires once per mount (terminal is keyed per
-  // session, so a session switch gives a fresh ref).
+  // fitted row count. Once the PTY is alive, re-assert the fitted size so the
+  // backend SIGWINCH lands at the dimensions xterm is actually showing (guards
+  // against a resize that raced the spawn). Fires once per mount (terminal is
+  // keyed per session, so a session switch gives a fresh ref).
+  //
+  // We deliberately do NOT send Ctrl+L (\f) here anymore. That was a leftover
+  // from the canvas/WebGL-renderer era to repaint "stale bottom rows after
+  // SIGWINCH" — a stale-*canvas* artifact. On the default DOM renderer (which
+  // is what we use) the rows repaint correctly on their own, so the \f was pure
+  // downside: claude responds to Ctrl+L by clearing and redrawing its footer
+  // near the TOP of a fresh screen, leaving the rest of the tall pane blank
+  // below it — the "too much room at the bottom of the native PTY" gap.
   const repaintedRef = useRef(false);
   useEffect(() => {
     if (alive !== true || repaintedRef.current) return;
@@ -257,11 +273,7 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
     if (!terminal) return;
     repaintedRef.current = true;
     void resize(terminal.rows, nativeCols);
-    const t = window.setTimeout(() => {
-      void writeInput("\f");
-    }, 150);
-    return () => window.clearTimeout(t);
-  }, [alive, resize, writeInput, nativeCols]);
+  }, [alive, resize, nativeCols]);
 
   // Any claude scroll/jump (wheel, clicking the "Jump to bottom" hint, or the
   // Ctrl+End/Ctrl+Home/PageUp/PageDown keys) can leave xterm's canvas showing

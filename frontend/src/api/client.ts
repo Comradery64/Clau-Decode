@@ -281,10 +281,13 @@ export const api = {
     ),
 
   // PTY runner endpoints (pty-runner-plan.md)
-  ptyFocus: (sessionId: string, model?: string) =>
+  ptyFocus: (sessionId: string, model?: string, rows?: number) =>
     post<{ ok: boolean }>("/api/pty/focus", {
       session_id: sessionId,
       ...(model ? { model } : {}),
+      // Native view passes the fitted row count so the PTY spawns at its final
+      // height (no spawn-at-40-then-resize that smears/strands the footer).
+      ...(rows ? { rows } : {}),
     }),
   ptyBlur: (sessionId: string) =>
     post<{ ok: boolean }>("/api/pty/blur", { session_id: sessionId }),

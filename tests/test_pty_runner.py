@@ -1460,6 +1460,37 @@ async def test_native_snapshot_reports_incomplete_ring_after_output_overflow(
         await m.shutdown()
 
 
+async def test_focus_spawns_at_requested_rows(tui_shim_path, tmp_path, monkeypatch):
+    """focus(rows=N) spawns the PTY at N rows, not the default.
+
+    The Native view fits the terminal to the pane BEFORE spawning and passes
+    the fitted rows, so claude renders at its final height from the first frame
+    — no spawn-at-DEFAULT_ROWS-then-resize grow that smears the revealed rows
+    and strands claude's footer mid-pane.
+    """
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude_config"))
+    bus = EventBroadcaster()
+    m = PtyManager(_StubDB(), bus, idle_timeout_s=30, idle_warn_s=20)
+
+    try:
+        await m.focus(
+            "sess-spawn-rows",
+            cwd=str(tmp_path),
+            bin_name="claude",
+            model="",
+            permission_mode="default",
+            new_chat=True,
+            rows=72,
+        )
+        channel = m._channels["sess-spawn-rows"].channel
+        rows, _cols = channel.dimensions()
+        assert rows == 72
+        # And the cached focus params remember it (auto-respawn fidelity).
+        assert m._last_focus["sess-spawn-rows"].rows == 72
+    finally:
+        await m.shutdown()
+
+
 async def test_resize_updates_channel_dimensions(tui_shim_path, tmp_path, monkeypatch):
     """Native resize updates the live PTY dimensions."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude_config"))
@@ -1484,6 +1515,45 @@ async def test_resize_updates_channel_dimensions(tui_shim_path, tmp_path, monkey
         rows, cols = channel.dimensions()
         assert (rows, cols) == (24, 80)
         assert b"stale wide-frame output" not in channel.output_snapshot()
+        assert channel.output_snapshot_complete() is True
+    finally:
+        await m.shutdown()
+
+
+async def test_resize_rows_only_preserves_ring(tui_shim_path, tmp_path, monkeypatch):
+    """A height-only resize must NOT wipe scrollback.
+
+    The FE's post-spawn resize always bumps the row count (spawn rows → the
+    fitted viewport height) while keeping the pinned column width. xterm
+    reflows scrollback losslessly on a height change, so the captured ring
+    must survive it — clearing here discarded the oldest history (the top of
+    the conversation) ~1s into claude's render, which is the "scroll up but
+    never reach the top" bug on re-attach. Only a width change garbles replay.
+    """
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude_config"))
+    bus = EventBroadcaster()
+    m = PtyManager(_StubDB(), bus, idle_timeout_s=30, idle_warn_s=20)
+
+    try:
+        await m.focus(
+            "sess-native-resize-rows",
+            cwd=str(tmp_path),
+            bin_name="claude",
+            model="",
+            permission_mode="default",
+            new_chat=True,
+        )
+
+        channel = m._channels["sess-native-resize-rows"].channel
+        _, cols = channel.dimensions()
+        channel._state.ring.extend(b"captured history output")
+
+        # Same width, different height — must preserve the ring.
+        await m.resize("sess-native-resize-rows", 99, cols)
+
+        rows, new_cols = channel.dimensions()
+        assert (rows, new_cols) == (99, cols)
+        assert b"captured history output" in channel.output_snapshot()
         assert channel.output_snapshot_complete() is True
     finally:
         await m.shutdown()
