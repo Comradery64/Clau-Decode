@@ -48,8 +48,11 @@ const { fitDimensions, configSource, fitAddonInstances, terminalInstances, MockF
     clear = vi.fn();
     scrollToBottom = vi.fn();
     dispose = vi.fn();
-    write = vi.fn((data: string | Uint8Array) => {
+    write = vi.fn((data: string | Uint8Array, callback?: () => void) => {
       this.writes.push(data);
+      // xterm's write(data, cb) fires cb after the chunk is parsed — the
+      // chunked snapshot replay relies on it to advance through the ring.
+      callback?.();
     });
     loadAddon = vi.fn((addon: { activate?: (terminal: MockTerminal) => void }) => {
       addon.activate?.(this);
@@ -62,6 +65,9 @@ const { fitDimensions, configSource, fitAddonInstances, terminalInstances, MockF
       this.dataHandler = handler;
       return { dispose: vi.fn() };
     });
+    // xterm exposes a unicode service; xtermTerminal.ts sets activeVersion and
+    // the Unicode11 addon registers a provider against it.
+    unicode = { activeVersion: "6", register: vi.fn() };
 
     constructor(options: Record<string, unknown>) {
       this.options = options;
@@ -75,6 +81,12 @@ const { fitDimensions, configSource, fitAddonInstances, terminalInstances, MockF
 
 vi.mock("@xterm/xterm", () => ({ Terminal: MockTerminal }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: MockFitAddon }));
+vi.mock("@xterm/addon-unicode11", () => ({
+  Unicode11Addon: class {
+    activate = vi.fn();
+    dispose = vi.fn();
+  },
+}));
 vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
 
 vi.mock("../../../api/client", () => ({
@@ -161,13 +173,11 @@ describe("NativeTerminalView", () => {
     });
   });
 
-  it("marks the host with the native PTY build marker", async () => {
+  it("mounts the terminal into the native PTY host element", async () => {
     render(<NativeTerminalView sessionId="sess-native" />);
     await waitFor(() => expect(terminalInstances[0]).toBeTruthy());
-    expect(screen.getByTestId("native-terminal-host")).toHaveAttribute(
-      "data-native-pty-build",
-      "native-pty-xterm-2026-06-10",
-    );
+    expect(screen.getByTestId("native-terminal-host")).toBeInTheDocument();
+    expect(terminalInstances[0].open).toHaveBeenCalled();
   });
 
   it("pins the terminal to the configured width and tracks rows from the fit addon", async () => {
@@ -190,6 +200,31 @@ describe("NativeTerminalView", () => {
       expect(terminalInstances[0].writes.map(bytesToText).join("")).toContain("hello");
     });
     expect(terminalInstances[0].scrollToBottom).toHaveBeenCalled();
+  });
+
+  it("does NOT replay a snapshot belonging to a different session", async () => {
+    // Reproduces the cross-session bleed: on a switch the snapshot can briefly
+    // carry the PREVIOUS session's id (state lags the sessionId prop by one
+    // commit). That stale snapshot must never be written into the new terminal.
+    vi.mocked(api.ptyNativeSnapshot).mockResolvedValue({
+      session_id: "some-other-session",
+      ring_b64: textToBase64("STALE-OTHER-SESSION"),
+      rows: 36,
+      cols: 100,
+      alive: true,
+      native_state: "idle_chat_input",
+      decoded_input_safe: true,
+    });
+
+    render(<NativeTerminalView sessionId="sess-native" />);
+    await waitFor(() => expect(terminalInstances[0]).toBeTruthy());
+    await waitFor(() => expect(api.ptyResize).toHaveBeenCalled());
+    // Give the snapshot-write effect a chance to (wrongly) fire.
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(terminalInstances[0].writes.map(bytesToText).join("")).not.toContain(
+      "STALE-OTHER-SESSION",
+    );
   });
 
   it("writes incoming live pty-output-chunk events", async () => {

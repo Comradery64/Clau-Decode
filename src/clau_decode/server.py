@@ -52,6 +52,7 @@ from pydantic import BaseModel, Field
 from .analytics.cost import CostEngine
 from .recap_runner import generate_recap as _generate_recap
 from .pty_runner import (
+    DEFAULT_ROWS,
     PtyManager,
     PtyOwnershipConflict,
     PtySubmitInFlight,
@@ -360,6 +361,11 @@ class _PtyFocusRequest(BaseModel):
     model: str | None = None
     permission_mode: str | None = None
     new_chat: bool = False
+    # Native view fits the terminal to the pane before spawning and sends the
+    # fitted row count here, so the PTY spawns at its final height (no
+    # spawn-then-grow that smears the revealed rows / strands the footer).
+    # Omitted by non-native callers → PtyManager.focus() uses its default.
+    rows: int | None = Field(default=None, gt=0, le=200)
 
 
 class _PtyBlurRequest(BaseModel):
@@ -2100,6 +2106,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 model=req.model or "",
                 permission_mode=permission_mode,
                 new_chat=new_chat,
+                rows=req.rows if req.rows is not None else DEFAULT_ROWS,
                 jsonl_path=jsonl_path,
             )
         except PtyOwnershipConflict as exc:

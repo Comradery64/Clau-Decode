@@ -86,7 +86,11 @@ export function useNativePty(
         setStarting(true);
         setError(null);
         try {
-          await api.ptyFocus(sessionId);
+          // Spawn at the already-fitted size so claude renders at its final
+          // height from the first frame — no spawn-at-default-then-resize grow
+          // that leaves stale content in the revealed rows (smear) and strands
+          // claude's footer mid-pane (the bottom gap).
+          await api.ptyFocus(sessionId, undefined, initialSize.rows);
           await hydrateStarted();
         } catch (focusErr: unknown) {
           if (!cancelled) {

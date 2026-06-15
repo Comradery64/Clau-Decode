@@ -63,21 +63,28 @@ _log = logging.getLogger(__name__)
 
 DEFAULT_IDLE_TIMEOUT_S = 300.0
 DEFAULT_IDLE_WARN_S = 240.0
-# When the FE signals nav-away via ``/api/pty/blur``, shorten the idle
-# kill to this window. Long enough that a brief return to the same
-# focused session re-uses the warm PTY; short enough that tab/session
-# switching doesn't leave orphan PTYs parked for 5 minutes.
-BLURRED_IDLE_TIMEOUT_S = 5.0
+# When the FE signals nav-away via ``/api/pty/blur``, the idle-kill window.
+# Previously 5s, which meant switching between sessions killed the one you
+# navigated away from almost immediately — so you could never keep more than
+# one native session alive at a time, and re-attaching to a switched-away
+# session lost its captured scrollback ring (you'd resume into a fresh,
+# shorter render). Keep blurred sessions alive as long as focused ones so
+# multiple PTYs coexist and their scrollback survives a session switch.
+BLURRED_IDLE_TIMEOUT_S = DEFAULT_IDLE_TIMEOUT_S
 DEFAULT_ROWS = 40
 # Fallback spawn width. The authoritative width is AppConfig.native_pty_cols,
 # pushed onto PtyManager via set_native_cols(); this constant only applies if
 # that was never set. Keep it equal to the AppConfig default.
 DEFAULT_COLS = 100
 
-# Bounded ring buffer for PTY output, used by later phases for HITL pattern
-# matching (auth, trust, stuck-session). Sized to comfortably cover a few
-# terminal screens of escape-laden output without unbounded memory growth.
-OUTPUT_RING_BYTES = 64 * 1024
+# Bounded ring buffer for PTY output. Two consumers:
+#   1. HITL pattern matching (auth, trust, stuck-session) — only needs recent bytes.
+#   2. Native View hydration on (re)attach — replays this ring into xterm so the
+#      browser terminal shows the session's scrollback. This is the binding
+#      constraint: the frontend keeps 5000 scrollback rows, so the ring must hold
+#      a comparable amount of escape-laden output, or a re-attach can only scroll
+#      back through the last ~64KB (≈20% of a long session). Sized to ~5000 rows.
+OUTPUT_RING_BYTES = 4 * 1024 * 1024
 
 # Bytes to read per drain callback invocation. Small enough that one slow
 # subscriber doesn't pin the event loop; large enough to make typical TUI
@@ -994,10 +1001,20 @@ class PtyChannel:
         """
         if rows <= 0 or cols <= 0:
             raise ValueError(f"invalid window size rows={rows} cols={cols}")
-        dimensions_changed = (self._rows, self._cols) != (rows, cols)
+        # Only a COLUMN change can garble a later ring replay: the captured
+        # bytes were wrapped at the old width and xterm would re-wrap them
+        # wrong. A ROW change is lossless — xterm reflows scrollback on
+        # height changes — so the ring must survive it. Clearing on every
+        # dimension change was wiping history precisely when it mattered:
+        # the FE's post-spawn resize always bumps the row count (spawn is
+        # DEFAULT_ROWS → the fitted viewport height) ~1s into claude's
+        # multi-second history render, so the clear discarded the oldest
+        # history (the top of the conversation) from the ring — the
+        # "scroll up but never reach the top" bug on re-attach.
+        cols_changed = self._cols != cols
         self._rows = rows
         self._cols = cols
-        if dimensions_changed:
+        if cols_changed:
             self._state.ring.clear()
             self._state.ring_complete = True
         if self._state.master_fd < 0:
@@ -1181,6 +1198,13 @@ class _FocusParams:
     model: str
     permission_mode: str
     new_chat: bool
+    # Initial PTY row count. The Native view fits the terminal to the pane
+    # BEFORE spawning and passes the fitted rows here, so claude renders at the
+    # final height from the first frame — no spawn-at-40-then-resize-to-N grow,
+    # which left stale content in the revealed rows (smear) and stranded
+    # claude's footer mid-screen (the bottom gap). Cols stay native_pty_cols
+    # (already the spawn width). Defaults to DEFAULT_ROWS for non-native callers.
+    rows: int = DEFAULT_ROWS
     # Absolute JSONL path for ownership conflict detection. ``None`` for
     # brand-new sessions whose JSONL doesn't exist yet (no one to
     # conflict with) and for any caller that hasn't plumbed the path
@@ -1327,6 +1351,7 @@ class PtyManager:
         model: str,
         permission_mode: str,
         new_chat: bool,
+        rows: int = DEFAULT_ROWS,
         jsonl_path: Optional[Path] = None,
     ) -> None:
         """Ensure a live PTY channel exists for ``session_id``.
@@ -1391,6 +1416,7 @@ class PtyManager:
                     model=model,
                     permission_mode=permission_mode,
                     new_chat=new_chat,
+                    rows=rows,
                     jsonl_path=jsonl_path,
                 )
                 self._last_focus[session_id] = params
@@ -1513,6 +1539,7 @@ class PtyManager:
                         model=params.model,
                         permission_mode=params.permission_mode,
                         new_chat=False,
+                        rows=params.rows,
                         jsonl_path=params.jsonl_path,
                     )
                     # Phase 0 — same ownership check focus() runs. Submit
@@ -2044,13 +2071,13 @@ class PtyManager:
             permission_mode=params.permission_mode,
             new_chat=params.new_chat,
         )
-        env = await _pty_env(DEFAULT_ROWS, self._native_cols, params.bin_name)
+        env = await _pty_env(params.rows, self._native_cols, params.bin_name)
         channel = PtyChannel(
             session_id=session_id,
             argv=argv,
             cwd=params.cwd,
             env=env,
-            rows=DEFAULT_ROWS,
+            rows=params.rows,
             cols=self._native_cols,
             on_chunk=self._scan_chunk_for_hitl,
             on_dead=self._publish_native_dead_state,
