@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import type { AppConfig } from "../../api/types";
+import { useState, useEffect, type ReactNode } from "react";
+import type { AppConfig, HostInfo } from "../../api/types";
 import { api, getCachedConfig, getConfigCached } from "../../api/client";
 import { useAppStore } from "../../store";
 import { PathEditor } from "./PathEditor";
@@ -18,7 +18,7 @@ const NATIVE_PTY_MIN_COLS = 20;
 const NATIVE_PTY_MAX_COLS = 400;
 const NATIVE_PTY_COLS_STEP = 10;
 
-type CategoryId = "general" | "appearance" | "chat" | "terminal" | "server";
+type CategoryId = "general" | "appearance" | "chat" | "terminal" | "server" | "about";
 
 const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: "general", label: "General" },
@@ -26,7 +26,14 @@ const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: "chat", label: "Chat" },
   { id: "terminal", label: "Terminal" },
   { id: "server", label: "Server" },
+  { id: "about", label: "About" },
 ];
+
+const PLATFORM_LABELS: Record<string, string> = {
+  darwin: "macOS",
+  linux: "Linux",
+  win32: "Windows",
+};
 
 export default function SettingsModal() {
   const closeSettings = useAppStore((s) => s.closeSettings);
@@ -38,6 +45,10 @@ export default function SettingsModal() {
   const [config, setConfig] = useState<AppConfig | null>(getCachedConfig);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [category, setCategory] = useState<CategoryId>("general");
+  // Version + platform for the About panel. Fetched lazily when About opens.
+  // The version is the backend's single source of truth (clau_decode.__version__)
+  // surfaced via /api/host-info — there is no version string in the frontend.
+  const [hostInfo, setHostInfo] = useState<HostInfo | null>(null);
 
   useEffect(() => {
     if (config) return;
@@ -47,6 +58,11 @@ export default function SettingsModal() {
         setLoadError(err instanceof Error ? err.message : "Failed to load config");
       });
   }, [config]);
+
+  useEffect(() => {
+    if (category !== "about" || hostInfo) return;
+    api.getHostInfo().then(setHostInfo).catch(() => {});
+  }, [category, hostInfo]);
 
   function save(updated: AppConfig) {
     setConfig(updated);
@@ -371,10 +387,96 @@ export default function SettingsModal() {
                     </div>
                   </div>
                 )}
+
+                {category === "about" && <AboutPanel hostInfo={hostInfo} />}
               </div>
             )}
           </ScrollContainer>
         </div>
+      </div>
+    </div>
+  );
+}
+
+const ABOUT_REPO = "https://github.com/Comradery64/Clau-Decode";
+
+function AboutLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      style={{ color: "var(--text-secondary)", textDecoration: "none", transition: "color var(--transition-fast)" }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--text-accent)"; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--text-secondary)"; }}
+    >
+      {children}
+    </a>
+  );
+}
+
+// Apple "About This Mac"–style panel: centered app mark, name, version, a short
+// description, and links. The version comes straight from /api/host-info (the
+// backend's single source of truth), so nothing here ever needs hand-editing.
+function AboutPanel({ hostInfo }: { hostInfo: HostInfo | null }) {
+  const platform = hostInfo ? (PLATFORM_LABELS[hostInfo.platform] ?? hostInfo.platform) : null;
+  const dot = <span style={{ color: "var(--border-default)" }}>·</span>;
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        textAlign: "center",
+        padding: "20px 16px 8px",
+      }}
+    >
+      {/* App mark — the rounded-square icon already carries its own corners
+          and soft shadow, so it's rendered as-is (served from public/). */}
+      <img
+        src="/app-icon.png"
+        alt="Clau-Decode"
+        width={72}
+        height={72}
+        style={{ display: "block", marginBottom: "14px" }}
+      />
+
+      <div style={{ fontSize: "26px", fontWeight: 600, letterSpacing: "-0.02em", color: "var(--text-primary)", lineHeight: 1.1 }}>
+        Clau-Decode
+      </div>
+
+      <div style={{ fontSize: "13px", color: "var(--text-secondary)", marginTop: "8px" }}>
+        Version {hostInfo?.version ?? "…"}
+      </div>
+      {platform && (
+        <div style={{ fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>
+          {platform}
+        </div>
+      )}
+
+      <p
+        style={{
+          fontSize: "12.5px",
+          color: "var(--text-tertiary)",
+          lineHeight: 1.55,
+          maxWidth: "340px",
+          margin: "18px 0 0",
+        }}
+      >
+        Browse, search, and analyze your AI coding assistant chat history —
+        entirely local, entirely private.
+      </p>
+
+      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "16px", fontSize: "12px" }}>
+        <AboutLink href={ABOUT_REPO}>GitHub</AboutLink>
+        {dot}
+        <AboutLink href={`${ABOUT_REPO}/blob/main/CHANGELOG.md`}>Changelog</AboutLink>
+        {dot}
+        <AboutLink href={`${ABOUT_REPO}/blob/main/LICENSE`}>License</AboutLink>
+      </div>
+
+      <div style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "20px", letterSpacing: "0.01em" }}>
+        FSL-1.1-Apache-2.0
       </div>
     </div>
   );

@@ -25,6 +25,12 @@ const baseConfig: AppConfig = {
 vi.mock("../../../api/client", () => ({
   api: {
     updateConfig: vi.fn().mockResolvedValue(undefined),
+    getHostInfo: vi.fn().mockResolvedValue({
+      is_remote_client: false,
+      platform: "darwin",
+      client_host: "127.0.0.1",
+      version: "9.9.9",
+    }),
   },
   getCachedConfig: vi.fn(() => baseConfig),
   getConfigCached: vi.fn(),
@@ -71,5 +77,18 @@ describe("SettingsModal", () => {
       ...baseConfig,
       native_pty_cols: 110,
     });
+  });
+
+  it("shows the version from the backend in the About panel", async () => {
+    render(<SettingsModal />);
+
+    fireEvent.click(screen.getByRole("button", { name: "About" }));
+
+    // Version is fetched from /api/host-info (the backend's single source) —
+    // there is no version string hard-coded in the frontend.
+    expect(await screen.findByText("Version 9.9.9")).toBeInTheDocument();
+    expect(screen.getByText("Clau-Decode")).toBeInTheDocument();
+    expect(screen.getByText("macOS")).toBeInTheDocument();
+    expect(api.getHostInfo).toHaveBeenCalled();
   });
 });

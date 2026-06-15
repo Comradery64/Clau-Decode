@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- **Settings ▸ About** — an Apple-style About panel (app mark, name, version,
+  platform, and GitHub/Changelog/License links). The version is fetched from
+  the backend, so the frontend holds no version string of its own.
+
+### Changed
+
+- **Version is single-sourced** from `src/clau_decode/__init__.py` (`__version__`).
+  hatch packaging, `clau-decode --version`, the HTTP API (`/api/host-info`), and
+  the About panel all derive from that one string — edit it in exactly one place
+  per release. Also fixes `clau-decode --version`, which previously reported a
+  stale `0.1.0`.
+
 ## [0.3.1] - 2026-06-14
 
 ### Added
