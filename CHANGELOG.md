@@ -6,9 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.3.1.1] - 2026-06-14
+
 ### Added
 
-- **Settings ▸ About** — an Apple-style About panel (app mark, name, version,
+- **Settings ▸ About** — an Apple-style About panel (app icon, name, version,
   platform, and GitHub/Changelog/License links). The version is fetched from
   the backend, so the frontend holds no version string of its own.
 
@@ -140,6 +142,7 @@ Initial public release.
 
 - License changed from MIT to [FSL-1.1-Apache-2.0](LICENSE). All prior unreleased history was developed under MIT; the 0.1.0 release and everything after it ship under FSL-1.1-Apache-2.0, which converts to Apache 2.0 two years after each release.
 
+[0.3.1.1]: https://github.com/Comradery64/Clau-Decode/compare/v0.3.1...v0.3.1.1
 [0.3.1]: https://github.com/Comradery64/Clau-Decode/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Comradery64/Clau-Decode/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Comradery64/Clau-Decode/compare/v0.1.0...v0.2.0
