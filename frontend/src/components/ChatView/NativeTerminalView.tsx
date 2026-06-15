@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getCachedConfig, getConfigCached } from "../../api/client";
-import type { NativePtyFontFamily } from "../../api/types";
+import type { Message, NativePtyFontFamily } from "../../api/types";
 import { nativePtyFontStack, DEFAULT_NATIVE_PTY_FONT } from "../../constants/nativePtyFonts";
 import { on } from "../../utils/events";
 import { useNativePty } from "./hooks/useNativePty";
+import { renderTranscriptForTerminal } from "./nativeTerminal/seedTranscript";
 import {
   applyNativeTerminalTheme,
   createNativeFitAddon,
   createNativeTerminal,
   createNativeUnicodeAddon,
+  stripScrollbackErase,
   type ITheme,
   type NativeTerminal,
   writeNativeTerminalBytes,
@@ -22,6 +24,10 @@ export interface NativePtyNotice {
 interface NativeTerminalViewProps {
   sessionId: string;
   onNotice?: (notice: NativePtyNotice) => void;
+  // Prior conversation transcript, used to seed xterm scrollback so a re-attach
+  // is scrollable (claude --resume only paints one screen). `undefined` = still
+  // loading; `[]` = loaded but empty.
+  seedMessages?: Message[];
 }
 
 // Fallback width until config loads. Authoritative width is
@@ -69,7 +75,7 @@ function readDecodedTerminalTheme(): ITheme {
   };
 }
 
-export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewProps) {
+export function NativeTerminalView({ sessionId, onNotice, seedMessages }: NativeTerminalViewProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<NativeTerminal | null>(null);
   const initialSizeRef = useRef<{ rows: number; cols: number } | null>(null);
@@ -77,6 +83,10 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
   const lastNoticeRef = useRef<string | null>(null);
   const [initialSize, setInitialSize] = useState<{ rows: number; cols: number } | null>(null);
   const [terminalReady, setTerminalReady] = useState(0);
+  // False until the prior transcript has been seeded into scrollback (or we've
+  // decided there's nothing to seed). The snapshot replay waits on this so the
+  // seeded history lands ABOVE the live ring.
+  const [seedResolved, setSeedResolved] = useState(false);
   const [nativeFont, setNativeFont] = useState<NativePtyFontFamily>(
     getCachedConfig()?.native_pty_font_family ?? DEFAULT_NATIVE_PTY_FONT,
   );
@@ -102,6 +112,7 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
     initialSizeRef.current = null;
     setInitialSize(null);
     wroteSnapshotRef.current = null;
+    setSeedResolved(false);
   }, [sessionId]);
 
   useEffect(() => {
@@ -209,7 +220,27 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
     terminal.options.fontFamily = nativePtyFontStack(nativeFont);
   }, [nativeFont, terminalReady]);
 
+  // Seed the prior transcript into scrollback BEFORE the live ring, so a
+  // re-attach (where claude --resume only paints one screen) is still scrollable.
+  // `seedMessages === undefined` means the transcript is still loading; wait for
+  // it, but fall back after a short delay so the terminal never blocks on it.
   useEffect(() => {
+    if (!terminalReady || seedResolved) return;
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    if (seedMessages !== undefined) {
+      if (seedMessages.length > 0) {
+        terminal.write(renderTranscriptForTerminal(seedMessages, terminal.cols));
+      }
+      setSeedResolved(true);
+      return;
+    }
+    const fallback = window.setTimeout(() => setSeedResolved(true), 1500);
+    return () => window.clearTimeout(fallback);
+  }, [terminalReady, seedMessages, seedResolved]);
+
+  useEffect(() => {
+    if (!seedResolved) return; // seed first — the transcript must sit above the ring
     if (!snapshot || !snapshotBytes || !terminalRef.current) return;
     if (wroteSnapshotRef.current === snapshot.session_id) return;
     wroteSnapshotRef.current = snapshot.session_id;
@@ -228,7 +259,7 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
     // for 800ms+. We write in 16KB chunks using xterm's built-in write callback,
     // which fires after each chunk is parsed+rendered, yielding frames between
     // chunks so the browser stays responsive throughout the replay.
-    const data = snapshotBytes;
+    const data = stripScrollbackErase(snapshotBytes);
     const CHUNK_SIZE = 16384; // 16 KB per frame
     let offset = 0;
     const writeNextChunk = () => {
@@ -241,7 +272,7 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
       terminal.write(chunk, writeNextChunk);
     };
     writeNextChunk();
-  }, [snapshot, snapshotBytes, terminalReady]);
+  }, [snapshot, snapshotBytes, terminalReady, seedResolved]);
 
   // The PTY is spawned at the backend's default size, then resized to the
   // fitted row count. claude does not always repaint the newly-revealed rows

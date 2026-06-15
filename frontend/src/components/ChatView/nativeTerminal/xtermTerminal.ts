@@ -75,10 +75,20 @@ export function prepareTerminalWrite(data: Uint8Array): PreparedTerminalWrite {
   };
 }
 
-// Write bytes to the terminal, collapsing claude's full-screen repaints so
-// scrollback holds real history rather than every redraw frame.
+// Strip \x1b[3J (erase scrollback) so a resume/clear can't wipe xterm's
+// scrollback — including the seeded transcript. \x1b[2J (erase the visible
+// screen) is left intact; in xterm it doesn't touch scrollback.
+export function stripScrollbackErase(bytes: Uint8Array): Uint8Array {
+  const text = terminalTextDecoder.decode(bytes);
+  if (!text.includes("\x1b[3J")) return bytes;
+  return terminalTextEncoder.encode(text.replace(/\x1b\[3J/g, ""));
+}
+
+// Write claude's bytes straight through — do NOT clear() on repaints. Clearing
+// wiped xterm's scrollback on every full-screen repaint, so history never
+// survived (you couldn't scroll back, and any seeded transcript was erased).
+// claude repaints the viewport in place (home + per-line erase), which leaves
+// the scrolled-off history intact in scrollback on its own.
 export function writeNativeTerminalBytes(terminal: NativeTerminal, bytes: Uint8Array): void {
-  const prepared = prepareTerminalWrite(bytes);
-  if (prepared.clearsRedrawHistory) terminal.clear();
-  terminal.write(prepared.data);
+  terminal.write(stripScrollbackErase(bytes));
 }

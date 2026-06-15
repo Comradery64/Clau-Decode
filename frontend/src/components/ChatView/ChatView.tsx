@@ -583,6 +583,7 @@ export default function ChatView() {
               key={selectedSessionId}
               sessionId={selectedSessionId}
               onNotice={handleNativeNotice}
+              seedMessages={session?.id === selectedSessionId ? session.messages : undefined}
             />
           </div>
         )}
