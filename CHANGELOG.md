@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Open session no longer looks empty/stale after the server restarts.** When
+  the SSE event stream reconnects after a drop, the frontend now re-syncs —
+  refetching the session list and the open conversation — instead of showing
+  the view it had cached while disconnected.
+
+### Changed
+
+- **The index self-heals via a periodic rescan.** A lightweight 60s safety-net
+  pass re-indexes any session files whose mtime moved while the live watcher was
+  down or whose change events the OS dropped, across all profile data paths — so
+  the Decoded view converges without requiring a restart.
+
 ## [0.3.1.1] - 2026-06-14
 
 ### Added

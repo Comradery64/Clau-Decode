@@ -436,9 +436,15 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         """User-configured paths."""
         return [Path(p).expanduser() for p in _state["config"].get_all_scan_paths()]
 
-    async def do_scan(db: Database) -> None:
-        """Scan all configured paths and upsert new / changed sessions into DB."""
+    async def do_scan(db: Database) -> int:
+        """Scan all configured paths and upsert new / changed sessions into DB.
+
+        Returns the number of sessions (re)indexed this pass, so callers — e.g.
+        the periodic safety-net rescan — can skip publishing a refresh when
+        nothing changed.
+        """
         MAX_SCAN_SIZE = 20 * 1024 * 1024  # skip files > 20 MB; loaded on demand instead
+        changed = 0
         root_paths = _all_scan_roots()
         async for project, session_path in scan_paths(root_paths):
             if session_path.stem in _deleted_tombstones:
@@ -461,6 +467,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                         project.session_count += 1
                         await db.upsert_project(project)
                         await db.upsert_session(session, file_mtime=current_mtime)
+                        changed += 1
                     continue
                 session, messages = await asyncio.to_thread(parse_session, session_path)
                 session.project_id = project.id
@@ -468,9 +475,11 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 await db.upsert_project(project)
                 await db.upsert_session(session, file_mtime=current_mtime)
                 await db.upsert_messages(messages)
+                changed += 1
                 await asyncio.sleep(0)
             except Exception as exc:
                 print(f"Warning: skipping {session_path}: {exc}")
+        return changed
 
     async def _scan_one(db: Database, session_path: Path) -> None:
         """Re-parse a single changed JSONL file and upsert it into the DB.
@@ -576,6 +585,32 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                         _bus.publish({"type": "refresh", "path": str(path)})
 
         _state["fanout_task"] = asyncio.create_task(_fanout_watcher_events())
+
+        # Safety net behind the live watcher. The watcher only catches changes
+        # while the server is running AND only if the OS delivers the event;
+        # anything that changed while clau-decode was down, or any watch event
+        # the kernel coalesced/dropped, would otherwise stay stale until the
+        # next restart (the "session shows no/old history even though it
+        # resumes fine in the terminal" symptom). This periodic pass re-stats
+        # every session file across ALL profile data paths and re-parses only
+        # those whose mtime moved, so the index self-heals without a restart.
+        # do_scan returns the changed count, so connected clients are nudged to
+        # refetch only when something actually changed.
+        PERIODIC_RESCAN_S = 60.0
+
+        async def _periodic_rescan() -> None:
+            async with Database(db_path) as db:
+                while True:
+                    await asyncio.sleep(PERIODIC_RESCAN_S)
+                    try:
+                        changed = await do_scan(db)
+                    except Exception as exc:
+                        print(f"Warning: periodic rescan failed: {exc}")
+                        continue
+                    if changed:
+                        _bus.publish({"type": "refresh", "path": "periodic-rescan"})
+
+        _state["periodic_rescan_task"] = asyncio.create_task(_periodic_rescan())
 
         async def _refresh_pricing() -> None:
             await _pricing_strat.refresh()
