@@ -209,6 +209,9 @@ export interface HostInfo {
   // Server's platform — informs whether host-side actions are even supported.
   platform: "darwin" | "linux" | "win32" | string;
   client_host: string | null;
+  // App version, sourced from the backend's single source of truth
+  // (clau_decode.__version__). Shown in Settings ▸ About.
+  version: string;
 }
 
 // ---------------------------------------------------------------------------

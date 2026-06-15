@@ -51,6 +51,7 @@ from pydantic import BaseModel, Field
 
 from .analytics.cost import CostEngine
 from .recap_runner import generate_recap as _generate_recap
+from . import __version__
 from .pty_runner import (
     DEFAULT_ROWS,
     PtyManager,
@@ -1887,6 +1888,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             "is_remote_client": not is_local,
             "platform": sys.platform,
             "client_host": host,
+            "version": __version__,
         }
 
     @app.get("/api/fs/list")

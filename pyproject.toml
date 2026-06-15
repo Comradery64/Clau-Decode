@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
@@ -47,9 +47,10 @@ Homepage = "https://github.com/Comradery64/Clau-Decode"
 Repository = "https://github.com/Comradery64/Clau-Decode"
 Issues = "https://github.com/Comradery64/Clau-Decode/issues"
 
+# Version is read from the single source: src/clau_decode/__init__.py __version__.
+# (No VCS/tag derivation — one string, edited in one place, always in sync.)
 [tool.hatch.version]
-source = "vcs"
-fallback-version = "0.3.1"
+path = "src/clau_decode/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/clau_decode"]
