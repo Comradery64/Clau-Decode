@@ -86,10 +86,30 @@ DEFAULT_COLS = 100
 #      back through the last ~64KB (≈20% of a long session). Sized to ~5000 rows.
 OUTPUT_RING_BYTES = 4 * 1024 * 1024
 
-# Bytes to read per drain callback invocation. Small enough that one slow
-# subscriber doesn't pin the event loop; large enough to make typical TUI
-# bursts (a single frame redraw) drain in a couple of callback iterations.
-_DRAIN_CHUNK = 4096
+# Bytes to read per drain callback invocation. ``loop.add_reader`` is
+# level-triggered, so whatever we don't drain now fires the callback again
+# immediately — the only effect of a bigger chunk is FEWER callbacks (and thus
+# fewer SSE messages) for the same burst. Each drained chunk becomes one
+# base64+JSON ``pty_output_chunk`` event (see PtyManager._scan_chunk_for_hitl),
+# so a small chunk fragments a single full-screen repaint into many SSE frames,
+# and that per-frame encode/transport overhead is what makes a mouse-flood
+# scroll choppy over HTTP. 64 KiB coalesces a typical claude repaint into one or
+# two frames while still being small enough that no single read pins the loop.
+_DRAIN_CHUNK = 64 * 1024
+
+# Bytes off the TAIL of the ring fed to classify_screen on each chunk. The live
+# screen state we classify is always in the last screenful of output; this caps
+# the per-chunk classification cost at a constant instead of letting it grow
+# with the (up to 4 MB) ring. 64 KiB covers many full repaints of a tall TUI.
+_CLASSIFY_TAIL_BYTES = 64 * 1024
+
+# Output coalescing window. claude emits a single TUI repaint as a burst of tiny
+# (~1 KB) PTY writes; without batching, each becomes its own SSE event + classify
+# + frontend xterm.write/repaint. Accumulating reads and flushing once per this
+# window collapses a scroll flick from hundreds of events into a few — roughly
+# one frontend write per frame. ~12 ms ≈ under a 60 fps frame, so the added
+# delivery latency is imperceptible while the batching is large.
+_OUTPUT_COALESCE_S = 0.012
 
 # Auth-required pattern: claude prints this banner verbatim when the user
 # is not logged in. We scan each drained chunk for the substring and emit
@@ -1304,6 +1324,16 @@ class PtyManager:
         # that scales with live-PTY count. Set by focus() and
         # native_snapshot(); cleared by unfocus().
         self._active_session_id: Optional[str] = None
+        # Output coalescing (see _scan_chunk_for_hitl / _flush_output). claude
+        # writes a TUI repaint as many tiny PTY writes; we batch the raw reads
+        # per session and flush one combined output chunk + at most one state
+        # reclassification per _OUTPUT_COALESCE_S window.
+        self._pending_output: dict[str, bytearray] = {}
+        self._output_flush_handles: dict[str, asyncio.TimerHandle] = {}
+        # Last (state, decoded_input_safe) published per session — pty_native_state
+        # is emitted only when this changes, so a scroll (state unchanged) emits
+        # none instead of one per chunk.
+        self._last_native_state: dict[str, tuple[str, bool]] = {}
 
     def set_native_cols(self, cols: int) -> None:
         """Set the width new PTYs spawn at (from AppConfig.native_pty_cols).
@@ -1709,6 +1739,72 @@ class PtyManager:
             decoded_input_safe=decoded_input_safe,
         )
 
+    def _flush_output(self, channel: PtyChannel) -> None:
+        """Emit the coalesced output for a channel (scheduled by the on_chunk
+        hook). Publishes ONE combined ``pty_output_chunk`` for the active session
+        plus, at most, ONE ``pty_native_state`` — and only when the classified
+        state actually changed (it stays constant through a scroll, so this drops
+        nearly all of the per-chunk state firehose). Runs on the loop; must not
+        raise.
+
+        Takes the live ``channel`` directly rather than re-looking it up in
+        ``_channels``: output can arrive during spawn/bootstrap BEFORE focus()
+        registers the channel, and a ``_channels`` miss would silently drop that
+        first state/output. The on_chunk hook always has a valid channel ref.
+        """
+        session_id = channel.session_id
+        self._output_flush_handles.pop(session_id, None)
+        pending = self._pending_output.pop(session_id, None)
+
+        if pending and session_id == self._active_session_id:
+            try:
+                self._bus.publish(encode_pty_output_chunk(session_id, bytes(pending)))
+            except Exception as exc:
+                _log.warning(
+                    "pty: output chunk publish raised (session %s): %s",
+                    session_id,
+                    exc,
+                )
+
+        try:
+            # Classify only the TAIL of the ring, never the whole thing. The
+            # state we detect (prompts, trust/login banners) is always on the
+            # CURRENT screen, which lives in the last screenful of output — 4 MB
+            # of scrollback history is both irrelevant and dangerous to classify
+            # (stale matches), and classify_screen → _normalize runs three regex
+            # passes plus a char-by-char comprehension over its input, so feeding
+            # it the whole ring is O(session length) work. Capping at
+            # _CLASSIFY_TAIL_BYTES keeps each call cheap and constant-time.
+            ring = channel._state.ring
+            tail = ring[-_CLASSIFY_TAIL_BYTES:] if len(ring) > _CLASSIFY_TAIL_BYTES else ring
+            classification = classify_screen(
+                bytes(tail).decode("utf-8", errors="replace")
+            )
+            key = (classification.state, classification.decoded_input_safe)
+            if self._last_native_state.get(session_id) != key:
+                self._last_native_state[session_id] = key
+                self._bus.publish({
+                    "type": "pty_native_state",
+                    "session_id": session_id,
+                    "state": classification.state,
+                    "decoded_input_safe": classification.decoded_input_safe,
+                })
+        except Exception as exc:
+            _log.warning(
+                "pty: native state publish raised (session %s): %s",
+                session_id,
+                exc,
+            )
+
+    def _clear_output_coalesce(self, session_id: str) -> None:
+        """Drop a session's output-coalescing state (cancel any pending flush).
+        Called when a channel is removed so timers and buffers don't linger."""
+        handle = self._output_flush_handles.pop(session_id, None)
+        if handle is not None:
+            handle.cancel()
+        self._pending_output.pop(session_id, None)
+        self._last_native_state.pop(session_id, None)
+
     def _scan_chunk_for_hitl(self, channel: PtyChannel, chunk: bytes) -> None:
         """PtyChannel ``on_chunk`` hook — scans drained bytes for HITL signals.
 
@@ -1725,32 +1821,26 @@ class PtyManager:
 
         Sync (runs inside the asyncio reader callback). Must not block.
         """
-        try:
-            if channel.session_id == self._active_session_id:
-                self._bus.publish(encode_pty_output_chunk(channel.session_id, chunk))
-        except Exception as exc:
-            _log.warning(
-                "pty: output chunk publish raised (session %s): %s",
-                channel.session_id,
-                exc,
-            )
-
-        try:
-            classification = classify_screen(
-                bytes(channel._state.ring).decode("utf-8", errors="replace")
-            )
-            self._bus.publish({
-                "type": "pty_native_state",
-                "session_id": channel.session_id,
-                "state": classification.state,
-                "decoded_input_safe": classification.decoded_input_safe,
-            })
-        except Exception as exc:
-            _log.warning(
-                "pty: native state publish raised (session %s): %s",
-                channel.session_id,
-                exc,
-            )
+        # Coalesce the output broadcast AND the state reclassification onto a
+        # short timer instead of doing them per raw read. claude writes a single
+        # TUI repaint as many tiny (~1 KB) PTY writes, each firing add_reader
+        # separately; publishing one SSE event + reclassifying per read turned a
+        # single scroll flick into ~360 SSE events and ~180 frontend repaints
+        # (measured). We accumulate raw reads per session and flush ONE combined
+        # output chunk (+ at most one reclassification) every _OUTPUT_COALESCE_S
+        # — so the browser does ~one xterm.write per frame. Faithful: the bytes
+        # are delivered in order, only batched.
+        self._pending_output.setdefault(channel.session_id, bytearray()).extend(chunk)
+        if channel.session_id not in self._output_flush_handles:
+            try:
+                loop = asyncio.get_running_loop()
+                self._output_flush_handles[channel.session_id] = loop.call_later(
+                    _OUTPUT_COALESCE_S, self._flush_output, channel
+                )
+            except RuntimeError:
+                # No running loop (should not happen in the reader callback) —
+                # flush inline so output is never stranded.
+                self._flush_output(channel)
 
         state = channel._state
         if state.auth_required_emitted:
@@ -1910,6 +2000,7 @@ class PtyManager:
             async with self._lock:
                 managed = self._channels.pop(session_id, None)
                 self._last_focus.pop(session_id, None)
+                self._clear_output_coalesce(session_id)
                 self._cancel_idle_timers(managed)
             if managed is not None:
                 await managed.channel.kill()
@@ -2063,6 +2154,7 @@ class PtyManager:
                     exc,
                 )
             self._channels.pop(session_id, None)
+            self._clear_output_coalesce(session_id)
 
         argv = _build_argv(
             bin_name=params.bin_name,
@@ -2249,6 +2341,7 @@ class PtyManager:
             return
         # No /btw in flight — proceed with the actual kill.
         self._channels.pop(session_id, None)
+        self._clear_output_coalesce(session_id)
         self._cancel_idle_timers(managed)
         _log.info("pty: idle-killing (session %s)", session_id)
 
