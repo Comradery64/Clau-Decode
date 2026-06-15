@@ -369,7 +369,12 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
       <div
         ref={hostRef}
         data-testid="native-terminal-host"
-        style={{ height: "100%", width: "100%", padding: 0, display: "flex", justifyContent: "center", alignItems: "flex-start" }}
+        // Small top inset so the terminal's first row clears the conversation
+        // header's gradient fade (ConversationHeader, ~19px overlap), which was
+        // clipping the top border of claude's first prompt box. border-box keeps
+        // the host at 100% height so the inset eats into the content area (the
+        // fit addon reads clientHeight) instead of overflowing the section.
+        style={{ height: "100%", width: "100%", boxSizing: "border-box", paddingTop: "12px", display: "flex", justifyContent: "center", alignItems: "flex-start" }}
       />
     </section>
   );
