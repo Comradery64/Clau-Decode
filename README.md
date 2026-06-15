@@ -81,6 +81,14 @@ Requires Python 3.10+. The wheel ships the pre-built frontend, so **no Node.js i
 - `Cmd+O` expand/collapse all tool + thinking blocks
 - `Cmd+E` toggle full tool output without truncation
 
+### Native terminal view
+- Decoded / Native / Split modes — read the rendered conversation, watch the live `claude` terminal, or both side by side
+- Live terminal powered by xterm.js with full scrollback — scroll all the way back to the first prompt, just like a real terminal
+- Correct wide-character and emoji widths (Unicode 11), with the in-app font picker
+- Intent-based spawn — a terminal starts only when you open Native/Split or focus the composer; browsing or switching sessions starts nothing
+- The most-recent terminal is kept alive across navigation for instant return, and per-session view memory preserves your scroll position when flipping Decoded↔Native
+- PTY ownership detection with a take-over banner when another `claude` already owns the session
+
 ### Home dashboard
 - One headline insight banner when something surprising happens (a big week, a major model shift, a heavily-used tool)
 - 30-day activity heatmap and 7-day sparklines next to top-line counts
@@ -166,7 +174,8 @@ Requires Python 3.10+. The wheel ships the pre-built frontend, so **no Node.js i
 | `Cmd+S` | Save (in file editor) |
 | `Cmd+I` | Toggle chat panel |
 | `Cmd+B` | Toggle sidebar |
-| `Shift+Cmd+,` | Open settings |
+| `Cmd+,` / `Shift+Cmd+,` | Open settings |
+| `Cmd+/` | Open keyboard-shortcuts menu |
 | `Esc` | Close dialog / search |
 
 ## Configuration
@@ -274,13 +283,13 @@ Clau-Decode is **inspired by, and built around the file format of, [Claude](http
 - [highlight.js](https://highlightjs.org/) — syntax highlighter behind rehype-highlight
 - [Apache ECharts](https://echarts.apache.org/) — analytics charts
 - [OverlayScrollbars](https://kingsora.github.io/OverlayScrollbars/) — custom scrollbars
-- [ghostty-web](https://github.com/coder/ghostty-web) — browser terminal renderer for the Native view, embedding [Ghostty](https://ghostty.org/)'s VT engine (by [Mitchell Hashimoto](https://mitchellh.com/) and the Ghostty contributors) compiled to WebAssembly
+- [xterm.js](https://xtermjs.org/) — browser terminal renderer for the Native view, with [`@xterm/addon-fit`](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-fit) (viewport sizing) and [`@xterm/addon-unicode11`](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-unicode11) (Unicode 11 wide-character widths)
 - [clsx](https://github.com/lukeed/clsx) — conditional class names
 - [Node.js](https://nodejs.org/) and [npm](https://www.npmjs.com/) — JS runtime and package manager
 
 **Fonts (bundled — [SIL Open Font License 1.1](frontend/src/assets/fonts/LICENSES.md))**
 
-The Native view ships these monospace fonts so the in-app font picker works on any machine (a canvas terminal can only paint fonts the browser has). Each is © its respective authors and redistributed under OFL-1.1; the full copyright notices and license text live in [`frontend/src/assets/fonts/LICENSES.md`](frontend/src/assets/fonts/LICENSES.md).
+The Native view ships these monospace fonts so the in-app font picker works on any machine (a browser terminal can only paint fonts the browser has). Each is © its respective authors and redistributed under OFL-1.1; the full copyright notices and license text live in [`frontend/src/assets/fonts/LICENSES.md`](frontend/src/assets/fonts/LICENSES.md).
 
 - [Monaspace](https://github.com/githubnext/monaspace) (Argon) — GitHub
 - [Source Code Pro](https://github.com/adobe-fonts/source-code-pro) — Adobe
