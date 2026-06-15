@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-14
+
+### Added
+
+- **`python -m clau_decode` entry point** for zero-install source runs, and a
+  quickstart that recommends an isolated install (uv tool / pipx from git) to
+  avoid PEP 668 "externally-managed" errors and PATH shadowing.
+
+### Fixed
+
+- **Native PTY: scrollback reaches the first message.** Re-opening an existing
+  session in Native view now scrolls all the way to the top of the
+  conversation. The captured terminal ring was being cleared on the
+  post-spawn rows-only resize, discarding the oldest history; it is now
+  preserved across height changes (only a width change resets it).
+- **Native PTY: no cross-session bleed on the first switch.** Flipping from one
+  session to another no longer briefly shows the previous session's terminal
+  before the new one loads — a captured snapshot is now replayed only into the
+  terminal for the session it belongs to.
+- **Native PTY: the terminal fills the pane, with no bottom gap or smear.** The
+  PTY now spawns at the fitted viewport height instead of a default 40 rows and
+  then resizing, so claude's input/status footer sits at the bottom of the pane
+  (no large empty area below it) and the grow no longer leaves stale "smeared"
+  rows. Removes the one-shot Ctrl+L repaint that masked this.
+
+## [0.3.0] - 2026-06-13
+
 ### Changed
 
 - **PTY runner is the canonical send path.** Chat-input messages are now
@@ -99,5 +126,7 @@ Initial public release.
 
 - License changed from MIT to [FSL-1.1-Apache-2.0](LICENSE). All prior unreleased history was developed under MIT; the 0.1.0 release and everything after it ship under FSL-1.1-Apache-2.0, which converts to Apache 2.0 two years after each release.
 
+[0.3.1]: https://github.com/Comradery64/Clau-Decode/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/Comradery64/Clau-Decode/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Comradery64/Clau-Decode/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Comradery64/Clau-Decode/releases/tag/v0.1.0
