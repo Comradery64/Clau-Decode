@@ -24,6 +24,7 @@ non-destructive (a differing destination file is never overwritten -- the incomi
 copy is written as a ``.from-<source>`` sidecar); ``.claude.json``/``history.jsonl``
 writes are atomic and file contents are never printed.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,8 +40,18 @@ from pathlib import Path
 _TEXT_EXTS = {".jsonl", ".json", ".ndjson", ".txt", ".md", ".log", ".yaml", ".yml"}
 
 # Derived / vendored dirs that should never travel with a config merge.
-_SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "venv",
-              ".cache", "dist", "build", ".pytest_cache", ".mypy_cache"}
+_SKIP_DIRS = {
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".cache",
+    "dist",
+    "build",
+    ".pytest_cache",
+    ".mypy_cache",
+}
 
 # Human-config items merged from each source (non-destructively).
 _CONFIG_FILES = ("CLAUDE.md", "settings.json")
@@ -92,7 +103,7 @@ def remap_key(key: str, frm: str, to: str) -> str:
     if key == frm:
         return to
     if key.startswith(frm + "/"):
-        return to + key[len(frm):]
+        return to + key[len(frm) :]
     return key
 
 
@@ -175,7 +186,8 @@ def merge_projects(
         # Copy the WHOLE project subtree, not just top-level *.jsonl: project dirs
         # can hold nested subagent transcripts at <session>/subagents/agent-*.jsonl.
         all_files = [
-            p for p in sdir.rglob("*")
+            p
+            for p in sdir.rglob("*")
             if p.is_file() and not p.is_symlink() and p.name != ".DS_Store"
         ]
         if not all_files:
@@ -183,7 +195,7 @@ def merge_projects(
             continue
         cwd = read_first_cwd(sdir)
         if cwd and (cwd == frm or cwd.startswith(frm + "/")):
-            new_cwd = to + cwd[len(frm):]
+            new_cwd = to + cwd[len(frm) :]
             target_name = encode(new_cwd)
             rewrite = True
         else:
@@ -276,7 +288,9 @@ def merge_claude_json(
 
     if apply:
         text = json.dumps(
-            base, ensure_ascii=False, indent=indent,
+            base,
+            ensure_ascii=False,
+            indent=indent,
             separators=None if indent else (",", ":"),
         )
         atomic_write_text(dest_json, text)
@@ -361,7 +375,9 @@ def union_dir_safe(src: Path, dst: Path, label: str, apply: bool, rep: Report) -
             copy_file_safe(item, dst / item.relative_to(src), label, apply, rep)
 
 
-def merge_configs(sources: list[Path], dest_dir: Path, apply: bool, rep: Report) -> None:
+def merge_configs(
+    sources: list[Path], dest_dir: Path, apply: bool, rep: Report
+) -> None:
     """Union human-config items from each source into dest, non-destructively.
 
     Sources are processed in the order given, so list higher-priority configs
@@ -379,33 +395,62 @@ def merge_configs(sources: list[Path], dest_dir: Path, apply: bool, rep: Report)
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     """Register ``migrate`` flags on the given (sub)parser."""
     parser.add_argument(
-        "--source", action="append", default=[], metavar="DIR", type=Path,
+        "--source",
+        action="append",
+        default=[],
+        metavar="DIR",
+        type=Path,
         help="a Claude config dir to merge FROM (repeatable). Its .claude.json is "
-             "read automatically. e.g. ~/.claude or ~/.cc-mirror/<profile>/config",
+        "read automatically. e.g. ~/.claude or ~/.cc-mirror/<profile>/config",
     )
     parser.add_argument(
-        "--source-json", action="append", default=[], metavar="PATH", type=Path,
+        "--source-json",
+        action="append",
+        default=[],
+        metavar="PATH",
+        type=Path,
         help="extra .claude.json to union project entries from (repeatable) -- e.g. "
-             "the home-level ~/.claude.json that sits outside a source dir",
+        "the home-level ~/.claude.json that sits outside a source dir",
     )
     parser.add_argument(
-        "--dest-dir", type=Path, default=Path("~/.claude").expanduser(),
+        "--dest-dir",
+        type=Path,
+        default=Path("~/.claude").expanduser(),
         help="destination Claude dir (default: ~/.claude)",
     )
     parser.add_argument(
-        "--dest-json", type=Path, default=Path("~/.claude.json").expanduser(),
+        "--dest-json",
+        type=Path,
+        default=Path("~/.claude.json").expanduser(),
         help="destination home .claude.json (default: ~/.claude.json)",
     )
-    parser.add_argument("--from", dest="frm", default="", metavar="PREFIX",
-                        help="path prefix to rewrite FROM, e.g. /Volumes/SD")
-    parser.add_argument("--to", dest="to", default="", metavar="PREFIX",
-                        help="path prefix to rewrite TO, e.g. /Users/you/Dev")
-    parser.add_argument("--no-configs", action="store_true",
-                        help="merge chat history only (skip human configs)")
-    parser.add_argument("--apply", action="store_true",
-                        help="actually write changes (default: dry-run)")
-    parser.add_argument("--i-have-a-backup", action="store_true",
-                        help="required with --apply; confirm dest is backed up")
+    parser.add_argument(
+        "--from",
+        dest="frm",
+        default="",
+        metavar="PREFIX",
+        help="path prefix to rewrite FROM, e.g. /Volumes/SD",
+    )
+    parser.add_argument(
+        "--to",
+        dest="to",
+        default="",
+        metavar="PREFIX",
+        help="path prefix to rewrite TO, e.g. /Users/you/Dev",
+    )
+    parser.add_argument(
+        "--no-configs",
+        action="store_true",
+        help="merge chat history only (skip human configs)",
+    )
+    parser.add_argument(
+        "--apply", action="store_true", help="actually write changes (default: dry-run)"
+    )
+    parser.add_argument(
+        "--i-have-a-backup",
+        action="store_true",
+        help="required with --apply; confirm dest is backed up",
+    )
 
 
 def run(args: argparse.Namespace) -> int:
@@ -418,14 +463,19 @@ def run(args: argparse.Namespace) -> int:
         print("error: --from and --to must be given together (or neither)", flush=True)
         return 2
     if args.apply and not args.i_have_a_backup:
-        print("error: --apply requires --i-have-a-backup "
-              "(back up the destination ~/.claude and ~/.claude.json first)", flush=True)
+        print(
+            "error: --apply requires --i-have-a-backup "
+            "(back up the destination ~/.claude and ~/.claude.json first)",
+            flush=True,
+        )
         return 2
 
     apply = args.apply
     mode = "APPLY" if apply else "DRY-RUN"
-    print(f"[{mode}] merging {len(sources)} source(s) into {args.dest_dir}  "
-          f"(rewrite '{args.frm}' -> '{args.to}')")
+    print(
+        f"[{mode}] merging {len(sources)} source(s) into {args.dest_dir}  "
+        f"(rewrite '{args.frm}' -> '{args.to}')"
+    )
 
     rep = Report()
     dest_projects = args.dest_dir / "projects"
@@ -434,21 +484,33 @@ def run(args: argparse.Namespace) -> int:
 
     # 1. projects/ union + rewrite
     for src in sources:
-        merge_projects(src.name or "source", src / "projects", dest_projects,
-                       args.frm, args.to, apply, rep)
+        merge_projects(
+            src.name or "source",
+            src / "projects",
+            dest_projects,
+            args.frm,
+            args.to,
+            apply,
+            rep,
+        )
 
     # 2. .claude.json project-entry union (each source dir's .claude.json + extras)
     source_jsons: list[tuple[str, Path]] = []
     for src in sources:
         source_jsons.append((src.name or "source", src / ".claude.json"))
-    for extra in (getattr(args, "source_json", []) or []):
+    for extra in getattr(args, "source_json", []) or []:
         source_jsons.append((extra.name, extra))
     merge_claude_json(args.dest_json, source_jsons, args.frm, args.to, apply, rep)
 
     # 3. history.jsonl
-    merge_history(args.dest_dir / "history.jsonl",
-                  [src / "history.jsonl" for src in sources],
-                  args.frm, args.to, apply, rep)
+    merge_history(
+        args.dest_dir / "history.jsonl",
+        [src / "history.jsonl" for src in sources],
+        args.frm,
+        args.to,
+        apply,
+        rep,
+    )
 
     # 4. human configs
     if not args.no_configs:
@@ -456,11 +518,15 @@ def run(args: argparse.Namespace) -> int:
 
     print(rep.render())
     if not apply:
-        print("\nDry-run only -- nothing was written. "
-              "Re-run with --apply --i-have-a-backup to commit.")
+        print(
+            "\nDry-run only -- nothing was written. "
+            "Re-run with --apply --i-have-a-backup to commit."
+        )
     else:
-        print("\nDone. If you use clau-decode: rm -f ~/.cache/clau-decode/index.db "
-              "to force a clean reindex, then launch clau-decode.")
+        print(
+            "\nDone. If you use clau-decode: rm -f ~/.cache/clau-decode/index.db "
+            "to force a clean reindex, then launch clau-decode."
+        )
     return 0
 
 

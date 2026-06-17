@@ -6,6 +6,7 @@ Commands:
   today       Show today's token usage and cost
   stats       Print statistical metrics across all sessions
   tips        Print optimization tips
+  migrate     Merge/relocate Claude history + configs across machines
 
 Global options:
   --path PATH       Add an extra scan path (repeatable, appended to config paths)
