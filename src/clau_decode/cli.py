@@ -33,7 +33,7 @@ from pathlib import Path
 
 import uvicorn
 
-from . import __version__
+from . import __version__, migrate
 from .config import get_db_path, load_config
 from .server import create_app
 
@@ -138,6 +138,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "tips",
         help="Print optimization tips",
     )
+    migrate_parser = subparsers.add_parser(
+        "migrate",
+        help="Merge/relocate Claude chat history + configs across machines",
+        description=(
+            "Merge one or more Claude config trees into a destination ~/.claude, "
+            "rewriting a project-path prefix so chats stay viewable AND resumable. "
+            "Dry-run by default; --apply is gated behind --i-have-a-backup."
+        ),
+    )
+    migrate.add_arguments(migrate_parser)
 
     return parser
 
@@ -482,5 +492,11 @@ def main() -> None:
         "today": _run_today,
         "stats": _run_stats,
         "tips": _run_tips,
+        "migrate": _run_migrate,
     }
     dispatch[command](args, config)
+
+
+def _run_migrate(args, config) -> None:
+    """``clau-decode migrate`` -- filesystem merge tool; ignores app config."""
+    raise SystemExit(migrate.run(args))

@@ -17,7 +17,7 @@ from clau_decode.config import load_config
 
 class TestParser:
     def test_subcommands_all_parse(self):
-        for cmd in ["dashboard", "scan", "today", "stats", "tips"]:
+        for cmd in ["dashboard", "scan", "today", "stats", "tips", "migrate"]:
             args = _build_parser().parse_args([cmd])
             assert args.command == cmd
 
