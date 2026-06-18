@@ -10,7 +10,6 @@ pytest-asyncio auto mode is active (pyproject.toml: asyncio_mode = "auto").
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 import time
@@ -21,12 +20,9 @@ import pytest
 
 from clau_decode import pty_runner as pr_mod
 from clau_decode.pty_runner import (
-    DEFAULT_COLS,
-    DEFAULT_ROWS,
     PtyChannel,
     PtyManager,
     PtySubmitInFlight,
-    _pty_env,
 )
 from clau_decode.db import Database
 from clau_decode.events_bus import EventBroadcaster
@@ -518,10 +514,14 @@ async def test_submit_rejected_while_btw_capture_in_flight(
         await asyncio.sleep(0.05)
     assert channel._state.expecting_btw_response
 
-    with pytest.raises(PtySubmitInFlight, match="/btw response is still being captured"):
+    with pytest.raises(
+        PtySubmitInFlight, match="/btw response is still being captured"
+    ):
         await manager_with_db.submit(session_id, "/brief")
 
-    with pytest.raises(PtySubmitInFlight, match="/btw response is still being captured"):
+    with pytest.raises(
+        PtySubmitInFlight, match="/btw response is still being captured"
+    ):
         await manager_with_db.submit(session_id, "/btw duplicate")
 
     rows = await _get_all_ephemeral(real_db, session_id)
@@ -686,14 +686,20 @@ async def test_delete_session_cascades_to_ephemerals(real_db):
 
     sid = "btw-cascade-sid-aaaa"
     project = Project(
-        id="proj-btw-cascade", display_name="cascade-test",
-        raw_path="-cascade", data_source="test",
+        id="proj-btw-cascade",
+        display_name="cascade-test",
+        raw_path="-cascade",
+        data_source="test",
     )
     await real_db.upsert_project(project)
-    await real_db.upsert_session(Session(
-        id=sid, project_id=project.id,
-        file_path="/tmp/dummy.jsonl", cwd="/tmp",
-    ))
+    await real_db.upsert_session(
+        Session(
+            id=sid,
+            project_id=project.id,
+            file_path="/tmp/dummy.jsonl",
+            cwd="/tmp",
+        )
+    )
 
     # Seed two /btw pairs and an unrelated session's pair (control).
     in1 = await real_db.record_ephemeral_input(sid, "/btw one")
@@ -702,10 +708,14 @@ async def test_delete_session_cascades_to_ephemerals(real_db):
     await real_db.record_ephemeral_response(in2, "two answer")
 
     other_sid = "btw-cascade-other-sid"
-    await real_db.upsert_session(Session(
-        id=other_sid, project_id=project.id,
-        file_path="/tmp/other.jsonl", cwd="/tmp",
-    ))
+    await real_db.upsert_session(
+        Session(
+            id=other_sid,
+            project_id=project.id,
+            file_path="/tmp/other.jsonl",
+            cwd="/tmp",
+        )
+    )
     other_in = await real_db.record_ephemeral_input(other_sid, "/btw other")
     await real_db.record_ephemeral_response(other_in, "other answer")
 

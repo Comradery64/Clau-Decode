@@ -9,10 +9,8 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
-import pytest
 from httpx import ASGITransport, AsyncClient
 
 from clau_decode.db import Database
@@ -79,7 +77,9 @@ async def test_delete_session_removes_rows_and_returns_true(tmp_path) -> None:
     # Verify rows are gone.
     async with Database(db_path) as db:
         sessions = await db.get_sessions()
-        assert not any(s.id == _SESSION_ID for s in sessions), "session row must be deleted"
+        assert not any(s.id == _SESSION_ID for s in sessions), (
+            "session row must be deleted"
+        )
 
         # messages
         async with db._conn.execute(

@@ -172,6 +172,7 @@ def _configure_clau_decode_logging(level_name: str) -> None:
     second copy of every line.
     """
     import logging as _logging
+
     # When stderr is redirected to a file (e.g. ``nohup ... > /tmp/log 2>&1``)
     # Python defaults to block-buffering, so log lines accumulate in-memory
     # until shutdown.  This was the second half of the Phase 2 smoke
@@ -186,7 +187,8 @@ def _configure_clau_decode_logging(level_name: str) -> None:
     logger = _logging.getLogger("clau_decode")
     logger.setLevel(level)
     if not any(
-        isinstance(h, _logging.StreamHandler) and getattr(h, "_clau_decode_attached", False)
+        isinstance(h, _logging.StreamHandler)
+        and getattr(h, "_clau_decode_attached", False)
         for h in logger.handlers
     ):
         handler = _logging.StreamHandler(sys.stderr)
@@ -202,6 +204,7 @@ def _run_dashboard(args: argparse.Namespace, config) -> None:
     """Launch the web UI with uvicorn."""
     _configure_clau_decode_logging(args.log_level)
     import logging as _logging
+
     _logging.getLogger("clau_decode").info(
         "logger configured (level=%s)", args.log_level
     )

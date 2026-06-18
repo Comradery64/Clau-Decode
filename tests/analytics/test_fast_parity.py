@@ -52,28 +52,46 @@ def _msgs() -> list[Message]:
         sid = f"sess-{d}"
         add(id=f"u{d}", session_id=sid, role="user", timestamp=day, is_meta=False)
         add(
-            id=f"a{d}", session_id=sid, parent_id=f"u{d}", role="assistant",
-            model="claude-opus-4-7", timestamp=day,
+            id=f"a{d}",
+            session_id=sid,
+            parent_id=f"u{d}",
+            role="assistant",
+            model="claude-opus-4-7",
+            timestamp=day,
             usage=TokenUsage(
-                input_tokens=4000, output_tokens=900,
-                cache_creation_input_tokens=200, cache_read_input_tokens=50,
+                input_tokens=4000,
+                output_tokens=900,
+                cache_creation_input_tokens=200,
+                cache_read_input_tokens=50,
             ),
             content_blocks=[
-                ToolUseBlock(id=f"tu{d}", name="Read", input={"file_path": "/repo/a.py"}),
+                ToolUseBlock(
+                    id=f"tu{d}", name="Read", input={"file_path": "/repo/a.py"}
+                ),
             ],
         )
 
     # Repeated reads of the same file (>=3, no intervening write) -> tip.
     for i in range(3):
         add(
-            id=f"r{i}", session_id="sess-0", parent_id="u0", role="assistant",
+            id=f"r{i}",
+            session_id="sess-0",
+            parent_id="u0",
+            role="assistant",
             timestamp=T0 + timedelta(minutes=i),
-            content_blocks=[ToolUseBlock(id=f"rr{i}", name="Read", input={"file_path": "/repo/hot.py"})],
+            content_blocks=[
+                ToolUseBlock(
+                    id=f"rr{i}", name="Read", input={"file_path": "/repo/hot.py"}
+                )
+            ],
         )
 
     # A few more tool_use blocks for tool/file counts.
     add(
-        id="b1", session_id="sess-1", role="assistant", timestamp=T0,
+        id="b1",
+        session_id="sess-1",
+        role="assistant",
+        timestamp=T0,
         content_blocks=[
             ToolUseBlock(id="tb1", name="Bash", input={"command": "ls"}),
             ToolUseBlock(id="tb2", name="Edit", input={"file_path": "/repo/a.py"}),
@@ -82,7 +100,10 @@ def _msgs() -> list[Message]:
 
     # Oversized tool_result (>50k chars) -> tip.
     add(
-        id="res1", session_id="sess-1", role="user", timestamp=T0,
+        id="res1",
+        session_id="sess-1",
+        role="user",
+        timestamp=T0,
         content_blocks=[ToolResultBlock(tool_use_id="tb1", content="x" * 60_000)],
     )
     return out
@@ -119,8 +140,11 @@ def _old_bundle(msgs):
         "files": FileTouchScanner().scan(msgs),
         "tips": [
             {
-                "rule_id": t.rule_id, "severity": t.severity, "title": t.title,
-                "detail": t.detail, "evidence": t.evidence,
+                "rule_id": t.rule_id,
+                "severity": t.severity,
+                "title": t.title,
+                "detail": t.detail,
+                "evidence": t.evidence,
             }
             for t in reg.run(msgs)
         ],

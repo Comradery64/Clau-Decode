@@ -45,9 +45,7 @@ def _subscription_env() -> dict[str, str]:
     outside tests should prefer ``spawn_env(bin_name)`` so the strip is
     gated by the binary's actual auth method.
     """
-    return {
-        k: v for k, v in os.environ.items() if k not in _SUBSCRIPTION_BLOCKED_ENV
-    }
+    return {k: v for k, v in os.environ.items() if k not in _SUBSCRIPTION_BLOCKED_ENV}
 
 
 async def _bin_auth_method(bin_name: str) -> str:

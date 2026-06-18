@@ -21,21 +21,12 @@ _FOOTER = b"\xe2\x86\x91/\xe2\x86\x93"  # "↑/↓"
 
 def _animation_frame(char: str) -> bytes:
     """Synthesise one animation frame (colour-wrapped, no ESC[K)."""
-    return (
-        b"\x1b[4C\x1b[3A"
-        b"\x1b[38;2;255;193;7m"
-        + char.encode()
-        + b"\x1b[39m"
-    )
+    return b"\x1b[4C\x1b[3A\x1b[38;2;255;193;7m" + char.encode() + b"\x1b[39m"
 
 
 def _final_write_v1(text: str, cols: int = 4, rows: int = 3) -> bytes:
     """Synthesise a Variant A final write (cursor-relative + ESC[K suffix)."""
-    return (
-        f"\x1b[{cols}C\x1b[{rows}A".encode()
-        + text.encode("utf-8")
-        + b"\x1b[K"
-    )
+    return f"\x1b[{cols}C\x1b[{rows}A".encode() + text.encode("utf-8") + b"\x1b[K"
 
 
 def _final_write_v2(text: str, cols: int = 4, rows: int = 3) -> bytes:
@@ -189,7 +180,10 @@ class TestFindModalOpen:
 
 class TestFindResponseComplete:
     def test_finds_footer(self):
-        from clau_decode.btw_capture import find_response_complete, BTW_RESPONSE_COMPLETE_MARKER
+        from clau_decode.btw_capture import (
+            find_response_complete,
+            BTW_RESPONSE_COMPLETE_MARKER,
+        )
 
         raw = b"some content " + BTW_RESPONSE_COMPLETE_MARKER + b" more"
         assert find_response_complete(raw) == len(b"some content ")
@@ -200,7 +194,10 @@ class TestFindResponseComplete:
         assert find_response_complete(b"no footer") == -1
 
     def test_start_param(self):
-        from clau_decode.btw_capture import find_response_complete, BTW_RESPONSE_COMPLETE_MARKER
+        from clau_decode.btw_capture import (
+            find_response_complete,
+            BTW_RESPONSE_COMPLETE_MARKER,
+        )
 
         raw = BTW_RESPONSE_COMPLETE_MARKER + b"---" + BTW_RESPONSE_COMPLETE_MARKER
         first = find_response_complete(raw, 0)
@@ -280,7 +277,8 @@ class TestExtractBtwResponse:
         # Simulate: animation frames then final write with columnar text
         raw = (
             _MODAL_OPEN
-            + _animation_frame("o") + _animation_frame("O")
+            + _animation_frame("o")
+            + _animation_frame("O")
             + _final_write_v2("Hello world")
             + _FOOTER
         )
@@ -340,9 +338,11 @@ class TestExtractBtwResponse:
 
         raw = (
             _MODAL_OPEN
-            + _animation_frame("o") + _animation_frame("O")
+            + _animation_frame("o")
+            + _animation_frame("O")
             + _final_write_v1("First line", cols=4, rows=3)
-            + _animation_frame("o") + _animation_frame("O")
+            + _animation_frame("o")
+            + _animation_frame("O")
             + _final_write_v1("Second line", cols=4, rows=2)
             + _FOOTER
         )
@@ -382,7 +382,9 @@ class TestExtractBtwResponse:
         """Load the real captured bytes and verify multi-line extraction."""
         fixture_path = FIXTURES / "multiline.bin"
         if not fixture_path.exists():
-            pytest.skip("multiline.bin fixture not yet generated — run /tmp/btw-mline-spike/run.py")
+            pytest.skip(
+                "multiline.bin fixture not yet generated — run /tmp/btw-mline-spike/run.py"
+            )
 
         from clau_decode.btw_capture import extract_btw_response
 
@@ -397,6 +399,7 @@ class TestExtractBtwResponse:
         )
         # Content check: must mention Pythagorean content
         combined = result.lower()
-        assert any(kw in combined for kw in ["pythagorean", "triangle", "hypotenuse", "a²", "c²"]), (
-            f"Response doesn't look like Pythagorean theorem: {result!r}"
-        )
+        assert any(
+            kw in combined
+            for kw in ["pythagorean", "triangle", "hypotenuse", "a²", "c²"]
+        ), f"Response doesn't look like Pythagorean theorem: {result!r}"

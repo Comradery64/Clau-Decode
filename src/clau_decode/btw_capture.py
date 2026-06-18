@@ -140,6 +140,7 @@ def find_response_complete(raw: bytes, start: int = 0) -> int:
 # Internal: column-aware text reconstruction (Variant B)
 # ---------------------------------------------------------------------------
 
+
 def _reconstruct_columnar(raw_fragment: bytes) -> str:
     """Reconstruct human-readable text from a byte sequence that uses
     absolute column positioning (``ESC[NG``) to place words and ``\\r`` /
@@ -159,7 +160,8 @@ def _reconstruct_columnar(raw_fragment: bytes) -> str:
     current_line: list[str] = []
     current_col: int = 0
 
-    _TOKEN_RE = re.compile(rb"""
+    _TOKEN_RE = re.compile(
+        rb"""
         \r\r\n                          # CR LF LF
         | \r\n                          # CR LF
         | \r                            # bare CR
@@ -169,7 +171,9 @@ def _reconstruct_columnar(raw_fragment: bytes) -> str:
         | \x1b\[[\d;]*[a-zA-Z]          # other CSI (colour, attrs, etc.)
         | \x1b[^[]                       # other ESC
         | ([^\x1b\r\n]+)                 # printable text
-    """, re.VERBOSE)
+    """,
+        re.VERBOSE,
+    )
 
     for m in _TOKEN_RE.finditer(raw_fragment):
         raw_tok = m.group(0)
@@ -277,7 +281,7 @@ def extract_btw_response(
         after = region[m.end() : m.end() + 2]
         if not after.startswith(b"\x1b["):
             # This is the start of the response block
-            response_raw = region[m.end():]
+            response_raw = region[m.end() :]
             result = _reconstruct_columnar(response_raw)
             if result:
                 return result

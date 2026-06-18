@@ -61,10 +61,13 @@ async def generate_recap(
     # simpler and provider-agnostic.
     argv = [
         bin_name,
-        "--session-id", fork_id,
-        "--resume", session_id,
+        "--session-id",
+        fork_id,
+        "--resume",
+        session_id,
         "--fork-session",
-        "--permission-mode", "dontAsk",
+        "--permission-mode",
+        "dontAsk",
     ]
     env = await _pty_env(DEFAULT_ROWS, DEFAULT_COLS, bin_name)
 
@@ -85,7 +88,8 @@ async def generate_recap(
         if not ready:
             _log.warning(
                 "recap: TUI didn't signal ready within 5s (session %s, fork %s)",
-                session_id, fork_id,
+                session_id,
+                fork_id,
             )
             return None
         # The fork has to load the source session's history before it can
@@ -111,7 +115,9 @@ async def generate_recap(
         except Exception as exc:
             _log.warning(
                 "recap: PTY write failed (session %s, fork %s): %s",
-                session_id, fork_id, exc,
+                session_id,
+                fork_id,
+                exc,
             )
             return None
         text = await _await_assistant_text(fork_jsonl, timeout_seconds)
@@ -119,7 +125,9 @@ async def generate_recap(
             _log.warning(
                 "recap: no assistant text in fork JSONL within %.1fs "
                 "(session %s, fork %s)",
-                timeout_seconds, session_id, fork_id,
+                timeout_seconds,
+                session_id,
+                fork_id,
             )
         return text
     finally:
@@ -135,9 +143,7 @@ async def generate_recap(
             _log.debug("recap: fork JSONL unlink failed (%s): %s", fork_jsonl, exc)
 
 
-async def _await_assistant_text(
-    jsonl: Path, timeout_seconds: float
-) -> Optional[str]:
+async def _await_assistant_text(jsonl: Path, timeout_seconds: float) -> Optional[str]:
     """Poll ``jsonl`` for an assistant entry with ``stop_reason`` set.
 
     JSONL is the canonical channel (Phase 0 / Phase 1 findings) — TUI
