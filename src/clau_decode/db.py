@@ -126,16 +126,31 @@ def _block_facts(
     for i, block in enumerate(blocks):
         if isinstance(block, ToolUseBlock):
             path = block.input.get("file_path") or block.input.get("path") or ""
-            facts.append((
-                message_id, session_id, i, "tool_use",
-                block.name, path if isinstance(path, str) and path else None,
-                None, None,
-            ))
+            facts.append(
+                (
+                    message_id,
+                    session_id,
+                    i,
+                    "tool_use",
+                    block.name,
+                    path if isinstance(path, str) and path else None,
+                    None,
+                    None,
+                )
+            )
         elif isinstance(block, ToolResultBlock):
-            facts.append((
-                message_id, session_id, i, "tool_result",
-                None, None, _result_char_count(block), block.tool_use_id,
-            ))
+            facts.append(
+                (
+                    message_id,
+                    session_id,
+                    i,
+                    "tool_result",
+                    None,
+                    None,
+                    _result_char_count(block),
+                    block.tool_use_id,
+                )
+            )
     return facts
 
 
@@ -466,9 +481,7 @@ class Database:
             row = await cursor.fetchone()
         if row is not None:
             return 0  # already migrated
-        cursor = await self._conn.execute(
-            "UPDATE sessions SET file_mtime = NULL"
-        )
+        cursor = await self._conn.execute("UPDATE sessions SET file_mtime = NULL")
         await self._conn.execute(
             "INSERT OR REPLACE INTO _meta (key, value) VALUES ('truncated_titles_reset_v1', '1')"
         )
@@ -510,8 +523,10 @@ class Database:
         async with self._conn.execute("PRAGMA table_info(messages)") as cursor:
             cols = {r["name"] for r in await cursor.fetchall()}
         for col in (
-            "input_tokens", "output_tokens",
-            "cache_creation_tokens", "cache_read_tokens",
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_tokens",
+            "cache_read_tokens",
         ):
             if col not in cols:
                 await self._conn.execute(
@@ -549,7 +564,8 @@ class Database:
         ) as cursor:
             async for row in cursor:
                 facts = _block_facts(
-                    row["id"], row["session_id"],
+                    row["id"],
+                    row["session_id"],
                     _deserialize_content_blocks(row["content_json"]),
                 )
                 batch.extend(facts)
@@ -1034,7 +1050,9 @@ class Database:
             "file_path": srow["file_path"],
             "title": srow["title"],
             "custom_title": srow["custom_title"],
-            "archived_at": srow["archived_at"] if "archived_at" in srow.keys() else None,
+            "archived_at": srow["archived_at"]
+            if "archived_at" in srow.keys()
+            else None,
             "starred_at": srow["starred_at"] if "starred_at" in srow.keys() else None,
             "viewed_at": srow["viewed_at"] if "viewed_at" in srow.keys() else None,
             "model": srow["model"],
@@ -1054,10 +1072,7 @@ class Database:
             # volume was remounted or a directory recreated. The cost is
             # one isdir() syscall per session-detail request, which is
             # cheap compared to the rest of the response build.
-            "cwd_exists": (
-                True if not srow["cwd"]
-                else Path(srow["cwd"]).is_dir()
-            ),
+            "cwd_exists": (True if not srow["cwd"] else Path(srow["cwd"]).is_dir()),
         }
         session_bytes = json.dumps(
             session_dict, ensure_ascii=False, separators=(",", ":")
@@ -1246,9 +1261,7 @@ class Database:
         await self._conn.execute(
             "DELETE FROM session_meta WHERE session_id = ?", (session_id,)
         )
-        await self._conn.execute(
-            "DELETE FROM sessions WHERE id = ?", (session_id,)
-        )
+        await self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         await self._conn.commit()
         return exists
 
@@ -1623,6 +1636,7 @@ class Database:
             row = await cursor.fetchone()
         if row is None:
             import sqlite3
+
             raise sqlite3.IntegrityError(
                 f"record_ephemeral_response: input_row_id {input_row_id!r} does not exist"
             )

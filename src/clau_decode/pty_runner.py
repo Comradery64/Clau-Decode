@@ -473,14 +473,16 @@ class PtyChannel:
         if self._bus is None:
             return
         try:
-            self._bus.publish({
-                "type": "pty_submit_completed",
-                "session_id": self.session_id,
-                "kind": kind,
-                "status": status,
-                "input_id": input_row_id,
-                "response_id": response_row_id,
-            })
+            self._bus.publish(
+                {
+                    "type": "pty_submit_completed",
+                    "session_id": self.session_id,
+                    "kind": kind,
+                    "status": status,
+                    "input_id": input_row_id,
+                    "response_id": response_row_id,
+                }
+            )
         except Exception as exc:
             _log.warning(
                 "pty: submit completion publish raised (session %s): %s",
@@ -561,9 +563,9 @@ class PtyChannel:
                     self._lock_sidecar.release()
                 except Exception as exc:  # pragma: no cover — defensive
                     _log.debug(
-                        "pty: lock release after spawn failure raised "
-                        "(session %s): %s",
-                        self.session_id, exc,
+                        "pty: lock release after spawn failure raised (session %s): %s",
+                        self.session_id,
+                        exc,
                     )
                 self._lock_sidecar = None
             raise
@@ -744,7 +746,8 @@ class PtyChannel:
                         _log.info(
                             "pty: btw response-complete marker detected — "
                             "finalize scheduled (session %s, buffer=%d bytes)",
-                            self.session_id, len(self._state.btw_buffer),
+                            self.session_id,
+                            len(self._state.btw_buffer),
                         )
                     except RuntimeError:  # pragma: no cover — loop closed
                         pass
@@ -813,7 +816,8 @@ class PtyChannel:
             except Exception as exc:
                 _log.warning(
                     "pty: btw finalize — ESC write failed (session %s): %s",
-                    self.session_id, exc,
+                    self.session_id,
+                    exc,
                 )
 
             # 2. Allow the TUI to complete its modal tear-down.
@@ -824,7 +828,11 @@ class PtyChannel:
             extracted = extract_btw_response(raw)
 
             # 4. Persist the response row if we have both sides.
-            if extracted is not None and input_row_id is not None and self._db is not None:
+            if (
+                extracted is not None
+                and input_row_id is not None
+                and self._db is not None
+            ):
                 try:
                     response_row_id = await self._db.record_ephemeral_response(
                         input_row_id, extracted
@@ -833,23 +841,29 @@ class PtyChannel:
                     _log.warning(
                         "pty: btw finalize — record_ephemeral_response failed "
                         "(session %s, input_row_id=%s): %s",
-                        self.session_id, input_row_id, exc,
+                        self.session_id,
+                        input_row_id,
+                        exc,
                     )
                 else:
                     _log.info(
                         "pty: btw response persisted (session %s, input_row=%s, "
                         "response_row=%s, extracted_len=%d)",
-                        self.session_id, input_row_id, response_row_id,
+                        self.session_id,
+                        input_row_id,
+                        response_row_id,
                         len(extracted),
                     )
                     if self._bus is not None and response_row_id is not None:
-                        self._bus.publish({
-                            "type": "ephemeral_pair_persisted",
-                            "session_id": self.session_id,
-                            "input_id": input_row_id,
-                            "response_id": response_row_id,
-                            "kind": "btw",
-                        })
+                        self._bus.publish(
+                            {
+                                "type": "ephemeral_pair_persisted",
+                                "session_id": self.session_id,
+                                "input_id": input_row_id,
+                                "response_id": response_row_id,
+                                "kind": "btw",
+                            }
+                        )
                     status = "completed"
             elif extracted is None:
                 # Promoted from DEBUG to WARNING — extraction failure is a
@@ -867,8 +881,10 @@ class PtyChannel:
                 _log.warning(
                     "pty: btw finalize — extraction yielded None "
                     "(session %s, buffer_len=%d%s)",
-                    self.session_id, len(raw),
-                    f", dumped to {dump_path}" if dump_path
+                    self.session_id,
+                    len(raw),
+                    f", dumped to {dump_path}"
+                    if dump_path
                     else " (set CLAU_DECODE_DEBUG to dump raw bytes)",
                 )
                 status = "failed"
@@ -882,7 +898,8 @@ class PtyChannel:
         except Exception as exc:
             _log.warning(
                 "pty: btw finalize raised unexpectedly (session %s): %s",
-                self.session_id, exc,
+                self.session_id,
+                exc,
             )
             status = "failed"
         finally:
@@ -900,7 +917,9 @@ class PtyChannel:
 
         _log.debug(
             "pty: btw capture complete (session %s, input_row=%s, response_row=%s)",
-            self.session_id, input_row_id, response_row_id,
+            self.session_id,
+            input_row_id,
+            response_row_id,
         )
 
     async def _btw_stuck_timeout(self) -> None:
@@ -923,7 +942,9 @@ class PtyChannel:
         _log.warning(
             "pty: btw stuck-modal timeout after %.0fs (session %s); "
             "buffer=%d bytes — forcing finalize",
-            self._btw_stuck_timeout_s, self.session_id, len(self._state.btw_buffer),
+            self._btw_stuck_timeout_s,
+            self.session_id,
+            len(self._state.btw_buffer),
         )
 
         # Cancel any pending finalize (shouldn't exist if timeout fires,
@@ -946,17 +967,20 @@ class PtyChannel:
                 _log.warning(
                     "pty: btw timeout — record_ephemeral_response failed "
                     "(session %s): %s",
-                    self.session_id, exc,
+                    self.session_id,
+                    exc,
                 )
             else:
                 if self._bus is not None and response_row_id is not None:
-                    self._bus.publish({
-                        "type": "ephemeral_pair_persisted",
-                        "session_id": self.session_id,
-                        "input_id": input_row_id,
-                        "response_id": response_row_id,
-                        "kind": "btw",
-                    })
+                    self._bus.publish(
+                        {
+                            "type": "ephemeral_pair_persisted",
+                            "session_id": self.session_id,
+                            "input_id": input_row_id,
+                            "response_id": response_row_id,
+                            "kind": "btw",
+                        }
+                    )
 
         self._publish_submit_completed(
             kind="btw",
@@ -1146,7 +1170,8 @@ class PtyChannel:
             except Exception as exc:  # pragma: no cover — defensive
                 _log.debug(
                     "pty: lock release at kill raised (session %s): %s",
-                    self.session_id, exc,
+                    self.session_id,
+                    exc,
                 )
             self._lock_sidecar = None
 
@@ -1604,16 +1629,19 @@ class PtyManager:
                             session_id, content, kind="btw"
                         )
                         if btw_input_row_id is not None:
-                            self._bus.publish({
-                                "type": "ephemeral_input_persisted",
-                                "session_id": session_id,
-                                "input_id": btw_input_row_id,
-                                "kind": "btw",
-                            })
+                            self._bus.publish(
+                                {
+                                    "type": "ephemeral_input_persisted",
+                                    "session_id": session_id,
+                                    "input_id": btw_input_row_id,
+                                    "kind": "btw",
+                                }
+                            )
                     except Exception as exc:
                         _log.warning(
                             "pty: record_ephemeral_input failed (session %s): %s",
-                            session_id, exc,
+                            session_id,
+                            exc,
                         )
                         # Proceed: losing the DB row is better than blocking the /btw
                         # flow.  btw_input_row_id stays None so finalize won't try
@@ -1776,19 +1804,25 @@ class PtyManager:
             # it the whole ring is O(session length) work. Capping at
             # _CLASSIFY_TAIL_BYTES keeps each call cheap and constant-time.
             ring = channel._state.ring
-            tail = ring[-_CLASSIFY_TAIL_BYTES:] if len(ring) > _CLASSIFY_TAIL_BYTES else ring
+            tail = (
+                ring[-_CLASSIFY_TAIL_BYTES:]
+                if len(ring) > _CLASSIFY_TAIL_BYTES
+                else ring
+            )
             classification = classify_screen(
                 bytes(tail).decode("utf-8", errors="replace")
             )
             key = (classification.state, classification.decoded_input_safe)
             if self._last_native_state.get(session_id) != key:
                 self._last_native_state[session_id] = key
-                self._bus.publish({
-                    "type": "pty_native_state",
-                    "session_id": session_id,
-                    "state": classification.state,
-                    "decoded_input_safe": classification.decoded_input_safe,
-                })
+                self._bus.publish(
+                    {
+                        "type": "pty_native_state",
+                        "session_id": session_id,
+                        "state": classification.state,
+                        "decoded_input_safe": classification.decoded_input_safe,
+                    }
+                )
         except Exception as exc:
             _log.warning(
                 "pty: native state publish raised (session %s): %s",
@@ -1852,18 +1886,18 @@ class PtyManager:
             # invoking us). Inspect the trailing window covering the
             # boundary between the previous chunk and this one.
             ring = state.ring
-            window_start = max(
-                0, len(ring) - len(chunk) - _AUTH_REQUIRED_CARRYOVER
-            )
+            window_start = max(0, len(ring) - len(chunk) - _AUTH_REQUIRED_CARRYOVER)
             hit = _AUTH_REQUIRED_PATTERN in ring[window_start:]
         if not hit:
             return
         state.auth_required_emitted = True
         try:
-            self._bus.publish({
-                "type": "auth_required",
-                "session_id": channel.session_id,
-            })
+            self._bus.publish(
+                {
+                    "type": "auth_required",
+                    "session_id": channel.session_id,
+                }
+            )
         except Exception as exc:
             _log.warning(
                 "pty: auth_required publish raised (session %s): %s",
@@ -1874,12 +1908,14 @@ class PtyManager:
     def _publish_native_dead_state(self, channel: PtyChannel) -> None:
         """PtyChannel ``on_dead`` hook — publish terminal Native View state."""
         try:
-            self._bus.publish({
-                "type": "pty_native_state",
-                "session_id": channel.session_id,
-                "state": "dead",
-                "decoded_input_safe": False,
-            })
+            self._bus.publish(
+                {
+                    "type": "pty_native_state",
+                    "session_id": channel.session_id,
+                    "state": "dead",
+                    "decoded_input_safe": False,
+                }
+            )
         except Exception as exc:
             _log.warning(
                 "pty: native dead-state publish raised (session %s): %s",
@@ -1909,10 +1945,12 @@ class PtyManager:
             if managed is None:
                 return
             if managed.channel.last_pty_output_seq() > submit_output_seq:
-                self._bus.publish({
-                    "type": "pty_input_acknowledged",
-                    "session_id": session_id,
-                })
+                self._bus.publish(
+                    {
+                        "type": "pty_input_acknowledged",
+                        "session_id": session_id,
+                    }
+                )
                 if submit_kind == "slash":
                     managed.channel._publish_submit_completed(
                         kind="slash",
@@ -1927,11 +1965,13 @@ class PtyManager:
             if managed is None:
                 return
             if managed.channel.last_pty_output_seq() <= submit_output_seq:
-                self._bus.publish({
-                    "type": "pty_input_stalled",
-                    "session_id": session_id,
-                    "elapsed_ms": _now_ms() - submit_ms,
-                })
+                self._bus.publish(
+                    {
+                        "type": "pty_input_stalled",
+                        "session_id": session_id,
+                        "elapsed_ms": _now_ms() - submit_ms,
+                    }
+                )
         except asyncio.CancelledError:
             # Newer submit superseded this watchdog — silent exit.
             pass
@@ -2188,7 +2228,10 @@ class PtyManager:
             foreign = [sc.pid] if sc.hostname == socket.gethostname() else []
             _log.info(
                 "pty: lock race lost (session %s) — held by %s@%s pid %d",
-                session_id, sc.owner_kind, sc.hostname, sc.pid,
+                session_id,
+                sc.owner_kind,
+                sc.hostname,
+                sc.pid,
             )
             raise PtyOwnershipConflict(foreign)
         except Exception as exc:

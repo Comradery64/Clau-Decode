@@ -35,10 +35,10 @@ jobs:
         run: uv sync --extra dev
 
       - name: Install ruff
-        # ruff is not declared as a project dev dependency; install it here so
-        # CI lint/format checks don't drift with whatever a contributor happens
-        # to have locally.
-        run: uv pip install ruff
+        # Pinned (and kept in lockstep with .pre-commit-config.yaml's ruff rev) so
+        # CI lint/format results can't drift when a new ruff release changes default
+        # rules or formatting. Bump both together intentionally.
+        run: uv pip install ruff==0.15.12
 
       - name: Lint (ruff check)
         run: uv run ruff check .

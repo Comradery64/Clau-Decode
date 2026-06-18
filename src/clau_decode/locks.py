@@ -319,7 +319,8 @@ class LockSidecar:
                 except Exception as exc:  # pragma: no cover — defensive
                     _log.warning(
                         "locks: heartbeat refresh failed for %s: %s",
-                        self.jsonl_path, exc,
+                        self.jsonl_path,
+                        exc,
                     )
         except asyncio.CancelledError:
             return

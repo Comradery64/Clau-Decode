@@ -72,6 +72,7 @@ from pathlib import Path
 # Argv parsing
 # ---------------------------------------------------------------------------
 
+
 def _parse_argv(argv: list[str]) -> dict:
     opts: dict = {
         "capture_env": None,
@@ -116,6 +117,7 @@ def _parse_argv(argv: list[str]) -> dict:
 # ---------------------------------------------------------------------------
 # JSONL path helpers
 # ---------------------------------------------------------------------------
+
 
 def _encode_cwd(cwd: str) -> str:
     """Encode a filesystem path the same way real claude does."""
@@ -173,11 +175,15 @@ def _emit_btw_modal(response_text: str, variant: str) -> None:
         # in the render block is NOT followed by a colour escape — it is
         # immediately followed by printable text. Then additional words are
         # placed via absolute column ESC[NG jumps.
-        lines = response_text.splitlines() if "\n" in response_text else [
-            response_text,
-            "Second line of the multi-line response.",
-            "Third line here.",
-        ]
+        lines = (
+            response_text.splitlines()
+            if "\n" in response_text
+            else [
+                response_text,
+                "Second line of the multi-line response.",
+                "Third line here.",
+            ]
+        )
         for i, line in enumerate(lines):
             # ESC[4C ESC[3A cursor-rel sequence immediately followed by the
             # first word of the line (no ESC between — this is the key
@@ -204,12 +210,17 @@ def _emit_btw_modal(response_text: str, variant: str) -> None:
     # Footer with BTW_RESPONSE_COMPLETE_MARKER.
     # The full footer is "↑/↓scroll · f to fork · Esc to close" but the
     # stable capture marker is just the leading ↑/↓ bytes.
-    os.write(fd, _BTW_RESPONSE_COMPLETE_MARKER + b"scroll \xc2\xb7 f to fork \xc2\xb7 Esc to close\r\n")
+    os.write(
+        fd,
+        _BTW_RESPONSE_COMPLETE_MARKER
+        + b"scroll \xc2\xb7 f to fork \xc2\xb7 Esc to close\r\n",
+    )
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
     # ``auth status`` probe — clau-decode's pty_runner calls this before every
@@ -288,7 +299,7 @@ def main() -> int:
             if byte == 0x03:  # Ctrl-C
                 break
 
-            if byte == 0x1b and in_btw_modal:
+            if byte == 0x1B and in_btw_modal:
                 # ESC dismiss — tear down the modal and redraw normal prompt.
                 in_btw_modal = False
                 # Emit the erase-line sequences real claude sends on ESC.

@@ -94,13 +94,18 @@ async def daily(conn) -> list[dict[str, Any]]:
     out = []
     for r in await _rows(conn, sql):
         it, ot, cc, cr = r["it"], r["ot"], r["cc"], r["cr"]
-        out.append({
-            "day": r["day"],
-            "input_tokens": it, "output_tokens": ot,
-            "cache_creation_tokens": cc, "cache_read_tokens": cr,
-            "total": it + ot + cc + cr,
-            "prompt_count": r["prompts"], "session_count": r["sessions"],
-        })
+        out.append(
+            {
+                "day": r["day"],
+                "input_tokens": it,
+                "output_tokens": ot,
+                "cache_creation_tokens": cc,
+                "cache_read_tokens": cr,
+                "total": it + ot + cc + cr,
+                "prompt_count": r["prompts"],
+                "session_count": r["sessions"],
+            }
+        )
     return out
 
 
@@ -117,8 +122,10 @@ async def models(conn) -> list[dict[str, Any]]:
     """
     return [
         {
-            "model": r["model"], "message_count": r["message_count"],
-            "input_tokens": r["input_tokens"], "output_tokens": r["output_tokens"],
+            "model": r["model"],
+            "message_count": r["message_count"],
+            "input_tokens": r["input_tokens"],
+            "output_tokens": r["output_tokens"],
             "total_tokens": r["total_tokens"],
         }
         for r in await _rows(conn, sql)
@@ -137,7 +144,9 @@ async def prompt_stats(conn) -> dict[str, Any]:
     """
     inputs, outputs, totals = [], [], []
     for r in await _rows(conn, sql):
-        inputs.append(r["it"]); outputs.append(r["ot"]); totals.append(r["tot"])
+        inputs.append(r["it"])
+        outputs.append(r["ot"])
+        totals.append(r["tot"])
     return {
         "prompt_count": len(inputs),
         "input_tokens": compute_stats(inputs),
@@ -149,11 +158,13 @@ async def prompt_stats(conn) -> dict[str, Any]:
 async def _low_cache_totals(conn) -> tuple[int, int]:
     """(total_input, total_cache_read) over assistant messages with usage
     (from ``_usage``) — the inputs LowCacheHitRule needs."""
-    row = (await _rows(
-        conn,
-        "SELECT SUM(it+cr+cc) AS total_input, SUM(cr) AS cache_read "
-        "FROM _usage WHERE role='assistant' AND has_usage=1",
-    ))[0]
+    row = (
+        await _rows(
+            conn,
+            "SELECT SUM(it+cr+cc) AS total_input, SUM(cr) AS cache_read "
+            "FROM _usage WHERE role='assistant' AND has_usage=1",
+        )
+    )[0]
     return row["total_input"] or 0, row["cache_read"] or 0
 
 
@@ -180,10 +191,18 @@ async def _tips(conn, cache_totals: tuple[int, int]) -> list[dict[str, Any]]:
             ORDER BY m.timestamp, m.rowid, mb.block_index""",
         _RW_TOOLS,
     )
-    repeated = RepeatedFileReadRule().check([
-        _fake_msg([ToolUseBlock(id="t", name=r["name"], input={"file_path": r["path"] or ""})])
-        for r in rw_rows
-    ])
+    repeated = RepeatedFileReadRule().check(
+        [
+            _fake_msg(
+                [
+                    ToolUseBlock(
+                        id="t", name=r["name"], input={"file_path": r["path"] or ""}
+                    )
+                ]
+            )
+            for r in rw_rows
+        ]
+    )
 
     over_rows = await _rows(
         conn,
@@ -193,10 +212,14 @@ async def _tips(conn, cache_totals: tuple[int, int]) -> list[dict[str, Any]]:
            ORDER BY m.timestamp, m.rowid, mb.block_index""",
         (OversizedToolResultRule()._threshold,),
     )
-    oversized = OversizedToolResultRule().check([
-        _fake_msg([ToolResultBlock(tool_use_id=r["tid"] or "", content="x" * r["chars"])])
-        for r in over_rows
-    ])
+    oversized = OversizedToolResultRule().check(
+        [
+            _fake_msg(
+                [ToolResultBlock(tool_use_id=r["tid"] or "", content="x" * r["chars"])]
+            )
+            for r in over_rows
+        ]
+    )
 
     total_input, cache_read = cache_totals
     usage_msg = _fake_msg([])
@@ -211,8 +234,11 @@ async def _tips(conn, cache_totals: tuple[int, int]) -> list[dict[str, Any]]:
     )
     return [
         {
-            "rule_id": t.rule_id, "severity": t.severity, "title": t.title,
-            "detail": t.detail, "evidence": t.evidence,
+            "rule_id": t.rule_id,
+            "severity": t.severity,
+            "title": t.title,
+            "detail": t.detail,
+            "evidence": t.evidence,
         }
         for t in tips
     ]
