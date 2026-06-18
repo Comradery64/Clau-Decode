@@ -53,11 +53,17 @@ uv tool install git+https://github.com/Comradery64/Clau-Decode.git
 pipx install git+https://github.com/Comradery64/Clau-Decode.git
 
 clau-decode                 # opens http://localhost:4242
-# update later:  uv tool upgrade clau-decode    (or: pipx upgrade clau-decode)
+
+# update later — re-pull the latest from main (git installs need --force;
+# plain `upgrade`/`reinstall` won't fetch new commits):
+uv tool install --force git+https://github.com/Comradery64/Clau-Decode.git
+# or:
+pipx install --force git+https://github.com/Comradery64/Clau-Decode.git
 ```
 
 Requires Python 3.10+. The wheel ships the pre-built frontend, so **no Node.js is needed** — only for development. All data stays on your machine — no telemetry.
 
+> Just trying it out? Run without installing: `uvx --from git+https://github.com/Comradery64/Clau-Decode.git clau-decode`
 > Prefer not to install? Run it straight from a clone — see [Development](#development).
 > Advanced: `pip install` works too, but only **inside an activated virtualenv** — never your system/Homebrew Python (PEP 668 will block it, and a global install can shadow other checkouts).
 
