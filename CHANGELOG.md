@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- **`clau-decode migrate` subcommand** — merge and relocate Claude Code chat history
+  and configs across machines. Folds one or more source config trees (e.g. a vanilla
+  `~/.claude` plus mirrored profiles) into a destination `~/.claude`, rewriting a
+  project-path prefix so chats stay viewable *and* resumable after the absolute project
+  path changes. Carries top-level sessions and nested subagent transcripts, unions
+  `.claude.json` project/trust entries and `history.jsonl` (deduped + time-sorted), and
+  copies human configs non-destructively (a differing destination file is never
+  overwritten — the incoming copy lands as a `.from-<source>` sidecar). Dry-run by
+  default; `--apply` is gated behind `--i-have-a-backup`. Pure standard library.
+
 ## [0.3.1.3] - 2026-06-15
 
 ### Fixed
