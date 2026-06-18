@@ -65,10 +65,7 @@ from .analytics import fast as analytics_fast
 from .analytics.pricing import CachedPricingStrategy, _HARDCODED_RATES
 from .analytics.service import TokenAnalyticsService as _AnalyticsSvc
 from .analytics.stats import (
-    FileTouchScanner,
     ModelUsageScanner,
-    PromptStatsScanner,
-    ToolUsageScanner,
 )
 from .analytics.tips import (
     LowCacheHitRule,
@@ -243,7 +240,7 @@ def _extract_worktree_name(file_path: str, cwd: str | None) -> str | None:
         marker = "/.claude/worktrees/"
         idx = cwd.find(marker)
         if idx >= 0:
-            return cwd[idx + len(marker):]
+            return cwd[idx + len(marker) :]
     # Fall back to the mangled project directory name in the file_path.
     parts = Path(file_path).parts
     for i, p in enumerate(parts):
@@ -252,7 +249,7 @@ def _extract_worktree_name(file_path: str, cwd: str | None) -> str | None:
             marker = "worktrees-"
             idx = mangled.find(marker)
             if idx >= 0:
-                return mangled[idx + len(marker):]
+                return mangled[idx + len(marker) :]
             break
     return None
 
@@ -338,6 +335,7 @@ class _SessionViewedRequest(BaseModel):
 class _LocalStorageMigrationRequest(BaseModel):
     """One-time payload uploaded by the FE the first time it loads with the
     server-backed meta. Maps existing localStorage flags into session_meta."""
+
     archived: list[str] = []
     starred: list[str] = []
     viewed_at: dict[str, str] = {}
@@ -621,9 +619,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         # clau-decode reading the lock can render "open in UI at ..."
         # in its take-over banner. Best-effort — config.host of
         # "0.0.0.0" gets normalised to "127.0.0.1" for the URL.
-        _ui_host = (
-            "127.0.0.1" if config.host in ("0.0.0.0", "::") else config.host
-        )
+        _ui_host = "127.0.0.1" if config.host in ("0.0.0.0", "::") else config.host
         # PtyManager holds a long-lived Database reference for Phase 2 /btw
         # capture (`record_ephemeral_input` / `record_ephemeral_response`).
         # The async-context-manager MUST be entered here so ``_conn`` is
@@ -634,7 +630,8 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         # connections from contending.
         async with Database(db_path) as _pty_db:
             _pty_manager = PtyManager(
-                _pty_db, _bus,
+                _pty_db,
+                _bus,
                 ui_endpoint=f"http://{_ui_host}:{config.port}",
             )
             app.state.pty_manager = _pty_manager
@@ -813,9 +810,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         # Synthesize a plausible file_path so ``_derive_bin_name`` and the
         # frontend's worktree-extraction logic stay consistent once the
         # real JSONL replaces the placeholder via the SSE refresh event.
-        file_path = str(
-            Path(pending.cwd) / ".pending" / f"{session_id}.jsonl"
-        )
+        file_path = str(Path(pending.cwd) / ".pending" / f"{session_id}.jsonl")
         return {
             "id": session_id,
             "project_id": "",
@@ -1147,7 +1142,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         ]
 
         if format == "json":
-            data = export_json(detail, cost=cost, prompts=prompts_dicts, ephemerals=ephemerals)
+            data = export_json(
+                detail, cost=cost, prompts=prompts_dicts, ephemerals=ephemerals
+            )
             import json as _json
 
             slug = (detail.title or detail.id).replace(" ", "_").lower()
@@ -1159,7 +1156,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         else:
             pricing = _pricing_strat.get_pricing(model)
             md = export_markdown(
-                detail, cost=cost, prompts=prompts_dicts, pricing=pricing,
+                detail,
+                cost=cost,
+                prompts=prompts_dicts,
+                pricing=pricing,
                 ephemerals=ephemerals,
             )
             slug = (detail.title or detail.id).replace(" ", "_").lower()
@@ -1266,9 +1266,17 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Directory not found: {cwd}")
         _reject_root_cwd(cwd, "open a terminal")
         bin_name = _derive_bin_name(detail.file_path)
-        wt = _extract_worktree_name(detail.file_path, detail.cwd) if detail.is_worktree else None
+        wt = (
+            _extract_worktree_name(detail.file_path, detail.cwd)
+            if detail.is_worktree
+            else None
+        )
         quoted_bin = shlex.quote(bin_name)
-        cmd = f"{quoted_bin} -w {shlex.quote(wt)} -r {session_id}" if wt else f"{quoted_bin} -r {session_id}"
+        cmd = (
+            f"{quoted_bin} -w {shlex.quote(wt)} -r {session_id}"
+            if wt
+            else f"{quoted_bin} -r {session_id}"
+        )
         # Apply the same API-key cleanup for every terminal launch. Subscription
         # CLIs avoid unexpected-key prompts; API-key CLIs that need a key can
         # re-read it from their own shell/keychain setup.
@@ -1379,9 +1387,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         # CLI now rather than only on their first message.
         bin_name = _active_profile_bin_name(_state["config"])
         if shutil.which(bin_name) is None:
-            raise HTTPException(
-                status_code=503, detail=f"{bin_name} not found on PATH"
-            )
+            raise HTTPException(status_code=503, detail=f"{bin_name} not found on PATH")
 
         permission_mode = (
             req.permission_mode
@@ -1487,6 +1493,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             # sidebar between file creation and the recap runner's
             # cleanup unlink.
             import uuid
+
             fork_id = str(uuid.uuid4())
             _deleted_tombstones.add(fork_id)
             # Pre-empt the trust-this-folder TUI dialog (same as the
@@ -1494,9 +1501,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             # spawn into a fresh cwd would eat the recap prompt while
             # waiting for the user to confirm trust.
             try:
-                _ensure_trust(
-                    _config_dir_for_bin(_state["config"], bin_name), cwd
-                )
+                _ensure_trust(_config_dir_for_bin(_state["config"], bin_name), cwd)
             except Exception as exc:
                 _log.warning(
                     "recap: trust pre-flight failed for %s in %s: %s",
@@ -1580,9 +1585,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 raise HTTPException(status_code=404, detail="Session not found")
             stored = await db.set_archived(session_id, req.archived)
         _invalidate_detail_cache(session_id)
-        _bus.publish(
-            {"type": "session-meta", "id": session_id, "archived_at": stored}
-        )
+        _bus.publish({"type": "session-meta", "id": session_id, "archived_at": stored})
         return {"ok": True, "id": session_id, "archived_at": stored}
 
     @app.put("/api/sessions/{session_id}/starred")
@@ -1593,9 +1596,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 raise HTTPException(status_code=404, detail="Session not found")
             stored = await db.set_starred(session_id, req.starred)
         _invalidate_detail_cache(session_id)
-        _bus.publish(
-            {"type": "session-meta", "id": session_id, "starred_at": stored}
-        )
+        _bus.publish({"type": "session-meta", "id": session_id, "starred_at": stored})
         return {"ok": True, "id": session_id, "starred_at": stored}
 
     @app.put("/api/sessions/{session_id}/viewed")
@@ -1611,9 +1612,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 raise HTTPException(status_code=404, detail="Session not found")
             stored = await db.set_viewed_at(session_id, req.viewed_at)
         _invalidate_detail_cache(session_id)
-        _bus.publish(
-            {"type": "session-meta", "id": session_id, "viewed_at": stored}
-        )
+        _bus.publish({"type": "session-meta", "id": session_id, "viewed_at": stored})
         return {"ok": True, "id": session_id, "viewed_at": stored}
 
     @app.post("/api/sessions/migrate-localstorage")
@@ -2112,13 +2111,17 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
 
     @app.post("/api/pty/focus")
     async def pty_focus(req: _PtyFocusRequest):
-        bin_name, cwd, permission_mode, resolved_new_chat, jsonl_path = (
-            await _resolve_pty_focus_params(
-                req.session_id,
-                bin_override=req.bin_name,
-                cwd_override=req.cwd,
-                permission_mode_override=req.permission_mode,
-            )
+        (
+            bin_name,
+            cwd,
+            permission_mode,
+            resolved_new_chat,
+            jsonl_path,
+        ) = await _resolve_pty_focus_params(
+            req.session_id,
+            bin_override=req.bin_name,
+            cwd_override=req.cwd,
+            permission_mode_override=req.permission_mode,
         )
         # Caller's explicit req.new_chat wins; otherwise use the resolver's
         # inferred value (True iff session lives in pending_sessions only).
@@ -2220,14 +2223,19 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             # blocked the submit for 10-15s while the new TUI bootstrapped.
             await _pty_manager.switch_model(req.session_id, requested_model)
         if not status.get("alive"):
-            bin_name, cwd, permission_mode, new_chat, jsonl_path = (
-                await _resolve_pty_focus_params(req.session_id)
-            )
+            (
+                bin_name,
+                cwd,
+                permission_mode,
+                new_chat,
+                jsonl_path,
+            ) = await _resolve_pty_focus_params(req.session_id)
             try:
                 _ensure_trust(_config_dir_for_bin(_state["config"], bin_name), cwd)
             except Exception as exc:
-                _log.warning("pty: trust pre-flight failed for %s in %s: %s",
-                             bin_name, cwd, exc)
+                _log.warning(
+                    "pty: trust pre-flight failed for %s in %s: %s", bin_name, cwd, exc
+                )
             try:
                 await _pty_manager.focus(
                     req.session_id,

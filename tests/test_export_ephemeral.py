@@ -9,14 +9,12 @@ Covers:
 - API export routes pass ephemerals through correctly
 """
 
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
 
 from clau_decode.db import Database
-from clau_decode.models import Message, Project, Session, SessionDetail, TextBlock, TokenUsage
+from clau_decode.models import Message, SessionDetail, TextBlock, TokenUsage
 from clau_decode.reporter import export_json, export_markdown
 
 
@@ -62,7 +60,9 @@ def _make_detail(
     )
 
 
-def _make_ephemerals(input_ts: str = "2026-01-01T10:00:30", response_ts: str = "2026-01-01T10:00:35") -> list[dict]:
+def _make_ephemerals(
+    input_ts: str = "2026-01-01T10:00:30", response_ts: str = "2026-01-01T10:00:35"
+) -> list[dict]:
     return [
         {
             "id": 1,
@@ -125,7 +125,15 @@ class TestExportJsonEphemerals:
         ephemerals = _make_ephemerals()
         result = export_json(detail, ephemerals=ephemerals)
         for row in result["ephemerals"]:
-            for key in ("id", "session_id", "kind", "role", "content", "responds_to", "timestamp"):
+            for key in (
+                "id",
+                "session_id",
+                "kind",
+                "role",
+                "content",
+                "responds_to",
+                "timestamp",
+            ):
                 assert key in row, f"Missing key: {key}"
 
 
@@ -231,7 +239,9 @@ class TestExportMarkdownEphemerals:
             "Ephemeral block should appear between before_marker and after_marker"
         )
 
-    def test_markdown_ephemeral_interleaves_legacy_local_naive_timestamps(self, monkeypatch):
+    def test_markdown_ephemeral_interleaves_legacy_local_naive_timestamps(
+        self, monkeypatch
+    ):
         import os
         import time
 
@@ -241,22 +251,24 @@ class TestExportMarkdownEphemerals:
             time.tzset()
 
         try:
-            detail = _make_detail(messages=[
-                Message(
-                    id="before",
-                    session_id="s-export-001",
-                    role="user",
-                    content_blocks=[TextBlock(text="before_marker")],
-                    timestamp=datetime(2026, 6, 4, 0, 15, 0, tzinfo=timezone.utc),
-                ),
-                Message(
-                    id="after",
-                    session_id="s-export-001",
-                    role="user",
-                    content_blocks=[TextBlock(text="after_marker")],
-                    timestamp=datetime(2026, 6, 4, 0, 16, 0, tzinfo=timezone.utc),
-                ),
-            ])
+            detail = _make_detail(
+                messages=[
+                    Message(
+                        id="before",
+                        session_id="s-export-001",
+                        role="user",
+                        content_blocks=[TextBlock(text="before_marker")],
+                        timestamp=datetime(2026, 6, 4, 0, 15, 0, tzinfo=timezone.utc),
+                    ),
+                    Message(
+                        id="after",
+                        session_id="s-export-001",
+                        role="user",
+                        content_blocks=[TextBlock(text="after_marker")],
+                        timestamp=datetime(2026, 6, 4, 0, 16, 0, tzinfo=timezone.utc),
+                    ),
+                ]
+            )
             ephemerals = _make_ephemerals(
                 input_ts="2026-06-03T17:15:30",
                 response_ts="2026-06-03T17:15:35",
@@ -282,7 +294,9 @@ class TestExportMarkdownEphemerals:
 
 
 class TestExportRoutesWithEphemerals:
-    async def _make_client_with_session(self, tmp_path: Path, session_id: str = "s-api-001"):
+    async def _make_client_with_session(
+        self, tmp_path: Path, session_id: str = "s-api-001"
+    ):
         from httpx import AsyncClient, ASGITransport
         from clau_decode.server import create_app
         from clau_decode.config import AppConfig
@@ -303,18 +317,26 @@ class TestExportRoutesWithEphemerals:
             )
             await db._conn.commit()
         app = create_app(AppConfig(), db_path)
-        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test"), db_path
+        return AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ), db_path
 
     async def test_json_export_api_includes_ephemerals_array(self, tmp_path):
         session_id = "s-api-002"
         client, db_path = await self._make_client_with_session(tmp_path, session_id)
         # Seed an ephemeral pair
         async with Database(db_path) as db:
-            uid = await db.record_ephemeral_input(session_id, "api btw test content", timestamp="2026-01-01T10:05:00")
-            await db.record_ephemeral_response(uid, "api btw response", timestamp="2026-01-01T10:05:05")
+            uid = await db.record_ephemeral_input(
+                session_id, "api btw test content", timestamp="2026-01-01T10:05:00"
+            )
+            await db.record_ephemeral_response(
+                uid, "api btw response", timestamp="2026-01-01T10:05:05"
+            )
 
         async with client as c:
-            r = await c.get(f"/api/sessions/{session_id}/export", params={"format": "json"})
+            r = await c.get(
+                f"/api/sessions/{session_id}/export", params={"format": "json"}
+            )
         assert r.status_code == 200
         data = r.json()
         assert "ephemerals" in data
@@ -324,11 +346,17 @@ class TestExportRoutesWithEphemerals:
         session_id = "s-api-003"
         client, db_path = await self._make_client_with_session(tmp_path, session_id)
         async with Database(db_path) as db:
-            uid = await db.record_ephemeral_input(session_id, "markdownbtwtest", timestamp="2026-01-01T10:05:00")
-            await db.record_ephemeral_response(uid, "markdownreplytest", timestamp="2026-01-01T10:05:05")
+            uid = await db.record_ephemeral_input(
+                session_id, "markdownbtwtest", timestamp="2026-01-01T10:05:00"
+            )
+            await db.record_ephemeral_response(
+                uid, "markdownreplytest", timestamp="2026-01-01T10:05:05"
+            )
 
         async with client as c:
-            r = await c.get(f"/api/sessions/{session_id}/export", params={"format": "md"})
+            r = await c.get(
+                f"/api/sessions/{session_id}/export", params={"format": "md"}
+            )
         assert r.status_code == 200
         md = r.text
         assert "[ephemeral · btw]" in md
@@ -339,7 +367,9 @@ class TestExportRoutesWithEphemerals:
         client, db_path = await self._make_client_with_session(tmp_path, session_id)
 
         async with client as c:
-            r = await c.get(f"/api/sessions/{session_id}/export", params={"format": "json"})
+            r = await c.get(
+                f"/api/sessions/{session_id}/export", params={"format": "json"}
+            )
         assert r.status_code == 200
         data = r.json()
         assert data["ephemerals"] == []

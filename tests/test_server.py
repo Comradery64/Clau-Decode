@@ -177,13 +177,15 @@ async def test_pty_takeover_unlinks_cross_host_sidecar(env_with_claude):
     jsonl_path = Path(e["file_path"])
     lock_path = _lock_path_for(jsonl_path)
     lock_path.write_text(
-        json.dumps({
-            "owner_kind": "claude-wrapper",
-            "pid": 22673,
-            "hostname": "peer-laptop.local",
-            "heartbeat_at": datetime.now(timezone.utc).isoformat(),
-            "ui_endpoint": "http://192.168.1.99:4242",
-        })
+        json.dumps(
+            {
+                "owner_kind": "claude-wrapper",
+                "pid": 22673,
+                "hostname": "peer-laptop.local",
+                "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+                "ui_endpoint": "http://192.168.1.99:4242",
+            }
+        )
     )
 
     app = _make_app(e["db_path"], AppConfig())
@@ -192,10 +194,7 @@ async def test_pty_takeover_unlinks_cross_host_sidecar(env_with_claude):
             before = await c.get(f"/api/pty/ownership/{e['session_id']}")
             assert before.status_code == 200, before.text
             assert before.json()["status"] == "terminal"
-            assert (
-                before.json()["foreign_owner"]["hostname"]
-                == "peer-laptop.local"
-            )
+            assert before.json()["foreign_owner"]["hostname"] == "peer-laptop.local"
 
             takeover = await c.post(f"/api/pty/takeover/{e['session_id']}")
             assert takeover.status_code == 200, takeover.text
@@ -230,6 +229,7 @@ async def test_new_session_returns_fresh_uuid(env_with_claude):
     assert body["session_id"] != e["session_id"]  # NOT the seeded session
     # UUIDv4 shape (8-4-4-4-12 hex)
     import re
+
     assert re.fullmatch(
         r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
         body["session_id"],
@@ -389,11 +389,14 @@ async def test_existing_static_assets_are_not_cached(tmp_path):
         asset = next(
             part
             for part in r.text.split('"')
-            if part.startswith("/assets/") and (part.endswith(".js") or part.endswith(".css"))
+            if part.startswith("/assets/")
+            and (part.endswith(".js") or part.endswith(".css"))
         )
         asset_response = await c.get(asset)
     assert asset_response.status_code == 200
-    assert asset_response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+    assert (
+        asset_response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+    )
 
 
 async def test_spa_unknown_route_still_serves_index(tmp_path):
@@ -443,13 +446,25 @@ async def test_ephemerals_endpoint_returns_paired_rows_in_order(tmp_path):
     sid = "test-sid-aaaa"
     async with Database(db_path) as db:
         await db.init_schema()
-        in1 = await db.record_ephemeral_input(sid, "/btw first?", timestamp="2026-05-28T10:00:00")
-        await db.record_ephemeral_response(in1, "first answer", timestamp="2026-05-28T10:00:01")
-        in2 = await db.record_ephemeral_input(sid, "/btw second?", timestamp="2026-05-28T10:00:02")
-        await db.record_ephemeral_response(in2, "second answer", timestamp="2026-05-28T10:00:03")
+        in1 = await db.record_ephemeral_input(
+            sid, "/btw first?", timestamp="2026-05-28T10:00:00"
+        )
+        await db.record_ephemeral_response(
+            in1, "first answer", timestamp="2026-05-28T10:00:01"
+        )
+        in2 = await db.record_ephemeral_input(
+            sid, "/btw second?", timestamp="2026-05-28T10:00:02"
+        )
+        await db.record_ephemeral_response(
+            in2, "second answer", timestamp="2026-05-28T10:00:03"
+        )
         # Unrelated session — must not leak into the response
-        other = await db.record_ephemeral_input("other-sid", "/btw nope?", timestamp="2026-05-28T10:00:04")
-        await db.record_ephemeral_response(other, "nope", timestamp="2026-05-28T10:00:05")
+        other = await db.record_ephemeral_input(
+            "other-sid", "/btw nope?", timestamp="2026-05-28T10:00:04"
+        )
+        await db.record_ephemeral_response(
+            other, "nope", timestamp="2026-05-28T10:00:05"
+        )
 
     config = AppConfig(data_paths=[str(tmp_path)])
     app = _make_app(db_path, config)
@@ -622,7 +637,10 @@ async def test_btw_endtoend_via_lifespan_emits_sse_event(tmp_path, monkeypatch):
                 except asyncio.QueueEmpty:
                     await asyncio.sleep(0.1)
                     continue
-                if isinstance(evt, dict) and evt.get("type") == "ephemeral_pair_persisted":
+                if (
+                    isinstance(evt, dict)
+                    and evt.get("type") == "ephemeral_pair_persisted"
+                ):
                     target = evt
                     break
 
@@ -782,9 +800,7 @@ async def test_flag_endpoint_publishes_session_meta_sse_event(env_with_claude):
         # The pty_manager carries the same instance.
         bus_queue = app.state.pty_manager._bus.subscribe()
         async with await _client(app) as c:
-            await c.put(
-                f"/api/sessions/{sid}/archived", json={"archived": True}
-            )
+            await c.put(f"/api/sessions/{sid}/archived", json={"archived": True})
 
         # Drain looking for our event.
         target = None

@@ -70,6 +70,7 @@ def _write_tui_shim(bin_dir: Path, extra_argv: list[str] | None = None) -> Path:
 
 class _StubDB:
     """Minimal DB stub — PtyManager Phase 1 doesn't call any DB methods."""
+
     pass
 
 
@@ -231,23 +232,27 @@ def test_pgrep_session_id_uses_flag_qualified_regex(monkeypatch):
         stdout = "123\n456\n"
 
     def fake_run(args, *, capture_output, text, timeout):
-        calls.append({
-            "args": args,
-            "capture_output": capture_output,
-            "text": text,
-            "timeout": timeout,
-        })
+        calls.append(
+            {
+                "args": args,
+                "capture_output": capture_output,
+                "text": text,
+                "timeout": timeout,
+            }
+        )
         return Result()
 
     monkeypatch.setattr(pr_mod.subprocess, "run", fake_run)
 
     assert pr_mod._pgrep_session_id("abc-123") == [123, 456]
-    assert calls == [{
-        "args": ["pgrep", "-f", r"(--resume|--session-id|-r)[= ]abc-123"],
-        "capture_output": True,
-        "text": True,
-        "timeout": 2.0,
-    }]
+    assert calls == [
+        {
+            "args": ["pgrep", "-f", r"(--resume|--session-id|-r)[= ]abc-123"],
+            "capture_output": True,
+            "text": True,
+            "timeout": 2.0,
+        }
+    ]
 
 
 async def test_pty_env_forces_color_capable_terminal(monkeypatch):
@@ -510,7 +515,9 @@ async def test_submit_after_kill_auto_respawns(tui_shim_path, tmp_path, monkeypa
         assert managed_c is not None, "submit() should have auto-spawned a new channel"
         channel_c = managed_c.channel
         # channel identities must differ (truly new spawn)
-        assert channel_c is not channel_b, "submit auto-respawn must create a new channel"
+        assert channel_c is not channel_b, (
+            "submit auto-respawn must create a new channel"
+        )
         await _wait_alive(channel_c)
         assert channel_c.is_alive()
 
@@ -637,7 +644,9 @@ async def test_resubmit_after_idle_kill_respawns(tui_shim_path, tmp_path, monkey
         await m.submit(session_id, "hello after idle kill")
 
         new_managed = m._channels.get(session_id)
-        assert new_managed is not None, "submit() should have auto-spawned a new channel"
+        assert new_managed is not None, (
+            "submit() should have auto-spawned a new channel"
+        )
         new_channel = new_managed.channel
         assert new_channel is not original_channel, (
             "auto-respawn must create a fresh PtyChannel"
@@ -730,9 +739,7 @@ async def test_switch_model_returns_false_when_no_live_channel(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-async def test_spawned_subprocess_does_not_inherit_api_key(
-    monkeypatch, tmp_path
-):
+async def test_spawned_subprocess_does_not_inherit_api_key(monkeypatch, tmp_path):
     """End-to-end: ANTHROPIC_API_KEY/AUTH_TOKEN set in the parent's environ
     must not reach the child process spawned by PtyManager/PtyChannel.
 
@@ -746,6 +753,7 @@ async def test_spawned_subprocess_does_not_inherit_api_key(
     bin_dir.mkdir()
 
     import sys
+
     shim = bin_dir / "claude"
     python = sys.executable
     capture_path = str(env_capture)
@@ -800,7 +808,7 @@ async def test_spawned_subprocess_does_not_inherit_api_key(
             await asyncio.sleep(0.05)
 
         assert env_capture.exists(), (
-            f"child_env.json not written within 5s (shim may have failed to start)"
+            "child_env.json not written within 5s (shim may have failed to start)"
         )
 
         child_env = json.loads(env_capture.read_text())
@@ -1047,7 +1055,9 @@ async def test_auth_required_emitted_on_not_logged_in_pattern(tmp_path):
         m._scan_chunk_for_hitl(channel, b"\x1b[?2004h\xe2\x9c\xb3 welcome\r\n> ")
         assert q.get_nowait()["type"] == "pty_output_chunk"
         assert q.get_nowait()["type"] == "pty_native_state"
-        assert q.empty(), "no auth_required event should fire before the pattern appears"
+        assert q.empty(), (
+            "no auth_required event should fire before the pattern appears"
+        )
         assert channel._state.auth_required_emitted is False
 
         # 2. Chunk containing the marker → exactly one auth_required event.
@@ -1302,9 +1312,7 @@ async def test_session_lock_identity_per_sid(tmp_path):
         await m.shutdown()
 
 
-async def test_submit_blocks_on_per_session_lock(
-    tui_shim_path, tmp_path, monkeypatch
-):
+async def test_submit_blocks_on_per_session_lock(tui_shim_path, tmp_path, monkeypatch):
     """A pre-acquired ``_session_lock(sid)`` blocks ``submit(sid)``.
 
     Proves the lock encompasses submit's PTY-write critical section —
@@ -1317,8 +1325,12 @@ async def test_submit_blocks_on_per_session_lock(
     sid = "sess-phase3-block"
     try:
         await m.focus(
-            sid, cwd=str(tmp_path), bin_name="claude", model="",
-            permission_mode="dontAsk", new_chat=True,
+            sid,
+            cwd=str(tmp_path),
+            bin_name="claude",
+            model="",
+            permission_mode="dontAsk",
+            new_chat=True,
         )
         await _wait_alive(m._channels[sid].channel)
 
@@ -1329,8 +1341,7 @@ async def test_submit_blocks_on_per_session_lock(
             # Give the loop a few ticks; submit must be parked on the lock.
             await asyncio.sleep(0.15)
             assert not submit_task.done(), (
-                "submit on the same sid should block while the per-session "
-                "lock is held"
+                "submit on the same sid should block while the per-session lock is held"
             )
         finally:
             sid_lock.release()
@@ -1340,9 +1351,7 @@ async def test_submit_blocks_on_per_session_lock(
         await m.shutdown()
 
 
-async def test_submit_does_not_block_across_sids(
-    tui_shim_path, tmp_path, monkeypatch
-):
+async def test_submit_does_not_block_across_sids(tui_shim_path, tmp_path, monkeypatch):
     """A held lock on sid X does NOT delay a submit on sid Y.
 
     The whole point of the per-session lock is fine-grained
@@ -1357,8 +1366,12 @@ async def test_submit_does_not_block_across_sids(
     try:
         for sid in (sid_a, sid_b):
             await m.focus(
-                sid, cwd=str(tmp_path), bin_name="claude", model="",
-                permission_mode="dontAsk", new_chat=True,
+                sid,
+                cwd=str(tmp_path),
+                bin_name="claude",
+                model="",
+                permission_mode="dontAsk",
+                new_chat=True,
             )
             await _wait_alive(m._channels[sid].channel)
 
@@ -1559,9 +1572,7 @@ async def test_resize_rows_only_preserves_ring(tui_shim_path, tmp_path, monkeypa
         await m.shutdown()
 
 
-async def test_pty_output_chunk_published_on_read(
-    tui_shim_path, tmp_path, monkeypatch
-):
+async def test_pty_output_chunk_published_on_read(tui_shim_path, tmp_path, monkeypatch):
     """Every drained PTY chunk is broadcast for Native View rendering."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude_config"))
     bus = EventBroadcaster()
@@ -1616,9 +1627,7 @@ async def test_native_snapshot_classifies_ring_state(
         await m.shutdown()
 
 
-async def test_pty_native_state_published_on_read(
-    tui_shim_path, tmp_path, monkeypatch
-):
+async def test_pty_native_state_published_on_read(tui_shim_path, tmp_path, monkeypatch):
     """PTY output publishes the current conservative native state."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude_config"))
     bus = EventBroadcaster()

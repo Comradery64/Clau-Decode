@@ -193,8 +193,12 @@ class TestRecordEphemeralResponse:
             await db.record_ephemeral_response(999999, "answer for nobody")
 
     async def test_custom_timestamp_respected(self, db):
-        input_id = await db.record_ephemeral_input("sess-ts2", "q", timestamp="2026-01-01T09:00:00")
-        await db.record_ephemeral_response(input_id, "a", timestamp="2026-01-01T09:00:05")
+        input_id = await db.record_ephemeral_input(
+            "sess-ts2", "q", timestamp="2026-01-01T09:00:00"
+        )
+        await db.record_ephemeral_response(
+            input_id, "a", timestamp="2026-01-01T09:00:05"
+        )
         rows = await db.get_ephemeral_messages("sess-ts2")
         resp_row = next(r for r in rows if r["role"] == "assistant")
         assert resp_row["timestamp"] == "2026-01-01T09:00:05"
@@ -214,7 +218,9 @@ class TestGetEphemeralMessages:
         input_id = await db.record_ephemeral_input(
             "sess-ord", "user q", timestamp="2026-01-01T10:00:00"
         )
-        await db.record_ephemeral_response(input_id, "assistant a", timestamp="2026-01-01T10:00:05")
+        await db.record_ephemeral_response(
+            input_id, "assistant a", timestamp="2026-01-01T10:00:05"
+        )
         rows = await db.get_ephemeral_messages("sess-ord")
         assert len(rows) == 2
         assert rows[0]["role"] == "user"
@@ -232,9 +238,13 @@ class TestGetEphemeralMessages:
         assert all(r["session_id"] == "sess-B" for r in rows_b)
 
     async def test_multiple_exchanges_in_order(self, db):
-        id1 = await db.record_ephemeral_input("sess-multi", "q1", timestamp="2026-01-01T10:00:00")
+        id1 = await db.record_ephemeral_input(
+            "sess-multi", "q1", timestamp="2026-01-01T10:00:00"
+        )
         await db.record_ephemeral_response(id1, "a1", timestamp="2026-01-01T10:00:05")
-        id2 = await db.record_ephemeral_input("sess-multi", "q2", timestamp="2026-01-01T10:01:00")
+        id2 = await db.record_ephemeral_input(
+            "sess-multi", "q2", timestamp="2026-01-01T10:01:00"
+        )
         await db.record_ephemeral_response(id2, "a2", timestamp="2026-01-01T10:01:05")
 
         rows = await db.get_ephemeral_messages("sess-multi")
@@ -271,11 +281,15 @@ class TestSearchEphemeral:
         await db.record_ephemeral_input("sess-fts-A", "unique_word_A_only")
         await db.record_ephemeral_input("sess-fts-B", "unique_word_B_only")
 
-        hits_a = await db.search_ephemeral("unique_word_A_only", session_id="sess-fts-A")
+        hits_a = await db.search_ephemeral(
+            "unique_word_A_only", session_id="sess-fts-A"
+        )
         assert len(hits_a) == 1
         assert hits_a[0]["session_id"] == "sess-fts-A"
 
-        hits_b_in_a = await db.search_ephemeral("unique_word_B_only", session_id="sess-fts-A")
+        hits_b_in_a = await db.search_ephemeral(
+            "unique_word_B_only", session_id="sess-fts-A"
+        )
         assert hits_b_in_a == []
 
     async def test_fts_unscoped_search_crosses_sessions(self, db):

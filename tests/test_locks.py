@@ -102,13 +102,15 @@ def test_acquire_raises_lock_already_held_for_fresh_foreign_lock(tmp_path):
     fire) — acquire from us must raise."""
     jsonl = _jsonl(tmp_path)
     _lock_path_for(jsonl).write_text(
-        json.dumps({
-            "owner_kind": "clau-decode",
-            "pid": 1,  # init — alive but not ours
-            "hostname": socket.gethostname() + "-other",  # foreign host
-            "heartbeat_at": datetime.now(timezone.utc).isoformat(),
-            "ui_endpoint": "http://other.host:4242",
-        })
+        json.dumps(
+            {
+                "owner_kind": "clau-decode",
+                "pid": 1,  # init — alive but not ours
+                "hostname": socket.gethostname() + "-other",  # foreign host
+                "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+                "ui_endpoint": "http://other.host:4242",
+            }
+        )
     )
     with pytest.raises(LockAlreadyHeld) as exc:
         LockSidecar.acquire(jsonl, owner_kind="clau-decode")
@@ -123,13 +125,15 @@ def test_acquire_takes_over_stale_lock_with_dead_pid(tmp_path):
     # ESRCH on macOS + Linux.
     dead_pid = 999_999
     _lock_path_for(jsonl).write_text(
-        json.dumps({
-            "owner_kind": "clau-decode",
-            "pid": dead_pid,
-            "hostname": socket.gethostname(),  # same host so PID probe fires
-            "heartbeat_at": datetime.now(timezone.utc).isoformat(),
-            "ui_endpoint": None,
-        })
+        json.dumps(
+            {
+                "owner_kind": "clau-decode",
+                "pid": dead_pid,
+                "hostname": socket.gethostname(),  # same host so PID probe fires
+                "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+                "ui_endpoint": None,
+            }
+        )
     )
     # The pre-existing sidecar should look stale.
     pre = LockSidecar.read(jsonl)
@@ -149,13 +153,15 @@ def test_same_host_eperm_pid_is_fresh(tmp_path, monkeypatch):
     """EPERM from kill(pid, 0) means the process exists but is not ours."""
     jsonl = _jsonl(tmp_path)
     _lock_path_for(jsonl).write_text(
-        json.dumps({
-            "owner_kind": "clau-decode",
-            "pid": 12345,
-            "hostname": socket.gethostname(),
-            "heartbeat_at": datetime.now(timezone.utc).isoformat(),
-            "ui_endpoint": None,
-        })
+        json.dumps(
+            {
+                "owner_kind": "clau-decode",
+                "pid": 12345,
+                "hostname": socket.gethostname(),
+                "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+                "ui_endpoint": None,
+            }
+        )
     )
 
     def fake_kill(pid: int, sig: int) -> None:
@@ -176,13 +182,15 @@ def test_acquire_takes_over_when_cross_host_heartbeat_expired(tmp_path):
     jsonl = _jsonl(tmp_path)
     old = datetime.now(timezone.utc) - timedelta(seconds=STALE_AFTER_S + 60)
     _lock_path_for(jsonl).write_text(
-        json.dumps({
-            "owner_kind": "clau-decode",
-            "pid": 1,
-            "hostname": socket.gethostname() + "-other",
-            "heartbeat_at": old.isoformat(),
-            "ui_endpoint": None,
-        })
+        json.dumps(
+            {
+                "owner_kind": "clau-decode",
+                "pid": 1,
+                "hostname": socket.gethostname() + "-other",
+                "heartbeat_at": old.isoformat(),
+                "ui_endpoint": None,
+            }
+        )
     )
     sc = LockSidecar.acquire(jsonl, owner_kind="clau-decode")
     try:
@@ -202,6 +210,7 @@ def test_acquire_returns_existing_self_lock_with_refreshed_heartbeat(tmp_path):
         ts1 = sc1.heartbeat_at
         # Tiny sleep so timestamps strictly differ.
         import time as _t
+
         _t.sleep(0.01)
         sc2 = LockSidecar.acquire(jsonl, owner_kind="clau-decode")
         try:

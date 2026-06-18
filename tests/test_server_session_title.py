@@ -155,7 +155,6 @@ async def test_rename_appears_in_project_session_list(env) -> None:
 
 async def test_rename_publishes_session_meta_event(env) -> None:
     """Two simulated SSE subscribers both receive the rename event."""
-    from clau_decode import server as server_mod
     from clau_decode.events_bus import EventBroadcaster
 
     # Patch the broadcaster class with an instance we can subscribe to *before*
@@ -173,9 +172,7 @@ async def test_rename_publishes_session_meta_event(env) -> None:
         app = _make_app(env["db_path"], AppConfig())
         sid = env["session_id"]
         async with await _client(app) as c:
-            r = await c.put(
-                f"/api/sessions/{sid}/title", json={"title": "Broadcasted"}
-            )
+            r = await c.put(f"/api/sessions/{sid}/title", json={"title": "Broadcasted"})
         assert r.status_code == 200
         assert {"type": "session-meta", "id": sid, "title": "Broadcasted"} in captured
     finally:

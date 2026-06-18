@@ -12,13 +12,11 @@ Covers:
 """
 
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from clau_decode.db import Database
-from clau_decode.models import Message, Project, Session, TextBlock
 
 
 # ---------------------------------------------------------------------------
@@ -82,11 +80,28 @@ async def db_with_data(db):
     """DB seeded with one session, two regular messages, and two ephemeral pairs."""
     await _seed_session(db, "sess-main")
     # Regular messages
-    await _seed_message(db, "sess-main", "msg-u1", "regularcontent hello world", timestamp="2026-01-01T10:00:00")
-    await _seed_message(db, "sess-main", "msg-a1", "regularreply fine day", role="assistant", timestamp="2026-01-01T10:00:05")
+    await _seed_message(
+        db,
+        "sess-main",
+        "msg-u1",
+        "regularcontent hello world",
+        timestamp="2026-01-01T10:00:00",
+    )
+    await _seed_message(
+        db,
+        "sess-main",
+        "msg-a1",
+        "regularreply fine day",
+        role="assistant",
+        timestamp="2026-01-01T10:00:05",
+    )
     # Ephemeral pair
-    uid = await db.record_ephemeral_input("sess-main", "ephemeralonly special content", timestamp="2026-01-01T10:01:00")
-    await db.record_ephemeral_response(uid, "ephemeralreply answer here", timestamp="2026-01-01T10:01:05")
+    uid = await db.record_ephemeral_input(
+        "sess-main", "ephemeralonly special content", timestamp="2026-01-01T10:01:00"
+    )
+    await db.record_ephemeral_response(
+        uid, "ephemeralreply answer here", timestamp="2026-01-01T10:01:05"
+    )
     return db
 
 
@@ -112,15 +127,21 @@ class TestEphemeralOnlySearch:
         eph = next(h for h in hits if h.source == "ephemeral")
         assert eph.kind == "btw"
 
-    async def test_word_only_in_regular_messages_returns_no_ephemeral_hits(self, db_with_data):
+    async def test_word_only_in_regular_messages_returns_no_ephemeral_hits(
+        self, db_with_data
+    ):
         hits = await db_with_data.search("regularcontent")
         assert all(h.source == "message" for h in hits)
 
     async def test_ephemeral_response_hit_carries_responds_to(self, db):
         """The assistant response row should carry a responds_to linking back to the input."""
         await _seed_session(db, "sess-rt")
-        uid = await db.record_ephemeral_input("sess-rt", "inputquestion unique123", timestamp="2026-01-01T11:00:00")
-        await db.record_ephemeral_response(uid, "responseanswer unique456", timestamp="2026-01-01T11:00:05")
+        uid = await db.record_ephemeral_input(
+            "sess-rt", "inputquestion unique123", timestamp="2026-01-01T11:00:00"
+        )
+        await db.record_ephemeral_response(
+            uid, "responseanswer unique456", timestamp="2026-01-01T11:00:05"
+        )
         hits = await db.search("unique456")
         resp_hits = [h for h in hits if h.source == "ephemeral"]
         assert len(resp_hits) == 1
@@ -131,9 +152,19 @@ class TestMixedSearch:
     async def test_shared_word_returns_both_sources(self, db):
         """A word present in both a regular message and an ephemeral returns both."""
         await _seed_session(db, "sess-mix")
-        await _seed_message(db, "sess-mix", "msg-mix1", "sharedword in regular message", timestamp="2026-01-01T09:00:00")
-        uid = await db.record_ephemeral_input("sess-mix", "sharedword in ephemeral", timestamp="2026-01-01T09:01:00")
-        await db.record_ephemeral_response(uid, "reply without the word", timestamp="2026-01-01T09:01:05")
+        await _seed_message(
+            db,
+            "sess-mix",
+            "msg-mix1",
+            "sharedword in regular message",
+            timestamp="2026-01-01T09:00:00",
+        )
+        uid = await db.record_ephemeral_input(
+            "sess-mix", "sharedword in ephemeral", timestamp="2026-01-01T09:01:00"
+        )
+        await db.record_ephemeral_response(
+            uid, "reply without the word", timestamp="2026-01-01T09:01:05"
+        )
 
         hits = await db.search("sharedword")
         sources = {h.source for h in hits}
@@ -202,10 +233,26 @@ class TestLimitAndPagination:
     async def test_merged_result_respects_limit(self, db):
         """With limit=2 and hits in both tables, total hits <= 2."""
         await _seed_session(db, "sess-lim")
-        await _seed_message(db, "sess-lim", "msg-lim1", "limitword first regular", timestamp="2026-01-01T08:00:00")
-        await _seed_message(db, "sess-lim", "msg-lim2", "limitword second regular", timestamp="2026-01-01T08:01:00")
-        await db.record_ephemeral_input("sess-lim", "limitword third ephemeral", timestamp="2026-01-01T08:02:00")
-        await db.record_ephemeral_input("sess-lim", "limitword fourth ephemeral", timestamp="2026-01-01T08:03:00")
+        await _seed_message(
+            db,
+            "sess-lim",
+            "msg-lim1",
+            "limitword first regular",
+            timestamp="2026-01-01T08:00:00",
+        )
+        await _seed_message(
+            db,
+            "sess-lim",
+            "msg-lim2",
+            "limitword second regular",
+            timestamp="2026-01-01T08:01:00",
+        )
+        await db.record_ephemeral_input(
+            "sess-lim", "limitword third ephemeral", timestamp="2026-01-01T08:02:00"
+        )
+        await db.record_ephemeral_input(
+            "sess-lim", "limitword fourth ephemeral", timestamp="2026-01-01T08:03:00"
+        )
 
         hits = await db.search("limitword", limit=2)
         assert len(hits) <= 2
