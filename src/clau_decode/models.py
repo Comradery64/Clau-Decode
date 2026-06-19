@@ -81,6 +81,7 @@ class Message(BaseModel):
     # Links sub-agent messages to the tool_use that spawned them
     source_tool_assistant_uuid: Optional[str] = None
     usage: Optional[TokenUsage] = None
+    provider: str = "claude"
 
 
 class MessageTree(BaseModel):
@@ -120,6 +121,7 @@ class Session(BaseModel):
     is_worktree: bool = False
     is_fork: bool = False
     permission_mode: Optional[str] = None
+    provider: str = "claude"
     last_message_role: Optional[Literal["user", "assistant", "system"]] = None
 
 
