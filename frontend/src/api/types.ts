@@ -70,6 +70,7 @@ export interface Message {
   git_branch: string | null;
   source_tool_assistant_uuid: string | null;
   usage: TokenUsage | null;
+  provider?: string; // "claude" | "codex" — drives provider skin
 }
 
 export interface MessageTree {
@@ -106,6 +107,7 @@ export interface Session {
   is_fork: boolean;
   permission_mode: string | null;
   last_message_role: "user" | "assistant" | "system" | null;
+  provider?: string; // "claude" | "codex" — drives provider skin
 }
 
 export interface SessionDetail extends Session {

@@ -2,8 +2,7 @@ import { useRef, useContext, useEffect } from "react";
 import type { ReactElement } from "react";
 
 import type { Message, Recap, TextBlock } from "../../api/types";
-import { UserMessage } from "./UserMessage";
-import { AssistantMessage } from "./AssistantMessage";
+import { getRenderers } from "./blockRenderers";
 import { groupMessages } from "./groupMessages";
 import { StreamingIndicator } from "./StreamingIndicator";
 import { EphemeralPairBlock, buildEphemeralPairs } from "./EphemeralMessage";
@@ -360,6 +359,10 @@ export default function MessageList({
 
   if (!detail) return null;
 
+  // Resolve provider-specific renderers. For claude and unknown providers this
+  // returns the identical Claude components, keeping the Claude path unchanged.
+  const { UserMessage, AssistantMessage } = getRenderers(detail.provider);
+
   const turns = earlyTurns;
   const persistedOptimisticUser = optimisticUserMessage
     ? detail.messages.some((m) => {
@@ -526,6 +529,7 @@ export default function MessageList({
 
   return (
     <div
+      data-provider={detail.provider ?? "claude"}
       style={{
         maxWidth: "var(--message-max-width)",
         margin: "0 auto",
