@@ -480,28 +480,41 @@ describe("ChatView submit lifecycle events", () => {
     expect(screen.getByRole("button", { name: /submit btw/i })).toBeInTheDocument();
   });
 
+  // As of the native-view rework, ChatView deliberately does NOT auto-switch to
+  // Native on an interactive/blocking PTY state (see ChatView.tsx) — only the
+  // user's explicit view choice switches modes. A blocking state is instead
+  // surfaced via the header badge so the user can choose to flip to Native.
   it.each([
-    "ask_user_question",
-    "permission_prompt",
-    "login_required",
-    "trust_prompt",
-    "btw_modal",
-    "unknown_interactive",
-  ])("auto-switches to Native View for blocking state %s", async (state) => {
-    render(<ChatView />);
+    ["ask_user_question", "Native input required"],
+    ["permission_prompt", "Native input required"],
+    ["login_required", "Claude login required"],
+    ["trust_prompt", "Native input required"],
+    ["btw_modal", "Native input required"],
+    ["unknown_interactive", "Native input required"],
+  ])(
+    "surfaces blocking native state %s via the header badge without auto-switching",
+    async (state, label) => {
+      render(<ChatView />);
 
-    window.dispatchEvent(
-      new CustomEvent("clau-decode:pty-native-state", {
-        detail: {
-          session_id: "sess-lifecycle",
-          state,
-          decoded_input_safe: false,
-        },
-      }),
-    );
+      window.dispatchEvent(
+        new CustomEvent("clau-decode:pty-native-state", {
+          detail: {
+            session_id: "sess-lifecycle",
+            state,
+            decoded_input_safe: false,
+          },
+        }),
+      );
 
-    expect(await screen.findByTestId("native-terminal-view")).toBeInTheDocument();
-  });
+      expect(await screen.findByTestId("native-state-badge")).toHaveTextContent(
+        label,
+      );
+      // No auto-switch: the Native terminal must NOT mount on its own.
+      expect(
+        screen.queryByTestId("native-terminal-view"),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it("does not auto-switch for slash palette but shows a badge", async () => {
     render(<ChatView />);
