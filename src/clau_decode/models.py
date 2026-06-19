@@ -228,6 +228,10 @@ class AppConfig(BaseModel):
     claude_auto_stop_quiet_default_turns: bool = False
     claude_recap_enabled: bool = False
     claude_recap_idle_minutes: int = 5
+    codex_data_paths: list[str] = Field(
+        default_factory=lambda: ["~/.codex/sessions"],
+        description="Root directories to scan for Codex CLI session files (rollout-*.jsonl)",
+    )
 
     def get_all_scan_paths(self) -> list[str]:
         """Collect all data_paths from all profiles (deduplicated, expanded)."""
