@@ -7,7 +7,7 @@ are no hidden singletons and tests can ``clear()`` between cases.
 Typical usage::
 
     from clau_decode.providers import registry
-    from clau_decode.providers.claude_adapter import ClaudeAdapter
+    from clau_decode.providers.claude import ClaudeAdapter
 
     registry.register(ClaudeAdapter())
 

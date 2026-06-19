@@ -263,26 +263,27 @@ async def _force_refresh(db_path: Path) -> None:
 async def _do_scan(db_path: Path, config) -> int:
     """Scan all paths, return number of sessions indexed."""
     from .db import Database
-    from .scanner import scan_paths
-    from .parser import parse_session
+    from .providers import register_builtins, registry
+
+    register_builtins()
 
     count = 0
-    scan_paths_list = config.get_all_scan_paths()
-    root_paths = [Path(p).expanduser() for p in scan_paths_list]
     async with Database(db_path) as db:
         await db.init_schema()
-        async for project, session_path in scan_paths(root_paths):
-            try:
-                session, messages = parse_session(session_path)
-                session.project_id = project.id
-                project.session_count += 1
-                current_mtime = session_path.stat().st_mtime
-                await db.upsert_project(project)
-                await db.upsert_session(session, file_mtime=current_mtime)
-                await db.upsert_messages(messages)
-                count += 1
-            except Exception as exc:
-                print(f"  Warning: skipping {session_path}: {exc}")
+        for adapter in registry.all_adapters():
+            roots = adapter.configured_roots(config)
+            async for project, session_path in adapter.discover(roots):
+                try:
+                    session, messages = adapter.parse(session_path)
+                    session.project_id = project.id
+                    project.session_count += 1
+                    current_mtime = session_path.stat().st_mtime
+                    await db.upsert_project(project)
+                    await db.upsert_session(session, file_mtime=current_mtime)
+                    await db.upsert_messages(messages)
+                    count += 1
+                except Exception as exc:
+                    print(f"  Warning: skipping {session_path}: {exc}")
     return count
 
 
