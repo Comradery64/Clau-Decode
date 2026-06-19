@@ -42,6 +42,26 @@ from .base import ProviderAdapter, ProviderCaps
 # The real encrypted_content is NEVER read or stored.
 _REASONING_PLACEHOLDER = "🔒 Reasoning (encrypted)"
 
+# Codex injects environment/state context as ``user``-role messages whose text
+# is an XML wrapper (no human prose) — the actual user prompt arrives in a
+# later user message. We flag these as ``is_meta`` so they're excluded from
+# title inference and the user-message count, mirroring how the Claude parser
+# marks injected context. Detection: the message text begins with one of these
+# wrapper tags. ``<turn_aborted>`` is Codex's interruption note (also meta).
+_CODEX_META_WRAPPERS = (
+    "<environment_context",
+    "<workspace_roots",
+    "<permission_profile",
+    "<user_instructions",
+    "<turn_aborted",
+)
+
+
+def _is_injected_context(blocks: list[TextBlock]) -> bool:
+    """True if a user message is Codex-injected context rather than a prompt."""
+    text = "".join(b.text for b in blocks).lstrip()
+    return text.startswith(_CODEX_META_WRAPPERS)
+
 
 # ---------------------------------------------------------------------------
 # Project helper
@@ -277,7 +297,7 @@ class CodexAdapter(ProviderAdapter):
                                 id="__placeholder__",
                                 session_id=session_id or "",
                                 role="user",
-                                is_meta=False,
+                                is_meta=_is_injected_context(blocks),
                                 content_blocks=blocks,
                                 timestamp=ts,
                                 provider="codex",

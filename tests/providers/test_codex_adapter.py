@@ -336,3 +336,66 @@ class TestFallbackTitles:
         path = self._write_jsonl(tmp_path, records)
         session, _ = CodexAdapter().parse(path)
         assert session.title == "Codex session"
+
+
+class TestInjectedContextIsMeta:
+    """Codex injects an <environment_context> wrapper as the first user
+    message; the real prompt is a later user message. The wrapper must be
+    flagged is_meta so it's skipped for the title (and user count), otherwise
+    every real Codex session's title would be the literal markup."""
+
+    def _write_jsonl(self, tmp_path: Path, records: list[dict]) -> Path:
+        p = tmp_path / "rollout-test.jsonl"
+        p.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+        return p
+
+    def test_environment_context_skipped_for_title(self, tmp_path: Path):
+        records = [
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "00000000-0000-0000-0000-000000000003",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "cwd": "/tmp/demo",
+                    "git": {},
+                },
+            },
+            {
+                "timestamp": "2026-01-01T00:00:01Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            # nested tags + attributes — pair-regex can't strip this
+                            "text": "<environment_context>\n  <cwd>/tmp/demo</cwd>\n"
+                            "  <shell>zsh</shell>\n</environment_context>",
+                        }
+                    ],
+                },
+            },
+            {
+                "timestamp": "2026-01-01T00:00:02Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Refactor the auth module"}
+                    ],
+                },
+            },
+        ]
+        path = self._write_jsonl(tmp_path, records)
+        session, messages = CodexAdapter().parse(path)
+        # Title is the real prompt, not the markup wrapper.
+        assert session.title == "Refactor the auth module"
+        # The wrapper message is meta; the real prompt is not.
+        user_msgs = [m for m in messages if m.role == "user"]
+        assert user_msgs[0].is_meta is True
+        assert user_msgs[1].is_meta is False
+        # The wrapper is excluded from the user-message count.
+        assert session.user_message_count == 1
