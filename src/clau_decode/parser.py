@@ -58,13 +58,18 @@ def _infer_title_from_messages(messages: list[Message]) -> str | None:
     Strips system XML tags, takes the first non-empty line, returns it or None
     if no suitable text is found.  Used by both the Claude parser and the
     CodexAdapter so title logic stays in one place.
+
+    The tag-name class allows underscores (``[a-z0-9_-]``) so wrapper tags like
+    Codex's ``<environment_context>…</environment_context>`` — which is the
+    entire first user message in real Codex rollouts — get stripped; otherwise
+    every Codex session's title would be the literal ``<environment_context>``.
     """
     for m in messages:
         if m.role == "user" and not m.is_meta:
             for block in m.content_blocks:
                 if isinstance(block, TextBlock) and block.text.strip():
                     text = re.sub(
-                        r"<[a-z][a-z0-9-]*>[\s\S]*?</[a-z][a-z0-9-]*>",
+                        r"<[a-z][a-z0-9_-]*>[\s\S]*?</[a-z][a-z0-9_-]*>",
                         "",
                         block.text,
                     ).strip()
