@@ -78,9 +78,9 @@ from .db import Database
 from .editor import swap_session
 from .events_bus import EventBroadcaster
 from .models import AppConfig, Profile
-from .parser import parse_session
+from .providers import register_builtins, registry
 from .reporter import export_json, export_markdown
-from .scanner import build_project_from_dir, scan_paths
+from .scanner import build_project_from_dir
 from .watcher import watch_paths
 
 
@@ -410,6 +410,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     Returns:
         A fully configured ``FastAPI`` application ready to hand to uvicorn.
     """
+    # Ensure all built-in provider adapters are registered before any scan
+    # or lifespan task uses registry.all_adapters().
+    register_builtins()
+
     # Mutable shared state captured by closures below.
     _state: dict = {"config": config, "watch_task": None, "fanout_task": None}
     _analytics = _AnalyticsSvc()
@@ -443,40 +447,41 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         """
         MAX_SCAN_SIZE = 20 * 1024 * 1024  # skip files > 20 MB; loaded on demand instead
         changed = 0
-        root_paths = _all_scan_roots()
-        async for project, session_path in scan_paths(root_paths):
-            if session_path.stem in _deleted_tombstones:
-                continue
-            current_mtime = session_path.stat().st_mtime
-            stored_mtime = await db.get_session_mtime(session_path.stem)
-            if stored_mtime == current_mtime:
-                continue
-            try:
-                file_size = session_path.stat().st_size
-                if file_size > MAX_SCAN_SIZE:
-                    # Store just the session metadata so it appears in the list;
-                    # messages are loaded on demand via _scan_one when clicked.
-                    if stored_mtime is None:
-                        session, _ = await asyncio.to_thread(
-                            parse_session, session_path
-                        )
-                        session.project_id = project.id
-                        session.message_count = 0
-                        project.session_count += 1
-                        await db.upsert_project(project)
-                        await db.upsert_session(session, file_mtime=current_mtime)
-                        changed += 1
+        for adapter in registry.all_adapters():
+            roots = adapter.configured_roots(_state["config"])
+            async for project, session_path in adapter.discover(roots):
+                if session_path.stem in _deleted_tombstones:
                     continue
-                session, messages = await asyncio.to_thread(parse_session, session_path)
-                session.project_id = project.id
-                project.session_count += 1
-                await db.upsert_project(project)
-                await db.upsert_session(session, file_mtime=current_mtime)
-                await db.upsert_messages(messages)
-                changed += 1
-                await asyncio.sleep(0)
-            except Exception as exc:
-                print(f"Warning: skipping {session_path}: {exc}")
+                current_mtime = session_path.stat().st_mtime
+                stored_mtime = await db.get_session_mtime(session_path.stem)
+                if stored_mtime == current_mtime:
+                    continue
+                try:
+                    file_size = session_path.stat().st_size
+                    if file_size > MAX_SCAN_SIZE:
+                        # Store just the session metadata so it appears in the list;
+                        # messages are loaded on demand via _scan_one when clicked.
+                        if stored_mtime is None:
+                            session, _ = await asyncio.to_thread(
+                                adapter.parse, session_path
+                            )
+                            session.project_id = project.id
+                            session.message_count = 0
+                            project.session_count += 1
+                            await db.upsert_project(project)
+                            await db.upsert_session(session, file_mtime=current_mtime)
+                            changed += 1
+                        continue
+                    session, messages = await asyncio.to_thread(adapter.parse, session_path)
+                    session.project_id = project.id
+                    project.session_count += 1
+                    await db.upsert_project(project)
+                    await db.upsert_session(session, file_mtime=current_mtime)
+                    await db.upsert_messages(messages)
+                    changed += 1
+                    await asyncio.sleep(0)
+                except Exception as exc:
+                    print(f"Warning: skipping {session_path}: {exc}")
         return changed
 
     async def _scan_one(db: Database, session_path: Path) -> None:
@@ -498,7 +503,8 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             stored_mtime = await db.get_session_mtime(session_path.stem)
             if stored_mtime == current_mtime:
                 return
-            session, messages = await asyncio.to_thread(parse_session, session_path)
+            adapter = registry.adapter_for_path(session_path) or registry.get("claude")
+            session, messages = await asyncio.to_thread(adapter.parse, session_path)
             session.project_id = project.id
             project.session_count += 1
             await db.upsert_project(project)
