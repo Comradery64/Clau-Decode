@@ -246,6 +246,7 @@ class Database:
                 is_worktree INTEGER NOT NULL DEFAULT 0,
                 is_fork INTEGER NOT NULL DEFAULT 0,
                 permission_mode TEXT,
+                provider TEXT NOT NULL DEFAULT 'claude',
                 file_mtime REAL,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
             );
@@ -369,6 +370,7 @@ class Database:
 
         await self._conn.commit()
         await self._migrate_add_is_fork()
+        await self._migrate_add_provider()
         await self._migrate_add_session_meta_flags()
 
     async def _ensure_ephemeral_triggers(self) -> None:
@@ -420,6 +422,18 @@ class Database:
             if not await cur.fetchone():
                 await self._conn.execute(
                     "ALTER TABLE sessions ADD COLUMN is_fork INTEGER NOT NULL DEFAULT 0"
+                )
+                await self._conn.commit()
+
+    async def _migrate_add_provider(self) -> None:
+        """Idempotent: add provider column to existing DBs."""
+        assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT name FROM pragma_table_info('sessions') WHERE name='provider'"
+        ) as cur:
+            if not await cur.fetchone():
+                await self._conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude'"
                 )
                 await self._conn.commit()
 
@@ -654,8 +668,8 @@ class Database:
             INSERT OR REPLACE INTO sessions
                 (id, project_id, file_path, title, model, started_at, updated_at,
                  message_count, user_message_count, cwd, git_branch, is_worktree,
-                 is_fork, permission_mode, file_mtime)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 is_fork, permission_mode, provider, file_mtime)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.id,
@@ -672,6 +686,7 @@ class Database:
                 1 if session.is_worktree else 0,
                 1 if session.is_fork else 0,
                 session.permission_mode,
+                session.provider,
                 file_mtime,
             ),
         )
@@ -1065,6 +1080,7 @@ class Database:
             "is_worktree": bool(srow["is_worktree"]),
             "is_fork": bool(srow["is_fork"]) if "is_fork" in srow.keys() else False,
             "permission_mode": srow["permission_mode"],
+            "provider": srow["provider"] if "provider" in srow.keys() else "claude",
             "last_message_role": srow["last_message_role"],
             # Live filesystem check, NOT a cached DB value. The previous
             # version read projects.resolved_path, which is set once at
@@ -1771,6 +1787,7 @@ def _row_to_session(row: aiosqlite.Row) -> Session:
         is_worktree=bool(row["is_worktree"]),
         is_fork=bool(row["is_fork"]) if "is_fork" in keys else False,
         permission_mode=row["permission_mode"],
+        provider=row["provider"] if "provider" in keys else "claude",
         last_message_role=row["last_message_role"],
     )
 

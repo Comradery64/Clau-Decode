@@ -550,3 +550,108 @@ class TestSessionFlags:
         # Should still work after re-init.
         meta = await db.get_session_meta("any-sid")
         assert meta["archived_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# Provider column migration tests
+# ---------------------------------------------------------------------------
+
+
+class TestProviderMigration:
+    async def test_provider_column_exists_on_fresh_schema(self, db):
+        """A freshly initialised DB must have exactly one provider column."""
+        async with db._conn.execute(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='provider'"
+        ) as cur:
+            row = await cur.fetchone()
+        assert row[0] == 1, "sessions table should have exactly one 'provider' column"
+
+    async def test_init_schema_twice_no_duplicate_provider_column(self, db):
+        """Running init_schema twice must not create duplicate provider columns."""
+        await db.init_schema()  # second call — first already ran inside fixture
+        async with db._conn.execute(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='provider'"
+        ) as cur:
+            row = await cur.fetchone()
+        assert row[0] == 1, "provider column must not be duplicated by idempotent re-init"
+
+    async def test_migrate_add_provider_on_old_db_without_column(self, tmp_path):
+        """Simulate an old DB that pre-dates the provider column.
+
+        Steps:
+          1. Create a minimal sessions table WITHOUT provider.
+          2. Insert a row so we can assert the DEFAULT kicks in.
+          3. Run _migrate_add_provider().
+          4. Verify the column now exists and the pre-existing row defaults to 'claude'.
+        """
+        import aiosqlite
+
+        from clau_decode.db import Database
+
+        db_path = tmp_path / "old.db"
+        async with aiosqlite.connect(db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            # Minimal sessions table — no provider column, mirrors the pre-migration shape.
+            await conn.execute("""
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    title TEXT,
+                    model TEXT,
+                    started_at TEXT,
+                    updated_at TEXT,
+                    message_count INTEGER NOT NULL DEFAULT 0,
+                    user_message_count INTEGER NOT NULL DEFAULT 0,
+                    cwd TEXT,
+                    git_branch TEXT,
+                    is_worktree INTEGER NOT NULL DEFAULT 0,
+                    is_fork INTEGER NOT NULL DEFAULT 0,
+                    permission_mode TEXT,
+                    file_mtime REAL
+                )
+            """)
+            await conn.execute(
+                "INSERT INTO sessions (id, project_id, file_path) VALUES (?, ?, ?)",
+                ("old-session-1", "proj-old", "/tmp/old.jsonl"),
+            )
+            await conn.commit()
+
+        # Open via Database and run only the targeted migration method.
+        async with Database(db_path) as database:
+            # Run migration — should add the column.
+            await database._migrate_add_provider()
+
+            # Column must now be present.
+            async with database._conn.execute(
+                "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='provider'"
+            ) as cur:
+                row = await cur.fetchone()
+            assert row[0] == 1, "provider column should be added by migration"
+
+            # Pre-existing row must default to 'claude'.
+            async with database._conn.execute(
+                "SELECT provider FROM sessions WHERE id = 'old-session-1'"
+            ) as cur:
+                row = await cur.fetchone()
+            assert row["provider"] == "claude", (
+                "pre-existing row should default to 'claude' after migration"
+            )
+
+            # Running again must be idempotent (no error, no duplicate).
+            await database._migrate_add_provider()
+            async with database._conn.execute(
+                "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='provider'"
+            ) as cur:
+                row = await cur.fetchone()
+            assert row[0] == 1
+
+    async def test_provider_roundtrips_through_upsert(
+        self, db, sample_project, sample_session
+    ):
+        """provider='claude' stored via upsert_session comes back from _row_to_session."""
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        sessions = await db.get_sessions()
+        assert len(sessions) == 1
+        assert sessions[0].provider == "claude"
