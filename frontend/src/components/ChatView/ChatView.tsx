@@ -19,6 +19,7 @@ import { useScrollPositionMemory } from "./hooks/useScrollPositionMemory";
 import { useRecaps } from "./hooks/useRecaps";
 import { useSessionOwnership } from "./hooks/useSessionOwnership";
 import { OwnershipBanner } from "./OwnershipBanner";
+import { ProviderThemeProvider } from "./ProviderThemeContext";
 
 type ChatViewMode = "decoded" | "native" | "sbs";
 
@@ -45,10 +46,16 @@ function storeViewMode(sessionId: string, mode: ChatViewMode): void {
   }
 }
 
-function nativeStateLabel(state: NativePtyState | null | undefined): string | null {
+function nativeStateLabel(
+  state: NativePtyState | null | undefined,
+  provider?: string,
+): string | null {
   if (!state || state === "idle_chat_input" || state === "dead") return null;
   if (state === "slash_palette_open") return "Slash menu open";
-  if (state === "login_required") return "Claude login required";
+  if (state === "login_required") {
+    const providerName = provider === "codex" ? "Codex" : "Claude";
+    return `${providerName} login required`;
+  }
   if (state === "permission_prompt") return "Native input required";
   if (state === "ask_user_question") return "Native input required";
   if (state === "trust_prompt") return "Native input required";
@@ -448,8 +455,12 @@ export default function ChatView() {
     );
   }
 
+  const activeProvider = session?.provider ?? "claude";
+
   return (
+    <ProviderThemeProvider value={{ provider: activeProvider }}>
     <div
+      data-provider={activeProvider}
       style={{
         flex: 1,
         display: "flex",
@@ -496,7 +507,7 @@ export default function ChatView() {
         ownership={ownership}
         viewMode={viewMode}
         onViewModeChange={handleViewModeChange}
-        nativeStateLabel={nativeStateLabel(nativeState?.state)}
+        nativeStateLabel={nativeStateLabel(nativeState?.state, session?.provider)}
       />
       {session && session.cwd_exists === false && (
         <div
@@ -689,5 +700,6 @@ export default function ChatView() {
         />
       )}
     </div>
+    </ProviderThemeProvider>
   );
 }

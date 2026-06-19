@@ -16,6 +16,19 @@ function isThoughtGroup(seg: Segment): seg is ThoughtGroup {
 
 export function formatModelName(model: string): string {
   const lower = model.toLowerCase();
+
+  // GPT / OpenAI Codex models — parse "gpt-<version>" into "GPT <version>".
+  // Examples: gpt-5.5 → "GPT 5.5", gpt-5 → "GPT 5", gpt-4o → "GPT 4o".
+  if (lower.includes("gpt")) {
+    // Match an optional major.minor version or major+suffix (e.g. "4o", "5.5")
+    const gptVersionMatch = lower.match(/gpt[-_]?(\d+(?:\.\d+)?[a-z0-9]*)/);
+    if (gptVersionMatch) {
+      return `GPT ${gptVersionMatch[1]}`;
+    }
+    return "GPT";
+  }
+
+  // Claude models
   const tierMatch = lower.match(/claude-(opus|sonnet|haiku|instant)[-_]?/);
   const tier = tierMatch ? tierMatch[1] : null;
   const versionMatch = lower.match(/(\d+)[-_](\d+)$/) ?? lower.match(/(\d+)$/);

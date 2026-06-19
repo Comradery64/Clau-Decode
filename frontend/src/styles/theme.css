@@ -447,6 +447,39 @@ body {
 /* Kill browser focus rings — we use custom hover/active states instead */
 :focus { outline: none; }
 
+/* ============================================================
+   CODEX / ChatGPT-NATIVE SKIN
+   Scoped to [data-provider="codex"] — overrides accent + surface tokens so
+   Codex sessions read with OpenAI's signature teal-green palette instead of
+   Clau-Decode's warm Claude brown/orange. All other tokens (typography,
+   borders, shadows, syntax highlighting) inherit unchanged from :root /
+   [data-theme="dark"]. Claude sessions are NEVER affected by these rules.
+   ============================================================ */
+
+/* --- Light mode --- */
+[data-provider="codex"] {
+  --accent-orange: #10a37f;
+  --accent-orange-hover: #0e8c6d;
+  --accent-orange-subtle: rgba(16, 163, 127, 0.10);
+  --border-accent: #10a37f;
+  --bg-user-msg: #f1f5f4;
+  --bg-tool-block: #f2f6f5;
+  --bg-tool-result: #f4f8f7;
+  --bg-thinking: #f2f6f5;
+}
+
+/* --- Dark mode --- */
+[data-theme="dark"] [data-provider="codex"] {
+  --accent-orange: #19c37d;
+  --accent-orange-hover: #2dd4a0;
+  --accent-orange-subtle: rgba(25, 195, 125, 0.16);
+  --border-accent: #19c37d;
+  --bg-user-msg: #2a2f2e;
+  --bg-tool-block: #23282a;
+  --bg-tool-result: #262b2c;
+  --bg-thinking: #23282a;
+}
+
 /* Reveals on hover OR keyboard focus so action affordances are reachable via Tab. */
 .hover-actions {
   opacity: 0;

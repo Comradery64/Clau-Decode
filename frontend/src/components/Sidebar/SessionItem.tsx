@@ -455,6 +455,30 @@ export function SessionItem({ session, isActive, onClick, runnerStatus }: Sessio
                 {displayTitle}
               </span>
 
+              {/* Provider badge — shown only for non-claude providers (e.g. codex → "GPT").
+                  Styled as a small teal pill to signal the ChatGPT-native skin. */}
+              {!selectionMode && session.provider && session.provider !== "claude" && (
+                <span
+                  aria-label={`Provider: ${session.provider}`}
+                  title={session.provider}
+                  style={{
+                    flexShrink: 0,
+                    fontSize: "9px",
+                    fontFamily: "var(--font-ui)",
+                    fontWeight: 600,
+                    letterSpacing: "0.03em",
+                    color: "#10a37f",
+                    border: "1px solid rgba(16, 163, 127, 0.35)",
+                    borderRadius: "var(--radius-pill)",
+                    padding: "1px 5px",
+                    lineHeight: "14px",
+                    userSelect: "none",
+                  }}
+                >
+                  GPT
+                </span>
+              )}
+
               {/* Bell — right side, after title; hidden in selection mode */}
               {!selectionMode && bellState !== "hidden" && (
                 <span
