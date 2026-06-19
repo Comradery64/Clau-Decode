@@ -22,5 +22,7 @@ def register_builtins() -> None:
     import from ``..models`` or ``..scanner``.
     """
     from .claude import ClaudeAdapter
+    from .codex import CodexAdapter
 
     registry.register(ClaudeAdapter())
+    registry.register(CodexAdapter())

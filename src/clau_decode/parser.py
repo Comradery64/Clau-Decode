@@ -48,6 +48,33 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 
 # ---------------------------------------------------------------------------
+# Shared title inference helper
+# ---------------------------------------------------------------------------
+
+
+def _infer_title_from_messages(messages: list[Message]) -> str | None:
+    """Infer a session title from the first non-meta user TextBlock.
+
+    Strips system XML tags, takes the first non-empty line, returns it or None
+    if no suitable text is found.  Used by both the Claude parser and the
+    CodexAdapter so title logic stays in one place.
+    """
+    for m in messages:
+        if m.role == "user" and not m.is_meta:
+            for block in m.content_blocks:
+                if isinstance(block, TextBlock) and block.text.strip():
+                    text = re.sub(
+                        r"<[a-z][a-z0-9-]*>[\s\S]*?</[a-z][a-z0-9-]*>",
+                        "",
+                        block.text,
+                    ).strip()
+                    text = text.splitlines()[0].strip() if text else ""
+                    if text:
+                        return text
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -276,22 +303,7 @@ def parse_session(path: Path) -> tuple[Session, list[Message]]:
 
     # Infer title from first user message when no custom-title record exists
     if session.title is None:
-        for m in messages:
-            if m.role == "user" and not m.is_meta:
-                for block in m.content_blocks:
-                    if isinstance(block, TextBlock) and block.text.strip():
-                        # Strip system XML tags before using as title
-                        text = re.sub(
-                            r"<[a-z][a-z0-9-]*>[\s\S]*?</[a-z][a-z0-9-]*>",
-                            "",
-                            block.text,
-                        ).strip()
-                        text = text.splitlines()[0].strip() if text else ""
-                        if text:
-                            session.title = text
-                            break
-                if session.title is not None:
-                    break
+        session.title = _infer_title_from_messages(messages)
 
     return session, messages
 
