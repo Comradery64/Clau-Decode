@@ -543,72 +543,67 @@ async def test_submit_after_kill_auto_respawns(tui_shim_path, tmp_path, monkeypa
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason="Asserts pre-v0.3.1.3 idle-kill semantics: the on-screen session "
-    "(_active_session_id) is now intentionally never idle-killed (kept alive for "
-    "scrollback); only blurred/superseded sessions are reaped. Needs rewrite to the "
-    "active/blurred model — see native-scroll-perf (828884a)."
-)
-async def test_idle_timer_kills_after_configured_timeout(
+async def test_superseded_session_idle_killed_at_blurred_window(
     tui_shim_path, tmp_path, monkeypatch
 ):
-    """Shrunk timers: warn SSE fires at idle_warn_s, kill fires at idle_timeout_s.
+    """A SUPERSEDED (no longer on-screen) session is idle-killed at the blurred
+    window; its _last_focus survives for auto-respawn, and the on-screen session
+    is NOT killed.
 
-    Timeline:
-      T+0      focus() → timer starts (warn=0.4s, kill=0.7s)
-      T+0.5s   warn event should be in the queue
-      T+0.85s  channel should be dead; _last_focus STILL cached
+    Since v0.3.1.3 the on-screen session (_active_session_id) is never idle-killed
+    — kept alive for scrollback. A session becomes kill-eligible only once another
+    supersedes it: _set_active_session_locked shortens the previous active session
+    to blurred_idle_timeout_s, after which _on_idle_kill reaps it.
     """
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude_config"))
 
     bus = EventBroadcaster()
-    q = bus.subscribe()
+    # Long primary window so only the blurred shortening can kill within the test.
+    m = PtyManager(
+        _StubDB(),
+        bus,
+        idle_timeout_s=60.0,
+        idle_warn_s=50.0,
+        blurred_idle_timeout_s=0.4,
+    )
 
-    m = PtyManager(_StubDB(), bus, idle_timeout_s=0.7, idle_warn_s=0.4)
-
-    session_id = "sess-idle-01"
+    sid_a, sid_b = "sess-idle-a", "sess-idle-b"
     cwd = str(tmp_path)
 
     try:
         await m.focus(
-            session_id,
+            sid_a,
             cwd=cwd,
             bin_name="claude",
             model="",
             permission_mode="dontAsk",
             new_chat=True,
         )
-        managed = m._channels.get(session_id)
-        assert managed is not None
-        channel = managed.channel
-        await _wait_alive(channel)
+        channel_a = m._channels[sid_a].channel
+        await _wait_alive(channel_a)
+        assert m._active_session_id == sid_a
 
-        # --- Wait for idle_warn SSE event ---
-        event = await _wait_bus_event_type(q, "pty_idle_warn", timeout=2.5)
-
-        assert event.get("type") == "pty_idle_warn", (
-            f"expected pty_idle_warn, got {event}"
+        # Navigate to B → A is superseded and shortened to the blurred window.
+        await m.focus(
+            sid_b,
+            cwd=cwd,
+            bin_name="claude",
+            model="",
+            permission_mode="dontAsk",
+            new_chat=True,
         )
-        assert event.get("session_id") == session_id
-        assert "kill_in_seconds" in event
+        await _wait_alive(m._channels[sid_b].channel)
 
-        # --- Wait for idle kill (channel should die) ---
-        # Give extra margin beyond the 0.7s kill timeout
-        deadline = time.monotonic() + 2.0
-        while channel.is_alive() and time.monotonic() < deadline:
-            await asyncio.sleep(0.05)
-
-        assert not channel.is_alive(), (
-            "channel should be dead after idle_timeout_s elapsed"
-        )
-
-        # _last_focus must still be populated (idle-kill preserves it for auto-respawn)
-        assert session_id in m._last_focus, (
+        # A (now off-screen) is reaped within blurred_idle_timeout_s.
+        await _wait_dead(channel_a, timeout=3.0)
+        assert not channel_a.is_alive()
+        assert sid_a in m._last_focus, (
             "_last_focus must survive idle-kill so auto-respawn can work"
         )
+        # B is on-screen now and must NOT be idle-killed.
+        assert m._channels[sid_b].channel.is_alive()
 
     finally:
-        bus.unsubscribe(q)
         await m.shutdown()
 
 
@@ -617,58 +612,52 @@ async def test_idle_timer_kills_after_configured_timeout(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason="Asserts pre-v0.3.1.3 idle-kill semantics: the on-screen session "
-    "(_active_session_id) is now intentionally never idle-killed (kept alive for "
-    "scrollback); only blurred/superseded sessions are reaped. Needs rewrite to the "
-    "active/blurred model — see native-scroll-perf (828884a)."
-)
 async def test_resubmit_after_idle_kill_respawns(tui_shim_path, tmp_path, monkeypatch):
-    """After idle-kill, submit() transparently auto-respawns from cached focus params."""
+    """After a superseded session is idle-killed, submit() transparently
+    auto-respawns it from cached focus params."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude_config"))
 
     bus = EventBroadcaster()
-    q = bus.subscribe()
+    m = PtyManager(
+        _StubDB(),
+        bus,
+        idle_timeout_s=60.0,
+        idle_warn_s=50.0,
+        blurred_idle_timeout_s=0.4,
+    )
 
-    m = PtyManager(_StubDB(), bus, idle_timeout_s=0.7, idle_warn_s=0.4)
-
-    session_id = "sess-idle-respawn"
+    sid_a, sid_b = "sess-respawn-a", "sess-respawn-b"
     cwd = str(tmp_path)
 
     try:
         await m.focus(
-            session_id,
+            sid_a,
             cwd=cwd,
             bin_name="claude",
             model="",
             permission_mode="dontAsk",
             new_chat=True,
         )
-        managed = m._channels.get(session_id)
-        assert managed is not None
-        original_channel = managed.channel
+        original_channel = m._channels[sid_a].channel
         await _wait_alive(original_channel)
 
-        # Drain the warn event (or ignore it), then wait for idle-kill
-        try:
-            await asyncio.wait_for(q.get(), timeout=2.5)
-        except asyncio.TimeoutError:
-            pass  # warn may have already fired; proceed to kill check
-
-        # Wait for the channel to die from idle-kill
-        deadline = time.monotonic() + 2.0
-        while original_channel.is_alive() and time.monotonic() < deadline:
-            await asyncio.sleep(0.05)
-
-        assert not original_channel.is_alive(), (
-            "channel should be dead after idle_timeout_s"
+        # Supersede A with B → A shortened to the blurred window and reaped.
+        await m.focus(
+            sid_b,
+            cwd=cwd,
+            bin_name="claude",
+            model="",
+            permission_mode="dontAsk",
+            new_chat=True,
         )
-        assert session_id in m._last_focus
+        await _wait_alive(m._channels[sid_b].channel)
+        await _wait_dead(original_channel, timeout=3.0)
+        assert sid_a in m._last_focus
 
-        # Now submit — should auto-respawn without raising
-        await m.submit(session_id, "hello after idle kill")
+        # Now submit to A — should auto-respawn a fresh channel without raising.
+        await m.submit(sid_a, "hello after idle kill")
 
-        new_managed = m._channels.get(session_id)
+        new_managed = m._channels.get(sid_a)
         assert new_managed is not None, (
             "submit() should have auto-spawned a new channel"
         )
@@ -680,7 +669,6 @@ async def test_resubmit_after_idle_kill_respawns(tui_shim_path, tmp_path, monkey
         assert new_channel.is_alive()
 
     finally:
-        bus.unsubscribe(q)
         await m.shutdown()
 
 
@@ -1156,18 +1144,15 @@ async def test_auth_required_detects_pattern_split_across_chunks(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason="Asserts pre-v0.3.1.3 idle-kill semantics: unfocus() is now a no-op for "
-    "the on-screen session (_active_session_id), which is kept alive for scrollback; "
-    "only non-active sessions get the shortened blurred window. Needs rewrite to the "
-    "active/blurred model — see native-scroll-perf (828884a)."
-)
 async def test_unfocus_shortens_idle_kill_window(tui_shim_path, tmp_path, monkeypatch):
-    """``unfocus`` (called by /api/pty/blur) must bring the idle-kill in.
+    """``unfocus`` (called by /api/pty/blur) brings the idle-kill in for a session
+    that is no longer on screen.
 
-    Setup: focus a session with a long idle_timeout. Verify the scheduled
-    kill is far out. Then unfocus and verify the kill has been moved
-    forward to ~blurred_idle_timeout_s.
+    Since v0.3.1.3 unfocus() is a no-op for the on-screen session
+    (_active_session_id, kept alive for scrollback) — only a non-active session
+    gets the shortened blurred window. We make the session non-active (as if its
+    native view/tab closed, clearing _active_session_id) before blurring, then
+    verify the kill is moved forward and the channel is reaped.
     """
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude_config"))
 
@@ -1202,15 +1187,16 @@ async def test_unfocus_shortens_idle_kill_window(tui_shim_path, tmp_path, monkey
         # Sanity: focus scheduled the kill ~60s out.
         assert long_kill_at > 0
 
+        # No longer the on-screen session — unfocus is a no-op while active.
+        m._active_session_id = None
         await m.unfocus(session_id)
         assert managed.idle_kill_at_ms < long_kill_at, (
-            "unfocus must move the kill earlier, not preserve the full timer"
+            "unfocus must move a non-active session's kill earlier, not preserve "
+            "the full timer"
         )
 
         # The channel should die within blurred_idle_timeout_s + margin.
-        deadline = time.monotonic() + 1.5
-        while channel.is_alive() and time.monotonic() < deadline:
-            await asyncio.sleep(0.05)
+        await _wait_dead(channel, timeout=2.0)
         assert not channel.is_alive(), (
             "channel should have been idle-killed within blurred_idle_timeout_s"
         )

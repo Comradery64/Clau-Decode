@@ -613,12 +613,6 @@ Database.get_ephemeral_messages_by_responds_to = _get_rows_by_responds_to  # typ
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason="Asserts pre-v0.3.1.3 idle-kill semantics. As of native-scroll-perf "
-    "(828884a) _on_idle_kill re-arms the on-screen session (_active_session_id) "
-    "before the /btw-defer branch is reached, so this test's idle-kill assertions "
-    "no longer hold. Needs rewrite to the active/blurred model."
-)
 async def test_btw_idle_kill_deferred_while_expecting_response(
     monkeypatch, tmp_path, real_db, manager_with_db
 ):
@@ -649,6 +643,12 @@ async def test_btw_idle_kill_deferred_while_expecting_response(
     assert manager_with_db._channels.get(session_id) is not None, (
         "channel should still be registered before idle-kill"
     )
+
+    # v0.3.1.3 active-protection: _on_idle_kill re-arms the on-screen session
+    # (_active_session_id) before reaching the /btw-defer branch. Mark the session
+    # as navigated-away so this test exercises the /btw deferral path, not the
+    # active-session re-arm.
+    manager_with_db._active_session_id = None
 
     # Trigger an idle-kill directly.  With the Phase 2 deferral fix, the
     # channel must NOT be removed — the kill should reschedule itself.
