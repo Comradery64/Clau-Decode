@@ -37,9 +37,16 @@ interface AppState {
   activeProfileId: string | null;
   hostInfo: HostInfo | null;
 
+  // Active provider — set by ChatView when a session loads, reset to "claude"
+  // when no session is selected. Drives data-provider on the app root so the
+  // sidebar also receives the provider skin.
+  activeProvider: string;
+
   // Multi-select mode
   selectionMode: boolean;
   selectedSessionIds: Set<string>;
+
+  setActiveProvider: (provider: string) => void;
 
   selectSession: (id: string | null) => void;
   setPendingScrollMessageId: (id: string | null) => void;
@@ -96,9 +103,13 @@ export const useAppStore = create<AppState>((set) => ({
   activeProfileId: null,
   hostInfo: null,
 
+  activeProvider: "claude",
+
   // Multi-select mode
   selectionMode: false,
   selectedSessionIds: new Set<string>(),
+
+  setActiveProvider: (provider) => set({ activeProvider: provider }),
 
   selectSession: (id) => set({ selectedSessionId: id }),
   setPendingScrollMessageId: (id) => set({ pendingScrollMessageId: id }),

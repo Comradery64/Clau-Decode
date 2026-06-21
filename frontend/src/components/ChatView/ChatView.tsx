@@ -334,7 +334,11 @@ export default function ChatView() {
   const foreignOwned = ownership?.status === "terminal";
 
   useEffect(() => {
-    if (!selectedSessionId) { setSession(null); return; }
+    if (!selectedSessionId) {
+      setSession(null);
+      useAppStore.getState().setActiveProvider("claude");
+      return;
+    }
     let cancelled = false;
     api
       .getSession(selectedSessionId)
@@ -342,6 +346,8 @@ export default function ChatView() {
         if (!cancelled) {
           const renamed = lsGetMap(LS.RENAMED)[selectedSessionId];
           setSession(renamed ? { ...detail, title: renamed } : detail);
+          // Lift provider to app root so the sidebar also receives the skin.
+          useAppStore.getState().setActiveProvider(detail.provider ?? "claude");
         }
       })
       .catch(() => {});

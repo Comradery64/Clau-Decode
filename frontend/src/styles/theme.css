@@ -449,36 +449,274 @@ body {
 
 /* ============================================================
    CODEX / ChatGPT-NATIVE SKIN
-   Scoped to [data-provider="codex"] — overrides accent + surface tokens so
-   Codex sessions read with OpenAI's signature teal-green palette instead of
-   Clau-Decode's warm Claude brown/orange. All other tokens (typography,
-   borders, shadows, syntax highlighting) inherit unchanged from :root /
-   [data-theme="dark"]. Claude sessions are NEVER affected by these rules.
+   Scoped to [data-provider="codex"] — ChatGPT dark theme.
+   Applied unconditionally (regardless of app light/dark/system setting)
+   so the skin works even when the host app theme is "light" or "system".
+
+   Claude sessions are NEVER affected. Every rule is strictly gated on
+   [data-provider="codex"]. The prior dark-only [data-theme="dark"][data-provider="codex"]
+   gating has been COLLAPSED into the base selector so these tokens always apply.
    ============================================================ */
 
-/* --- Light mode --- */
-[data-provider="codex"] {
-  --accent-orange: #10a37f;
-  --accent-orange-hover: #0e8c6d;
-  --accent-orange-subtle: rgba(16, 163, 127, 0.10);
-  --border-accent: #10a37f;
-  --bg-user-msg: #f1f5f4;
-  --bg-tool-block: #f2f6f5;
-  --bg-tool-result: #f4f8f7;
-  --bg-thinking: #f2f6f5;
+/* ----------------------------------------------------------------
+   TOKEN OVERRIDES ON <html> — UNCONDITIONAL DARK (ChatGPT dark).
+   These override whatever the app's light/dark/system setting produces
+   so the codex skin is always the near-black ChatGPT dark look.
+   ---------------------------------------------------------------- */
+html[data-provider="codex"] {
+  /* --- Core surfaces (ChatGPT dark: #0d0d0d everywhere) --- */
+  --bg-base: #0d0d0d;
+  --bg-sidebar: #0d0d0d;
+  --bg-sidebar-hover: #1f1f1f;
+  --bg-sidebar-active: #2a2a2a;
+  --bg-user-msg: #303030;
+  --bg-tool-block: #171717;
+  --bg-tool-result: #0d0d0d;
+  --bg-thinking: #171717;
+  --bg-code: #0a0a0a;
+  --bg-code-block: #171717;
+  --bg-code-block-header: #1f1f1f;
+  --bg-input: #303030;
+  --bg-modal: #1a1a1a;
+  --bg-modal-overlay: rgba(0, 0, 0, 0.65);
+  --bg-inline-code: rgba(255, 255, 255, 0.08);
+  /* --- Borders --- */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --border-code: rgba(255, 255, 255, 0.07);
+  --border-accent: #4a4a4a;
+  --border-code-block: rgba(255, 255, 255, 0.10);
+  /* --- Text --- */
+  --text-primary: #ececec;
+  --text-secondary: #9b9b9b;
+  --text-tertiary: #8e8e8e;
+  --text-accent: #ececec;
+  --text-on-accent: #0d0d0d;
+  --text-code: #ececec;
+  --text-inline-code: #ececec;
+  --text-thinking: #8e8e8e;
+  --text-code-lang: #9b9b9b;
+  /* --- Accents — pure monochrome (no warm beige/teal/green) --- */
+  --accent-orange: #ececec;
+  --accent-orange-hover: #ffffff;
+  --accent-orange-subtle: rgba(255, 255, 255, 0.06);
+  --accent-green: #3fb950;
+  /* --- Font: sans-serif (Lora → system sans) --- */
+  --font-content: system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  /* --- Tool blocks --- */
+  --tool-name-color: #ececec;
+  --tool-error-bg: rgba(239, 68, 68, 0.12);
+  --tool-error-border: rgba(239, 68, 68, 0.30);
+  --tool-error-text: #f87171;
+  /* --- Shadows (dark-appropriate) --- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+  /* --- Scrollbars --- */
+  --os-handle-bg: rgba(255, 255, 255, 0.20);
+  --os-handle-bg-hover: rgba(255, 255, 255, 0.35);
+  --os-handle-bg-active: rgba(255, 255, 255, 0.45);
+  /* --- HLJS syntax (dark) --- */
+  --hljs-base: #ececec;
+  --hljs-comment: #666;
+  --hljs-string: #98c379;
+  --hljs-number: #d19a66;
+  --hljs-keyword: #c678dd;
+  --hljs-function: #e6c07b;
+  --hljs-type: #e6c07b;
+  --hljs-property: #56b6c2;
+  --hljs-operator: #abb2bf;
+  --hljs-meta: #c678dd;
+  /* --- Force color-scheme so browser chrome (scrollbars, inputs) goes dark --- */
+  color-scheme: dark;
 }
 
-/* --- Dark mode --- */
-[data-theme="dark"] [data-provider="codex"] {
-  --accent-orange: #19c37d;
-  --accent-orange-hover: #2dd4a0;
-  --accent-orange-subtle: rgba(25, 195, 125, 0.16);
-  --border-accent: #19c37d;
-  --bg-user-msg: #2a2f2e;
-  --bg-tool-block: #23282a;
-  --bg-tool-result: #262b2c;
-  --bg-thinking: #23282a;
+/* ----------------------------------------------------------------
+   BODY — make sure the root wrapper div also picks up #0d0d0d.
+   The App root div uses background: var(--bg-base) inline, but the
+   body itself may not, leaving a flash on load. Belt + suspenders.
+   ---------------------------------------------------------------- */
+html[data-provider="codex"] body {
+  background: #0d0d0d !important;
+  color: #ececec !important;
 }
+
+/* ----------------------------------------------------------------
+   STRUCTURAL OVERRIDES — component-level, all theme-agnostic.
+   Every rule below uses plain [data-provider="codex"] (no data-theme gate)
+   so it applies unconditionally when codex is active.
+   ---------------------------------------------------------------- */
+
+/* Sidebar: flat, no warm border */
+[data-provider="codex"] aside[aria-label="Navigation"] {
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-sidebar) !important;
+}
+
+/* Session item row — ChatGPT 8px pill shape */
+[data-provider="codex"] .sidebar-session-item {
+  border-radius: 8px !important;
+  margin: 1px 6px !important;
+}
+
+/* Active pill in sidebar */
+[data-provider="codex"] .sidebar-session-item--active {
+  background: #2a2a2a !important;
+  border-radius: 8px !important;
+}
+
+/* Sidebar section labels ("Recents" etc.) */
+[data-provider="codex"] .sidebar-section-label {
+  color: #8e8e8e !important;
+  font-size: 11px !important;
+  font-family: var(--font-content) !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
+/* User message bubble: right-aligned grey pill (ChatGPT style).
+   Fully rounded pill, NOT the asymmetric 18px 4px 18px 18px from inline style.
+   Both !important and the attribute selector compound raise specificity above
+   the inline style on the outer wrapper. */
+[data-provider="codex"] .user-msg-bubble {
+  background: #303030 !important;
+  color: #ececec !important;
+  border-radius: 20px !important;
+  padding: 10px 18px !important;
+  max-width: 70% !important;
+  font-family: var(--font-content) !important;
+}
+
+/* Assistant message text — no bubble, plain text on near-black */
+[data-provider="codex"] .prose-content {
+  font-family: var(--font-content) !important;
+  color: #ececec;
+}
+
+/* Assistant footer: action icons ALWAYS VISIBLE (ChatGPT style, not hover-only) */
+[data-provider="codex"] .asst-footer .hover-actions {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+/* Model label */
+[data-provider="codex"] .asst-model-label {
+  font-size: 13px !important;
+  color: #9b9b9b !important;
+  font-family: var(--font-content) !important;
+}
+
+/* Action icon buttons: grey at rest, near-white on hover */
+[data-provider="codex"] .asst-action-icons button {
+  color: #9b9b9b !important;
+}
+[data-provider="codex"] .asst-action-icons button:hover {
+  color: #ececec !important;
+}
+
+/* Input bar: dark rounded capsule, no harsh border */
+[data-provider="codex"] .chat-input-card {
+  background: #303030 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 28px !important;
+  padding: 14px 18px 10px !important;
+  box-shadow: none !important;
+}
+
+/* Send button: white circle with dark icon — active state */
+[data-provider="codex"] .chat-send-btn {
+  background: #ffffff !important;
+  color: #0d0d0d !important;
+  border: none !important;
+  width: 36px !important;
+  height: 36px !important;
+}
+/* Inactive/disabled send button */
+[data-provider="codex"] .chat-send-btn[style*="cursor: default"],
+[data-provider="codex"] .chat-send-btn[style*="cursor:default"] {
+  background: #3a3a3a !important;
+  color: #666 !important;
+}
+
+/* Scrollbar handles */
+[data-provider="codex"] .os-scrollbar {
+  --os-handle-bg: rgba(255, 255, 255, 0.20);
+  --os-handle-bg-hover: rgba(255, 255, 255, 0.35);
+  --os-handle-bg-active: rgba(255, 255, 255, 0.45);
+}
+
+/* Focus ring — neutral */
+[data-provider="codex"] :focus-visible {
+  outline-color: #4a4a4a;
+}
+
+/* Blockquote accent line */
+[data-provider="codex"] .prose-content blockquote {
+  border-left-color: var(--border-strong);
+}
+
+/* Links */
+[data-provider="codex"] .prose-content a {
+  color: #9ec5fe;
+}
+
+/* Tool blocks */
+[data-provider="codex"] .tool-block {
+  background: #171717 !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Code blocks */
+[data-provider="codex"] .code-block-wrapper {
+  background: #171717 !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+[data-provider="codex"] .code-block-header {
+  background: #1f1f1f !important;
+  border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* GPT provider badge in sidebar — override teal hardcoded inline style with
+   a monochrome dark-mode look matching ChatGPT's own neutral badge color. */
+[data-provider="codex"] [aria-label^="Provider:"] {
+  color: #9b9b9b !important;
+  border-color: rgba(155, 155, 155, 0.30) !important;
+}
+
+/* Sidebar section headers (Starred, Recents, Archived) — lowercase, grey */
+[data-provider="codex"] aside .sidebar-section-label,
+[data-provider="codex"] aside [style*="textTransform"][style*="uppercase"],
+[data-provider="codex"] aside [style*="text-transform"][style*="uppercase"] {
+  color: #8e8e8e !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-weight: 500 !important;
+}
+
+/* ConversationHeader — dark bg, no warm tones */
+[data-provider="codex"] header,
+[data-provider="codex"] [class*="header"] {
+  background: #0d0d0d !important;
+  border-bottom-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* Thinking/tool-use toggle button labels — use content font + grey */
+[data-provider="codex"] .thought-chain-toggle,
+[data-provider="codex"] [class*="thinking"] {
+  font-family: var(--font-content) !important;
+}
+
+/* Ensure the root app wrapper (the flex div in App.tsx) matches #0d0d0d */
+[data-provider="codex"] > div,
+div[data-provider="codex"] {
+  background: #0d0d0d !important;
+}
+
+/* ----------------------------------------------------------------
+   HOVER-ACTIONS VISIBILITY (global, not codex-specific)
+   Keeps the existing reveal logic intact for non-codex sessions.
+   ---------------------------------------------------------------- */
 
 /* Reveals on hover OR keyboard focus so action affordances are reachable via Tab. */
 .hover-actions {

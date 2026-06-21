@@ -51,8 +51,25 @@ export default function App() {
   const isHelpOpen = useAppStore((s) => s.isHelpOpen);
   const isShortcutsOpen = useAppStore((s) => s.isShortcutsOpen);
   const viewingFilePath = useAppStore((s) => s.viewingFilePath);
+  const activeProvider = useAppStore((s) => s.activeProvider);
+
+  // Mirror activeProvider onto <html data-provider="..."> so CSS body/html
+  // background overrides work (CSS can't select upward from a child div).
+  // Mirrors the same pattern applyTheme() uses for data-theme.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-provider", activeProvider);
+  }, [activeProvider]);
+
   const route = useRoute();
   const chatIdFromUrl = getChatIdFromRoute(route);
+
+  // ChatView sets activeProvider from the open session, but it UNMOUNTS on the
+  // Dashboard (no chat id) so its reset never fires there. Force the provider
+  // back to "claude" whenever there's no active chat, otherwise the Dashboard
+  // (and the whole shell) keeps the Codex skin after leaving a Codex session.
+  useEffect(() => {
+    if (!chatIdFromUrl) useAppStore.getState().setActiveProvider("claude");
+  }, [chatIdFromUrl]);
 
   // URL is the source of truth for selectedSessionId. Sync on route change
   // (covers initial mount, sidebar clicks, search clicks, browser back/forward).
@@ -276,6 +293,7 @@ export default function App() {
 
   return (
     <div
+      data-provider={activeProvider}
       style={{
         display: "flex",
         height: "100vh",

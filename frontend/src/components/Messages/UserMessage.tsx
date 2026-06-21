@@ -395,6 +395,7 @@ export function UserMessage({ message }: UserMessageProps) {
       ) : (
         <div style={{ display: "flex", justifyContent: "flex-end" }}>
           <div
+            className="user-msg-bubble"
             style={{
               background: "var(--bg-user-msg)",
               borderRadius: "18px 4px 18px 18px",

@@ -357,7 +357,7 @@ export function SessionItem({ session, isActive, onClick, runnerStatus }: Sessio
   return (
     <>
       <div
-        className="hover-actions-parent"
+        className={`hover-actions-parent sidebar-session-item${isActive && !selectionMode ? " sidebar-session-item--active" : ""}`}
         onMouseEnter={() => { setHovered(true); prefetch(session.id, api.getSession); }}
         onMouseLeave={() => setHovered(false)}
         style={{
