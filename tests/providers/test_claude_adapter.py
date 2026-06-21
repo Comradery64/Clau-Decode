@@ -76,7 +76,9 @@ class TestConfiguredRoots:
         for root in roots:
             assert root.is_absolute(), f"Expected absolute path, got {root}"
 
-    def test_respects_custom_data_paths(self, adapter: ClaudeAdapter, tmp_path: Path) -> None:
+    def test_respects_custom_data_paths(
+        self, adapter: ClaudeAdapter, tmp_path: Path
+    ) -> None:
         config = AppConfig(data_paths=[str(tmp_path)])
         roots = adapter.configured_roots(config)
         assert tmp_path in roots
@@ -159,7 +161,9 @@ class TestDiscover:
         assert len(results) == 1
         assert results[0][1] == session_path
 
-    async def test_empty_for_missing_root(self, adapter: ClaudeAdapter, tmp_path: Path) -> None:
+    async def test_empty_for_missing_root(
+        self, adapter: ClaudeAdapter, tmp_path: Path
+    ) -> None:
         missing = tmp_path / "nonexistent"
         results = []
         async for item in adapter.discover([missing]):

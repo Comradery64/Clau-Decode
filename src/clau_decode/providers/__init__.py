@@ -6,7 +6,9 @@ import concrete adapter modules directly; they work against the abstract seam
 defined in ``providers.base``.
 """
 
-from . import registry  # re-exported for convenience: ``from .providers import registry``
+from . import (
+    registry,
+)  # re-exported for convenience: ``from .providers import registry``
 
 
 def register_builtins() -> None:

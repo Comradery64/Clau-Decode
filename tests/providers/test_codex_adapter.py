@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from clau_decode.models import (
-    TextBlock,
     ThinkingBlock,
     ToolResultBlock,
     ToolUseBlock,
@@ -138,7 +137,9 @@ class TestAssistantTurnCoalescing:
         _, messages = parsed
         assistant_msgs = [m for m in messages if m.role == "assistant"]
         turn1 = assistant_msgs[0]
-        thinking_blocks = [b for b in turn1.content_blocks if isinstance(b, ThinkingBlock)]
+        thinking_blocks = [
+            b for b in turn1.content_blocks if isinstance(b, ThinkingBlock)
+        ]
         assert len(thinking_blocks) == 1
 
 
@@ -152,7 +153,9 @@ class TestToolCallParsing:
         _, messages = parsed
         assistant_msgs = [m for m in messages if m.role == "assistant"]
         turn1 = assistant_msgs[0]
-        tool_use_blocks = [b for b in turn1.content_blocks if isinstance(b, ToolUseBlock)]
+        tool_use_blocks = [
+            b for b in turn1.content_blocks if isinstance(b, ToolUseBlock)
+        ]
         call_aaa = next(b for b in tool_use_blocks if b.id == "call_aaa")
         assert isinstance(call_aaa.input, dict)
         assert call_aaa.input["command"] == ["ls", "-la"]
@@ -161,7 +164,9 @@ class TestToolCallParsing:
         _, messages = parsed
         assistant_msgs = [m for m in messages if m.role == "assistant"]
         turn2 = assistant_msgs[1]
-        tool_use_blocks = [b for b in turn2.content_blocks if isinstance(b, ToolUseBlock)]
+        tool_use_blocks = [
+            b for b in turn2.content_blocks if isinstance(b, ToolUseBlock)
+        ]
         call_bbb = next(b for b in tool_use_blocks if b.id == "call_bbb")
         assert call_bbb.input == {"_raw": "this-is-not-json{{"}
 
@@ -176,7 +181,9 @@ class TestToolResultPairing:
         _, messages = parsed
         assistant_msgs = [m for m in messages if m.role == "assistant"]
         turn1 = assistant_msgs[0]
-        result_blocks = [b for b in turn1.content_blocks if isinstance(b, ToolResultBlock)]
+        result_blocks = [
+            b for b in turn1.content_blocks if isinstance(b, ToolResultBlock)
+        ]
         result_aaa = next(b for b in result_blocks if b.tool_use_id == "call_aaa")
         assert "total 8" in result_aaa.content
 
@@ -184,7 +191,9 @@ class TestToolResultPairing:
         _, messages = parsed
         assistant_msgs = [m for m in messages if m.role == "assistant"]
         turn2 = assistant_msgs[1]
-        result_blocks = [b for b in turn2.content_blocks if isinstance(b, ToolResultBlock)]
+        result_blocks = [
+            b for b in turn2.content_blocks if isinstance(b, ToolResultBlock)
+        ]
         result_bbb = next(b for b in result_blocks if b.tool_use_id == "call_bbb")
         assert result_bbb is not None
 

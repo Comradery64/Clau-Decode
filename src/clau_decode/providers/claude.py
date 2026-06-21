@@ -31,7 +31,9 @@ class ClaudeAdapter(ProviderAdapter):
 
     @property
     def capabilities(self) -> ProviderCaps:
-        return ProviderCaps(can_send=True, can_resume=True, can_fork=True, can_edit=True)
+        return ProviderCaps(
+            can_send=True, can_resume=True, can_fork=True, can_edit=True
+        )
 
     # -- Config-aware root resolution -----------------------------------------
 
@@ -45,9 +47,7 @@ class ClaudeAdapter(ProviderAdapter):
 
     # -- Discovery (async generator) ------------------------------------------
 
-    async def discover(
-        self, roots: list[Path]
-    ) -> AsyncIterator[tuple[Project, Path]]:
+    async def discover(self, roots: list[Path]) -> AsyncIterator[tuple[Project, Path]]:
         """Yield ``(Project, session_file_path)`` by delegating to ``scan_paths``."""
         from ..scanner import scan_paths
 

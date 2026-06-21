@@ -26,7 +26,9 @@ class _FakeAdapter(ProviderAdapter):
 
     @property
     def capabilities(self) -> ProviderCaps:
-        return ProviderCaps(can_send=False, can_resume=False, can_fork=False, can_edit=False)
+        return ProviderCaps(
+            can_send=False, can_resume=False, can_fork=False, can_edit=False
+        )
 
     def configured_roots(self, config: AppConfig) -> list[Path]:
         return []
@@ -34,7 +36,7 @@ class _FakeAdapter(ProviderAdapter):
     async def discover(self, roots: list[Path]) -> AsyncIterator[tuple[Project, Path]]:
         # Empty async generator — yields nothing.
         return
-        yield  # make Python treat this as a generator function  # noqa: unreachable
+        yield  # make Python treat this as a generator function
 
     def parse(self, path: Path) -> tuple[Session, list[Message]]:
         session = Session(

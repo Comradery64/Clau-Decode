@@ -472,7 +472,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                             await db.upsert_session(session, file_mtime=current_mtime)
                             changed += 1
                         continue
-                    session, messages = await asyncio.to_thread(adapter.parse, session_path)
+                    session, messages = await asyncio.to_thread(
+                        adapter.parse, session_path
+                    )
                     session.project_id = project.id
                     project.session_count += 1
                     await db.upsert_project(project)
