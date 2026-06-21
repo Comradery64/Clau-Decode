@@ -373,6 +373,7 @@ export function ChatInput({
             banner), stay fully rounded and rise UP over its bottom edge so the
             two read as two stacked pills (the input pill over the card behind). */}
         <div
+          className="chat-input-card"
           style={{
             ...inputCardStyle,
             ...(flushTop

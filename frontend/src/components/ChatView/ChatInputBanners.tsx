@@ -67,6 +67,7 @@ export function SendStopButton({
         onClick={onStop}
         title="Stop"
         aria-label="Stop"
+        className="chat-send-btn"
         style={sendBtnStyle(true)}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
@@ -81,6 +82,7 @@ export function SendStopButton({
       onClick={onSend}
       title={`Send (${shortcutLabel})`}
       aria-label="Send message"
+      className="chat-send-btn"
       style={sendBtnStyle(canSend)}
     >
       <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">

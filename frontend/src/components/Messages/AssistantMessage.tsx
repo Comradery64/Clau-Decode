@@ -373,6 +373,7 @@ export function AssistantMessage({ messages, model }: AssistantMessageProps) {
       {/* Footer: model name + hover actions */}
       {!editing && (
         <div
+          className="asst-footer"
           style={{
             display: "flex",
             alignItems: "center",
@@ -383,7 +384,7 @@ export function AssistantMessage({ messages, model }: AssistantMessageProps) {
         >
           {model && (
             <div
-              className="hover-actions"
+              className="hover-actions asst-model-label"
               style={{
                 fontSize: "11px",
                 color: "var(--text-tertiary)",
@@ -394,7 +395,7 @@ export function AssistantMessage({ messages, model }: AssistantMessageProps) {
             </div>
           )}
           <div
-            className="hover-actions"
+            className="hover-actions asst-action-icons"
             style={{
               display: "flex",
               alignItems: "center",
