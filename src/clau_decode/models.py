@@ -250,14 +250,23 @@ class AppConfig(BaseModel):
         return self.data_paths
 
     def get_active_data_sources(self) -> list[str] | None:
-        """Return expanded paths for the active profile, or None for all."""
+        """Return expanded paths for the active profile, or None for all.
+
+        Codex data paths are always appended to the active profile's sources:
+        profiles partition *Claude* history (e.g. personal vs work), but Codex
+        is not part of that partition, so its sessions must stay visible no
+        matter which Claude profile is active. Without this, an active profile
+        filters out every Codex project (whose ``data_source`` is the ~/.codex
+        root) and Codex sessions vanish from the list/search/analytics.
+        """
         from pathlib import Path
 
         if not self.profiles or not self.active_profile_id:
             return None
+        codex = [str(Path(dp).expanduser()) for dp in self.codex_data_paths]
         for p in self.profiles:
             if p.id == self.active_profile_id:
-                return [str(Path(dp).expanduser()) for dp in p.data_paths]
+                return [str(Path(dp).expanduser()) for dp in p.data_paths] + codex
         return None
 
 
