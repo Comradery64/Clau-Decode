@@ -82,9 +82,7 @@ class ProviderAdapter(abc.ABC):
     # -- Discovery (async generator) ------------------------------------------
 
     @abc.abstractmethod
-    async def discover(
-        self, roots: list[Path]
-    ) -> AsyncIterator[tuple[Project, Path]]:
+    async def discover(self, roots: list[Path]) -> AsyncIterator[tuple[Project, Path]]:
         """Yield ``(Project, session_file_path)`` pairs found under *roots*.
 
         Mirrors the contract of ``scanner.scan_paths``.  Declared as an async

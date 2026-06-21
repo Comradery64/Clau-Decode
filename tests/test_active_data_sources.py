@@ -43,7 +43,8 @@ def test_no_profile_still_returns_none():
     # Unchanged behavior: with no active profile, scanning is unfiltered (None).
     assert AppConfig().get_active_data_sources() is None
     assert (
-        AppConfig(profiles=[Profile(id="p1", name="x", data_paths=["~/.claude"])])
-        .get_active_data_sources()
+        AppConfig(
+            profiles=[Profile(id="p1", name="x", data_paths=["~/.claude"])]
+        ).get_active_data_sources()
         is None
     )

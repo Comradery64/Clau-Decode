@@ -143,7 +143,9 @@ class CodexAdapter(ProviderAdapter):
 
     @property
     def capabilities(self) -> ProviderCaps:
-        return ProviderCaps(can_send=False, can_resume=False, can_fork=False, can_edit=False)
+        return ProviderCaps(
+            can_send=False, can_resume=False, can_fork=False, can_edit=False
+        )
 
     # -- Config-aware root resolution -----------------------------------------
 
@@ -159,9 +161,7 @@ class CodexAdapter(ProviderAdapter):
 
     # -- Discovery (async generator) ------------------------------------------
 
-    async def discover(
-        self, roots: list[Path]
-    ) -> AsyncIterator[tuple[Project, Path]]:
+    async def discover(self, roots: list[Path]) -> AsyncIterator[tuple[Project, Path]]:
         """Yield ``(Project, session_file_path)`` pairs found under *roots*.
 
         Reads only the first non-empty line of each file to extract the cwd;

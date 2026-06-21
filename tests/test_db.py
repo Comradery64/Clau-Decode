@@ -573,7 +573,9 @@ class TestProviderMigration:
             "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='provider'"
         ) as cur:
             row = await cur.fetchone()
-        assert row[0] == 1, "provider column must not be duplicated by idempotent re-init"
+        assert row[0] == 1, (
+            "provider column must not be duplicated by idempotent re-init"
+        )
 
     async def test_migrate_add_provider_on_old_db_without_column(self, tmp_path):
         """Simulate an old DB that pre-dates the provider column.
