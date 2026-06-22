@@ -19,6 +19,7 @@ import type {
   PricingTableResponse,
   ProfilesResponse,
   Profile,
+  ProviderInfo,
   Project,
   PtyNativeStateEvent,
   PtyNativeSnapshot,
@@ -148,6 +149,7 @@ export const api = {
   },
   getDashboard: () => get<DashboardData>("/api/dashboard"),
   getHostInfo: () => get<HostInfo>("/api/host-info"),
+  getProviders: () => get<ProviderInfo[]>("/api/providers"),
   getConfig: () => get<AppConfig>("/api/config"),
   updateConfig: (config: AppConfig) => {
     _cachedConfig = config;

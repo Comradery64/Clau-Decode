@@ -10,6 +10,7 @@ import {
   ChatDisclaimer,
 } from "./ChatInputBanners";
 import { useMessageHistory } from "./hooks/useMessageHistory";
+import { useProviderTheme } from "./ProviderThemeContext";
 import { markClauDecodeSubmit } from "../../utils/localStorage";
 
 export type SubmitKind = "message" | "btw" | "slash";
@@ -70,6 +71,9 @@ export function ChatInput({
   const [error, setError] = useState<string | null>(null);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(defaultPermissionMode);
   const [model, setModel] = useState<ModelId>("default");
+  // Provider-aware composer copy (the composer only renders for drivable
+  // providers; this keeps the prompt correct once Codex driving is enabled).
+  const { provider } = useProviderTheme();
 
   const [autoRestoreSuppressed, setAutoRestoreSuppressed] = useState(false);
 
@@ -404,6 +408,8 @@ export function ChatInput({
             placeholder={
               disabled
                 ? (disabledPlaceholder ?? "This session is a fork/backup — sending is disabled.")
+                : provider === "codex"
+                ? "Message Codex…"
                 : "How can I help you today?"
             }
             style={textareaStyle}

@@ -15,7 +15,7 @@ from httpx import ASGITransport, AsyncClient
 
 from clau_decode.db import Database
 from clau_decode.drivers import DriverAvailability
-from clau_decode.models import AppConfig, Project, Session
+from clau_decode.models import AppConfig, Message, Project, Session, TextBlock
 
 
 def _make_app(db_path: Path, config: AppConfig):
@@ -169,6 +169,56 @@ async def test_open_terminal_codex_uses_codex_resume(env):
     script = mock_popen.call_args[0][0][2]
     assert "codex resume codex-sess-1" in script
     assert " -r codex-sess-1" not in script  # never the claude flag
+
+
+# ---------------------------------------------------------------------------
+# Edit-route capability gate (defense in depth — never corrupt a Codex rollout)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_codex_message(db_path: str, *, session_id: str, message_id: str):
+    async with Database(db_path) as db:
+        await db.upsert_messages(
+            [
+                Message(
+                    id=message_id,
+                    session_id=session_id,
+                    role="user",
+                    content_blocks=[TextBlock(text="hello")],
+                    provider="codex",
+                )
+            ]
+        )
+
+
+async def test_delete_message_codex_returns_409(env):
+    await _seed_codex_message(
+        env["db_path"], session_id="codex-sess-1", message_id="codex-msg-1"
+    )
+    app = _make_app(env["db_path"], AppConfig(edit_enabled=True))
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.delete("/api/messages/codex-msg-1")
+    assert r.status_code == 409
+    assert r.json()["detail"]["kind"] == "capability_unsupported"
+    assert r.json()["detail"]["capability"] == "can_edit"
+
+
+async def test_patch_message_codex_returns_409(env):
+    await _seed_codex_message(
+        env["db_path"], session_id="codex-sess-1", message_id="codex-msg-2"
+    )
+    app = _make_app(env["db_path"], AppConfig(edit_enabled=True))
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.patch(
+            "/api/messages/codex-msg-2",
+            json={"content_blocks": [{"type": "text", "text": "edited"}]},
+        )
+    assert r.status_code == 409
+    assert r.json()["detail"]["capability"] == "can_edit"
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS AppleScript branch")

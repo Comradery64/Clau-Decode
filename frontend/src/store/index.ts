@@ -4,7 +4,7 @@
  */
 
 import { create } from "zustand";
-import type { HostInfo, Profile } from "../api/types";
+import type { HostInfo, Profile, ProviderInfo } from "../api/types";
 import { getChatIdFromRoute } from "../router";
 
 function initialChatId(): string | null {
@@ -36,6 +36,10 @@ interface AppState {
   profiles: Profile[];
   activeProfileId: string | null;
   hostInfo: HostInfo | null;
+  // Per-provider capabilities + runtime drivability (GET /api/providers),
+  // fetched once at boot. Keyed by provider name. The FE gates affordances
+  // (composer, Native toggle, message edit) off `effective` caps.
+  providers: Record<string, ProviderInfo> | null;
 
   // Active provider — set by ChatView when a session loads, reset to "claude"
   // when no session is selected. Drives data-provider on the app root so the
@@ -47,6 +51,7 @@ interface AppState {
   selectedSessionIds: Set<string>;
 
   setActiveProvider: (provider: string) => void;
+  setProviders: (providers: ProviderInfo[]) => void;
 
   selectSession: (id: string | null) => void;
   setPendingScrollMessageId: (id: string | null) => void;
@@ -102,6 +107,7 @@ export const useAppStore = create<AppState>((set) => ({
   profiles: [],
   activeProfileId: null,
   hostInfo: null,
+  providers: null,
 
   activeProvider: "claude",
 
@@ -110,6 +116,8 @@ export const useAppStore = create<AppState>((set) => ({
   selectedSessionIds: new Set<string>(),
 
   setActiveProvider: (provider) => set({ activeProvider: provider }),
+  setProviders: (providers) =>
+    set({ providers: Object.fromEntries(providers.map((p) => [p.name, p])) }),
 
   selectSession: (id) => set({ selectedSessionId: id }),
   setPendingScrollMessageId: (id) => set({ pendingScrollMessageId: id }),

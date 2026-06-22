@@ -1,8 +1,9 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 import { UserMessage } from "../UserMessage";
-import type { Message } from "../../../api/types";
+import type { Message, ProviderCaps } from "../../../api/types";
 import { on } from "../../../utils/events";
+import { ProviderThemeProvider } from "../../ChatView/ProviderThemeContext";
 
 vi.mock("../../../api/client", () => ({
   api: {
@@ -34,6 +35,38 @@ describe("UserMessage", () => {
   it("renders the message text", () => {
     render(<UserMessage message={makeMessage()} />);
     expect(screen.getByText("Hello, Claude!")).toBeInTheDocument();
+  });
+
+  it("hides edit/delete when the provider can't be edited (e.g. Codex)", () => {
+    const readOnly: ProviderCaps = {
+      can_send: true,
+      can_resume: true,
+      can_fork: false,
+      can_edit: false,
+    };
+    render(
+      <ProviderThemeProvider value={{ provider: "codex", caps: readOnly }}>
+        <UserMessage message={makeMessage()} />
+      </ProviderThemeProvider>,
+    );
+    expect(screen.queryByTitle("Edit message")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Delete message")).not.toBeInTheDocument();
+  });
+
+  it("shows edit/delete when the provider supports editing", () => {
+    const editable: ProviderCaps = {
+      can_send: true,
+      can_resume: true,
+      can_fork: true,
+      can_edit: true,
+    };
+    render(
+      <ProviderThemeProvider value={{ provider: "claude", caps: editable }}>
+        <UserMessage message={makeMessage()} />
+      </ProviderThemeProvider>,
+    );
+    expect(screen.getByTitle("Edit message")).toBeInTheDocument();
+    expect(screen.getByTitle("Delete message")).toBeInTheDocument();
   });
 
   it("returns null when is_meta is true", () => {

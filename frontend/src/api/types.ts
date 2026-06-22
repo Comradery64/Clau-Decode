@@ -110,6 +110,29 @@ export interface Session {
   provider?: string; // "claude" | "codex" — drives provider skin
 }
 
+// Provider capabilities + runtime drivability (GET /api/providers). The FE
+// drives every interactive affordance off `effective` so a read-only or
+// non-drivable provider never shows a send/Native/edit control that misfires.
+export interface ProviderCaps {
+  can_send: boolean;
+  can_resume: boolean;
+  can_fork: boolean;
+  can_edit: boolean;
+}
+
+export interface DriverAvailabilityInfo {
+  available: boolean;
+  reason: string | null;
+}
+
+export interface ProviderInfo {
+  name: string;
+  caps: ProviderCaps; // static, declared by the adapter
+  availability: DriverAvailabilityInfo; // runtime (tmux/codex present?)
+  effective: ProviderCaps; // caps reconciled with availability
+  driver_backed: boolean; // routed through the tmux DriverManager?
+}
+
 export interface SessionDetail extends Session {
   messages: Message[];
   total_message_count?: number;

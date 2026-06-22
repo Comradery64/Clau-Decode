@@ -19,7 +19,7 @@ import { useScrollPositionMemory } from "./hooks/useScrollPositionMemory";
 import { useRecaps } from "./hooks/useRecaps";
 import { useSessionOwnership } from "./hooks/useSessionOwnership";
 import { OwnershipBanner } from "./OwnershipBanner";
-import { ProviderThemeProvider } from "./ProviderThemeContext";
+import { ProviderThemeProvider, resolveCaps } from "./ProviderThemeContext";
 
 type ChatViewMode = "decoded" | "native" | "sbs";
 
@@ -66,6 +66,7 @@ function nativeStateLabel(
 
 export default function ChatView() {
   const selectedSessionId = useAppStore((s) => s.selectedSessionId);
+  const providersMap = useAppStore((s) => s.providers);
   const [viewMode, setViewMode] = useState<ChatViewMode>("decoded");
   // The session whose mode `viewMode` reflects. Guards the persist effect from
   // writing a stale mode under the new session's key during a switch render.
@@ -76,6 +77,13 @@ export default function ChatView() {
   // banner.
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
+  // Effective caps for the active provider drive every interactive affordance
+  // (read-only honesty). `canDriveLive` gates the composer + Native/Split
+  // toggle: Claude is always live; Codex stays read-only until its caps flip
+  // (4e) on a box where tmux+codex are present.
+  const activeProvider = session?.provider ?? "claude";
+  const caps = resolveCaps(providersMap, activeProvider);
+  const canDriveLive = caps.can_send;
   // Main-turn "Thinking" indicator state. Only /btw is tracked separately:
   // it is a non-disturbing side-channel and may not produce a normal JSONL
   // end_turn. Generic slash commands remain foreground submits, but get a
@@ -236,9 +244,21 @@ export default function ChatView() {
     };
   }, [viewMode]);
 
-  const handleViewModeChange = useCallback((mode: "decoded" | "native" | "sbs") => {
-    setViewMode(mode);
-  }, []);
+  const handleViewModeChange = useCallback(
+    (mode: "decoded" | "native" | "sbs") => {
+      // Native/Split are the live-driving bridge; refuse them when the
+      // provider isn't drivable (e.g. read-only Codex). Decoded always works.
+      if (mode !== "decoded" && !canDriveLive) return;
+      setViewMode(mode);
+    },
+    [canDriveLive],
+  );
+
+  // If driving becomes unavailable for the active session (read-only provider),
+  // snap back to Decoded so we never strand the user in an empty Native pane.
+  useEffect(() => {
+    if (!canDriveLive && viewMode !== "decoded") setViewMode("decoded");
+  }, [canDriveLive, viewMode]);
 
   // Cmd/Ctrl+Shift+\ cycles the view: Decoded -> Native -> Split. Registered at
   // document capture and intentionally NOT gated by isNativePtyFocused — it's the
@@ -246,7 +266,11 @@ export default function ChatView() {
   // before the PTY) even while the terminal is focused. Shift+\ avoids clobbering
   // the terminal's bare Ctrl+\ (SIGQUIT) for Windows/Linux users.
   useEffect(() => {
-    const cycle = ["decoded", "native", "sbs"] as const;
+    // Cycle only modes the provider can actually enter: Decoded-only when not
+    // drivable, the full Decoded→Native→Split cycle otherwise.
+    const cycle: ChatViewMode[] = canDriveLive
+      ? ["decoded", "native", "sbs"]
+      : ["decoded"];
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || !e.shiftKey || e.repeat) return;
       if (e.code !== "Backslash") return;
@@ -256,7 +280,7 @@ export default function ChatView() {
     };
     document.addEventListener("keydown", onKey, { capture: true });
     return () => document.removeEventListener("keydown", onKey, { capture: true });
-  }, []);
+  }, [canDriveLive]);
 
   // Side-by-side split position: fraction of width given to the Decoded pane.
   const splitContainerRef = useRef<HTMLDivElement | null>(null);
@@ -461,10 +485,8 @@ export default function ChatView() {
     );
   }
 
-  const activeProvider = session?.provider ?? "claude";
-
   return (
-    <ProviderThemeProvider value={{ provider: activeProvider }}>
+    <ProviderThemeProvider value={{ provider: activeProvider, caps }}>
     <div
       data-provider={activeProvider}
       style={{
@@ -513,6 +535,7 @@ export default function ChatView() {
         ownership={ownership}
         viewMode={viewMode}
         onViewModeChange={handleViewModeChange}
+        canDriveLive={canDriveLive}
         nativeStateLabel={nativeStateLabel(nativeState?.state, session?.provider)}
       />
       {session && session.cwd_exists === false && (
@@ -650,7 +673,34 @@ export default function ChatView() {
           }}
         />
       )}
-      {viewMode === "decoded" && (
+      {viewMode === "decoded" && !canDriveLive && session && (
+        // Read-only honesty: a non-drivable provider (e.g. Codex without its
+        // caps flipped, or no tmux/codex on this box) shows an explicit note
+        // instead of a composer that would misfire. Replaces the old behavior
+        // where submitting on a Codex session wrongly spawned a claude PTY.
+        <div
+          role="note"
+          style={{
+            padding: "10px 16px",
+            margin: "8px 16px 12px",
+            background: "var(--bg-subtle)",
+            border: "1px solid var(--border-subtle)",
+            borderRadius: "var(--radius-sm)",
+            color: "var(--text-secondary)",
+            fontFamily: "var(--font-content)",
+            fontSize: "13px",
+            lineHeight: 1.45,
+          }}
+        >
+          Read-only — live driving isn’t available for{" "}
+          {activeProvider === "codex" ? "Codex" : activeProvider} sessions
+          {providersMap?.[activeProvider]?.availability?.reason
+            ? ` (${providersMap[activeProvider].availability.reason})`
+            : ""}
+          . Use “Open in terminal” to continue this session in its own CLI.
+        </div>
+      )}
+      {viewMode === "decoded" && canDriveLive && (
         <ChatInputBar
           sessionId={selectedSessionId}
           session={session}

@@ -89,6 +89,11 @@ export default function App() {
     api.getHostInfo()
       .then((info) => useAppStore.getState().setHostInfo(info))
       .catch(() => {});
+    // Provider capabilities + runtime drivability — gates the composer, the
+    // Native/Split toggle, and message edit per provider (read-only honesty).
+    api.getProviders()
+      .then((providers) => useAppStore.getState().setProviders(providers))
+      .catch(() => {});
   }, []);
 
   // Preload the lazy chunks the user will likely hit first so they're ready

@@ -6,6 +6,7 @@ import { pairToolBlocks, type PairedBlock } from "./pairToolBlocks";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { api } from "../../api/client";
 import { emit } from "../../utils/events";
+import { useProviderTheme } from "../ChatView/ProviderThemeContext";
 
 type ThoughtGroup = { kind: "thought_group"; blocks: PairedBlock[] };
 type Segment = ThoughtGroup | PairedBlock;
@@ -289,7 +290,14 @@ export function AssistantMessage({ messages, model }: AssistantMessageProps) {
         .map((b) => (b as { type: "text"; text: string }).text)
         .join("\n")
     : null;
-  const canEdit = editableText !== null && editableText.trim().length > 0;
+  // Mutating a message rewrites the on-disk session file, which is
+  // provider-format-specific (the editor speaks Claude JSONL). Gate edit AND
+  // delete on the provider's effective can_edit so we never corrupt a Codex
+  // rollout. Claude → true; Codex → false (hidden).
+  const { caps } = useProviderTheme();
+  const canMutate = caps.can_edit;
+  const canEdit =
+    canMutate && editableText !== null && editableText.trim().length > 0;
 
 
   const handleCopy = async () => {
@@ -423,9 +431,11 @@ export function AssistantMessage({ messages, model }: AssistantMessageProps) {
             <ActionIconBtn title={copied ? "Copied!" : "Copy response"} onClick={handleCopy}>
               {copied ? <CheckIcon /> : <CopyIcon />}
             </ActionIconBtn>
-            <ActionIconBtn title="Delete response" danger onClick={() => setConfirmDelete(true)}>
-              <TrashIcon />
-            </ActionIconBtn>
+            {canMutate && (
+              <ActionIconBtn title="Delete response" danger onClick={() => setConfirmDelete(true)}>
+                <TrashIcon />
+              </ActionIconBtn>
+            )}
           </div>
         </div>
       )}

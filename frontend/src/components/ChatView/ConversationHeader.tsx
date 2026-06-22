@@ -72,6 +72,9 @@ interface ConversationHeaderProps {
   ownership: PtyOwnership | null;
   viewMode?: "decoded" | "native" | "sbs";
   onViewModeChange?: (mode: "decoded" | "native" | "sbs") => void;
+  /** Whether the active provider can be driven live (Native/Split bridge).
+   * False for read-only / non-drivable providers (e.g. Codex pre-4e). */
+  canDriveLive?: boolean;
   nativeStateLabel?: string | null;
 }
 
@@ -80,6 +83,7 @@ export function ConversationHeader({
   ownership,
   viewMode = "decoded",
   onViewModeChange,
+  canDriveLive = true,
   nativeStateLabel = null,
 }: ConversationHeaderProps) {
   const title = session === null ? "Loading…" : (session.title ?? "Untitled");
@@ -182,6 +186,11 @@ export function ConversationHeader({
 
         {/* Right side */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+          {/* The Decoded/Native/Split toggle is meaningful only when the
+              provider can be driven live — Native/Split ARE the live bridge.
+              For a read-only provider we hide the whole group (Decoded is the
+              only mode, so a single-button toggle would be noise). */}
+          {canDriveLive && (
           <div
             role="group"
             aria-label="Conversation view"
@@ -221,6 +230,7 @@ export function ConversationHeader({
               );
             })}
           </div>
+          )}
           <OwnershipBadge ownership={ownership} />
           {nativeStateLabel && (
             <span

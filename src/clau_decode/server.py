@@ -1306,6 +1306,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             if info is None:
                 raise HTTPException(status_code=404, detail="Message not found")
             session_id, file_path = info
+            # The editor rewrites the on-disk file in the Claude JSONL format;
+            # applying it to a Codex rollout would corrupt it. Gate on the
+            # provider's effective can_edit (defense in depth behind the FE).
+            _require_capability(await _resolve_provider(session_id), "can_edit")
             path = Path(file_path)
             if not path.exists():
                 raise HTTPException(
@@ -1331,6 +1335,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             if info is None:
                 raise HTTPException(status_code=404, detail="Message not found")
             session_id, file_path = info
+            # See delete_message_route: provider-format-specific editor, so gate
+            # on effective can_edit to never corrupt a non-Claude session file.
+            _require_capability(await _resolve_provider(session_id), "can_edit")
             path = Path(file_path)
             if not path.exists():
                 raise HTTPException(

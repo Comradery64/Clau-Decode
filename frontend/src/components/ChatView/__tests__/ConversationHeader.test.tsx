@@ -63,4 +63,24 @@ describe("ConversationHeader", () => {
     fireEvent.click(screen.getByRole("button", { name: "Native" }));
     expect(onViewModeChange).toHaveBeenCalledWith("native");
   });
+
+  it("hides the view switcher when the provider can't be driven live", () => {
+    // Read-only honesty: Native/Split ARE the live bridge, so a non-drivable
+    // provider (e.g. read-only Codex) shows no toggle at all — only Decoded.
+    render(
+      <ConversationHeader
+        session={session}
+        ownership={null}
+        viewMode="decoded"
+        onViewModeChange={vi.fn()}
+        canDriveLive={false}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("group", { name: "Conversation view" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Native" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Split" })).not.toBeInTheDocument();
+  });
 });

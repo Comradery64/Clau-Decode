@@ -4,6 +4,7 @@ import { TextBlock } from "./TextBlock";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { api } from "../../api/client";
 import { emit } from "../../utils/events";
+import { useProviderTheme } from "../ChatView/ProviderThemeContext";
 
 // ---------------------------------------------------------------------------
 // XML tag parsing — system tags in user messages
@@ -328,6 +329,10 @@ export function UserMessage({ message }: UserMessageProps) {
   const hasOutput = allSegments.some((s) => s.kind === "stdout" || s.kind === "stderr");
   const hasImages = imageBlocks.length > 0;
   const hasTextBlocks = message.content_blocks.some((b) => b.type === "text");
+  // Edit/delete rewrite the on-disk session file (Claude-JSONL editor), so gate
+  // both on the provider's effective can_edit — never mutate a Codex rollout.
+  const { caps } = useProviderTheme();
+  const canMutate = caps.can_edit;
 
   if (allSegments.length === 0 && !hasImages) return null;
 
@@ -446,7 +451,7 @@ export function UserMessage({ message }: UserMessageProps) {
           <ActionIconBtn title="Regenerate (coming soon)" disabled>
             <RefreshIcon />
           </ActionIconBtn>
-          {message.role === "user" && hasTextBlocks && (
+          {message.role === "user" && hasTextBlocks && canMutate && (
             <ActionIconBtn title="Edit message" onClick={() => setEditing(true)}>
               <EditIcon />
             </ActionIconBtn>
@@ -454,9 +459,11 @@ export function UserMessage({ message }: UserMessageProps) {
           <ActionIconBtn title={copied ? "Copied!" : "Copy message"} onClick={handleCopy}>
             {copied ? <CheckIcon /> : <CopyIcon />}
           </ActionIconBtn>
-          <ActionIconBtn title="Delete message" danger onClick={() => setConfirmDelete(true)}>
-            <TrashIcon />
-          </ActionIconBtn>
+          {canMutate && (
+            <ActionIconBtn title="Delete message" danger onClick={() => setConfirmDelete(true)}>
+              <TrashIcon />
+            </ActionIconBtn>
+          )}
         </div>
       )}
 
