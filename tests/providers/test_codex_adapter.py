@@ -47,10 +47,13 @@ class TestIdentity:
     def test_name(self):
         assert CodexAdapter().name == "codex"
 
-    def test_all_caps_false(self):
+    def test_caps_drivable_send_resume(self):
+        # Phase 4e: Codex is drivable via the tmux ProviderDriver. These are the
+        # STATIC caps; runtime availability gating happens in the server.
         caps = CodexAdapter().capabilities
-        assert caps.can_send is False
-        assert caps.can_resume is False
+        assert caps.can_send is True
+        assert caps.can_resume is True
+        # fork/edit stay off — no flow, and editing would corrupt the rollout.
         assert caps.can_fork is False
         assert caps.can_edit is False
 

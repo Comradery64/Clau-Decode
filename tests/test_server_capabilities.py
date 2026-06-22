@@ -77,7 +77,19 @@ async def env(tmp_path) -> AsyncIterator[dict]:
 # ---------------------------------------------------------------------------
 
 
-async def test_providers_endpoint_shape(env):
+def _force_drivable(monkeypatch, available: bool):
+    """Pin Codex runtime drivability so gate tests don't depend on the host
+    having (or lacking) tmux+codex."""
+    monkeypatch.setattr(
+        "clau_decode.server._driver_availability",
+        lambda p: DriverAvailability(
+            available=available, reason=None if available else "no tmux"
+        ),
+    )
+
+
+async def test_providers_endpoint_shape(env, monkeypatch):
+    _force_drivable(monkeypatch, True)
     app = _make_app(env["db_path"], AppConfig())
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -88,11 +100,12 @@ async def test_providers_endpoint_shape(env):
     assert {"claude", "codex"} <= set(by_name)
 
     codex = by_name["codex"]
-    # Phase 4b: Codex caps are still read-only (can_send flips in 4e).
-    assert codex["caps"]["can_send"] is False
-    assert codex["effective"]["can_send"] is False
+    # Phase 4e: Codex is drivable; with the backend available, effective follows.
+    assert codex["caps"]["can_send"] is True
+    assert codex["effective"]["can_send"] is True
     assert codex["driver_backed"] is True
-    assert "available" in codex["availability"]
+    # fork/edit remain off even when drivable.
+    assert codex["effective"]["can_edit"] is False
 
     claude = by_name["claude"]
     # Claude is not driver-backed; it sends over its own PTY path → can_send.
@@ -102,27 +115,29 @@ async def test_providers_endpoint_shape(env):
 
 
 async def test_providers_availability_degrades_without_backend(env, monkeypatch):
-    # Even if Codex caps later flip, a box without tmux must report unavailable.
-    monkeypatch.setattr(
-        "clau_decode.server._driver_availability",
-        lambda p: DriverAvailability(available=False, reason="no tmux"),
-    )
+    # Codex caps are now True, but a box without tmux must still degrade to
+    # read-only: effective = static caps AND availability.
+    _force_drivable(monkeypatch, False)
     app = _make_app(env["db_path"], AppConfig())
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as c:
         r = await c.get("/api/providers")
     codex = next(p for p in r.json() if p["name"] == "codex")
+    assert codex["caps"]["can_send"] is True  # static cap flipped (4e)
     assert codex["availability"]["available"] is False
-    assert codex["effective"]["can_send"] is False
+    assert codex["effective"]["can_send"] is False  # ...but not drivable here
 
 
 # ---------------------------------------------------------------------------
-# Capability gate — 409 for read-only Codex
+# Capability gate — read-only degrade vs gate-open
 # ---------------------------------------------------------------------------
 
 
-async def test_pty_submit_codex_returns_409(env):
+async def test_pty_submit_codex_409_when_not_drivable(env, monkeypatch):
+    # No tmux/codex → Codex degrades to read-only; submit must 409, never fall
+    # through to spawn a (wrong) claude PTY on the Codex cwd.
+    _force_drivable(monkeypatch, False)
     app = _make_app(env["db_path"], AppConfig())
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -136,7 +151,8 @@ async def test_pty_submit_codex_returns_409(env):
     assert r.json()["detail"]["provider"] == "codex"
 
 
-async def test_pty_focus_codex_returns_409(env):
+async def test_pty_focus_codex_409_when_not_drivable(env, monkeypatch):
+    _force_drivable(monkeypatch, False)
     app = _make_app(env["db_path"], AppConfig())
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -144,6 +160,22 @@ async def test_pty_focus_codex_returns_409(env):
         r = await c.post("/api/pty/focus", json={"session_id": "codex-sess-1"})
     assert r.status_code == 409
     assert r.json()["detail"]["kind"] == "capability_unsupported"
+
+
+async def test_pty_submit_codex_gate_opens_when_drivable(env, monkeypatch):
+    # When drivable, the capability gate PASSES (no 409 capability_unsupported)
+    # and routes to the DriverManager. Without a lifespan the manager is None,
+    # so we expect 503 "driver manager not ready" — proof the gate opened.
+    _force_drivable(monkeypatch, True)
+    app = _make_app(env["db_path"], AppConfig())
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.post(
+            "/api/pty/submit", json={"session_id": "codex-sess-1", "content": "hi"}
+        )
+    assert r.status_code == 503
+    assert "driver manager" in r.json()["detail"]
 
 
 # Claude is never capability-gated (it owns its direct-PTY path). That

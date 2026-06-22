@@ -143,8 +143,13 @@ class CodexAdapter(ProviderAdapter):
 
     @property
     def capabilities(self) -> ProviderCaps:
+        # Phase 4e: Codex is drivable (send + resume) via the tmux ProviderDriver.
+        # These are STATIC caps; the server reconciles them with runtime
+        # availability (``_effective_caps``) so a box without tmux/codex still
+        # degrades to read-only. fork/edit stay False — no flow exists yet and
+        # the Claude-JSONL editor would corrupt a Codex rollout.
         return ProviderCaps(
-            can_send=False, can_resume=False, can_fork=False, can_edit=False
+            can_send=True, can_resume=True, can_fork=False, can_edit=False
         )
 
     # -- Config-aware root resolution -----------------------------------------
