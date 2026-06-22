@@ -61,6 +61,9 @@ from .pty_runner import (
     _unlink_fresh_foreign_sidecar,
 )
 from .pty_native import decode_terminal_input
+from .driver_manager import DriverManager
+from .drivers import availability_for as _driver_availability
+from .drivers import supports_driving as _driver_supports
 from .analytics import fast as analytics_fast
 from .analytics.pricing import CachedPricingStrategy, _HARDCODED_RATES
 from .analytics.service import TokenAnalyticsService as _AnalyticsSvc
@@ -425,6 +428,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     _watch_queue: asyncio.Queue = asyncio.Queue()
     _bus = EventBroadcaster()
     _pty_manager: PtyManager | None = None  # populated in lifespan
+    # DriverManager owns live ProviderDriver sessions (Codex via tmux). Claude
+    # never enters it — it keeps its direct-PTY path. Populated in lifespan.
+    _driver_manager: DriverManager | None = None
     # Tombstone set: session ids that have been hard-deleted are recorded here
     # so that concurrent/queued scan tasks never re-upsert a deleted session.
     # Scoped to the create_app() closure — one set per app instance.
@@ -622,7 +628,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             await _pricing_strat.refresh()
 
         asyncio.create_task(_refresh_pricing())
-        nonlocal _pty_manager
+        nonlocal _pty_manager, _driver_manager
         # ui_endpoint is written into Phase-1 lock sidecars so a peer
         # clau-decode reading the lock can render "open in UI at ..."
         # in its take-over banner. Best-effort — config.host of
@@ -644,9 +650,21 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             )
             app.state.pty_manager = _pty_manager
             _pty_manager.set_native_cols(_state["config"].native_pty_cols)
+            # DriverManager shares the bus + a long-lived DB handle. No idle
+            # reaper: tmux-backed sessions survive disconnect/idle by design,
+            # so the "5-min reaper kills long tasks" bug cannot recur here.
+            _driver_manager = DriverManager(
+                _pty_db,
+                _bus,
+                ui_endpoint=f"http://{_ui_host}:{config.port}",
+            )
+            app.state.driver_manager = _driver_manager
+            _driver_manager.set_native_cols(_state["config"].native_pty_cols)
             try:
                 yield
             finally:
+                if _driver_manager is not None:
+                    await _driver_manager.shutdown()
                 if _pty_manager is not None:
                     await _pty_manager.shutdown()
 
@@ -661,6 +679,12 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     # same fresh id can't both claim it.
     app.state.pending_sessions = {}
     app.state.pending_sessions_lock = asyncio.Lock()
+
+    # Session ids currently routed to the DriverManager (driver-backed, e.g.
+    # Codex). Populated on a successful driver focus; cleared on kill. Hot-path
+    # native endpoints (input/resize/snapshot/status/kill) consult this O(1)
+    # set to pick the manager without a per-call DB lookup.
+    app.state.driver_sessions = set()
 
     # LRU cache of pre-serialized SessionDetail responses, keyed by session id
     # with file mtime as the validation token. A hit skips the SQL fetch,
@@ -1189,6 +1213,88 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             )
 
     # -----------------------------------------------------------------------
+    # Provider capability gating (Phase 4b) — effective caps = static
+    # ProviderCaps AND runtime drivability. Driving-gated caps (send/resume)
+    # are ANDed with the backend availability ONLY for driver-backed providers
+    # (Codex). Claude is not driver-backed — it sends over its own direct-PTY
+    # path, so its caps stand on their own and stay fully available on POSIX.
+    # -----------------------------------------------------------------------
+
+    def _provider_availability(provider: str) -> dict:
+        """Runtime drivability for *provider* as a serialisable dict."""
+        if _driver_supports(provider):
+            a = _driver_availability(provider)
+            return {"available": a.available, "reason": a.reason}
+        # Native-path provider (claude): driven over its own POSIX PTY.
+        return {"available": True, "reason": None}
+
+    def _effective_caps(provider: str) -> dict:
+        """Static caps reconciled with runtime drivability."""
+        try:
+            caps = registry.get(provider).capabilities
+        except KeyError:
+            return {
+                "can_send": False,
+                "can_resume": False,
+                "can_fork": False,
+                "can_edit": False,
+            }
+        if _driver_supports(provider):
+            drivable = _driver_availability(provider).available
+            send = caps.can_send and drivable
+            resume = caps.can_resume and drivable
+        else:
+            send, resume = caps.can_send, caps.can_resume
+        # fork/edit are file-level operations, not gated on the live transport.
+        return {
+            "can_send": send,
+            "can_resume": resume,
+            "can_fork": caps.can_fork,
+            "can_edit": caps.can_edit,
+        }
+
+    def _require_capability(provider: str, attr: str) -> None:
+        """Raise 409 if *provider* does not effectively support *attr*."""
+        if not _effective_caps(provider).get(attr, False):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "kind": "capability_unsupported",
+                    "provider": provider,
+                    "capability": attr,
+                    "availability": _provider_availability(provider),
+                },
+            )
+
+    async def _resolve_provider(session_id: str) -> str:
+        """Provider for *session_id* from its on-disk detail (default claude)."""
+        async with Database(db_path) as db:
+            detail = await db.get_session_detail(session_id)
+        return detail.provider if detail is not None else "claude"
+
+    @app.get("/api/providers")
+    async def get_providers():
+        """Per-provider static caps + runtime availability + effective caps.
+
+        The FE drives every affordance off ``effective`` so a read-only or
+        non-drivable provider never shows a send/Native/fork button that would
+        misfire (the read-only-honesty gap).
+        """
+        out = []
+        for adapter in registry.all_adapters():
+            name = adapter.name
+            out.append(
+                {
+                    "name": name,
+                    "caps": adapter.capabilities.model_dump(),
+                    "availability": _provider_availability(name),
+                    "effective": _effective_caps(name),
+                    "driver_backed": _driver_supports(name),
+                }
+            )
+        return out
+
+    # -----------------------------------------------------------------------
     # Message mutation routes (Phase 6)
     # -----------------------------------------------------------------------
 
@@ -1273,18 +1379,26 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         if not Path(cwd).is_dir():
             raise HTTPException(status_code=404, detail=f"Directory not found: {cwd}")
         _reject_root_cwd(cwd, "open a terminal")
-        bin_name = _derive_bin_name(detail.file_path)
-        wt = (
-            _extract_worktree_name(detail.file_path, detail.cwd)
-            if detail.is_worktree
-            else None
-        )
-        quoted_bin = shlex.quote(bin_name)
-        cmd = (
-            f"{quoted_bin} -w {shlex.quote(wt)} -r {session_id}"
-            if wt
-            else f"{quoted_bin} -r {session_id}"
-        )
+        # Build a provider-correct resume command. Codex resumes with
+        # ``codex resume <uuid>`` (the uuid IS our session id); Claude uses
+        # ``claude -r <id>`` (with ``-w <worktree>`` for worktree sessions).
+        # Without this branch a Codex "open in terminal" would run
+        # ``claude -r <codex-uuid>`` — the wrong binary against a foreign id.
+        if detail.provider == "codex":
+            cmd = f"codex resume {shlex.quote(session_id)}"
+        else:
+            bin_name = _derive_bin_name(detail.file_path)
+            wt = (
+                _extract_worktree_name(detail.file_path, detail.cwd)
+                if detail.is_worktree
+                else None
+            )
+            quoted_bin = shlex.quote(bin_name)
+            cmd = (
+                f"{quoted_bin} -w {shlex.quote(wt)} -r {session_id}"
+                if wt
+                else f"{quoted_bin} -r {session_id}"
+            )
         # Apply the same API-key cleanup for every terminal launch. Subscription
         # CLIs avoid unexpected-key prompts; API-key CLIs that need a key can
         # re-read it from their own shell/keychain setup.
@@ -1707,6 +1821,15 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                     await _pty_manager.kill(session_id)
                 except Exception:
                     pass
+        # Also tear down any driver-backed (Codex/tmux) sessions for these ids.
+        if _driver_manager is not None:
+            for session_id in req.session_ids:
+                if session_id in app.state.driver_sessions:
+                    try:
+                        await _driver_manager.kill(session_id)
+                    except Exception:
+                        pass
+                    app.state.driver_sessions.discard(session_id)
 
         # Map of session_id -> resolved file path for files that pass safety
         # checks and should be unlinked AFTER the DB transaction commits.
@@ -2131,6 +2254,25 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             cwd_override=req.cwd,
             permission_mode_override=req.permission_mode,
         )
+        # Driver-backed providers (Codex) route to the DriverManager instead of
+        # the Claude direct-PTY path. Gate on effective can_send so a read-only
+        # / non-drivable Codex session 409s here rather than bringing a live
+        # process up (until caps flip in 4e this is always a 409 for Codex).
+        provider = await _resolve_provider(req.session_id)
+        if _driver_supports(provider):
+            _require_capability(provider, "can_send")
+            if _driver_manager is None:
+                raise HTTPException(status_code=503, detail="driver manager not ready")
+            await _driver_manager.focus(
+                req.session_id,
+                provider=provider,
+                cwd=cwd,
+                model=req.model,
+                resume_uuid=req.session_id,
+                rows=req.rows,
+            )
+            app.state.driver_sessions.add(req.session_id)
+            return {"ok": True}
         # Caller's explicit req.new_chat wins; otherwise use the resolver's
         # inferred value (True iff session lives in pending_sessions only).
         new_chat = req.new_chat or resolved_new_chat
@@ -2174,6 +2316,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
 
     @app.post("/api/pty/blur")
     async def pty_blur(req: _PtyBlurRequest):
+        # Driver-backed sessions have no idle reaper — blur is a no-op so the
+        # tmux session survives navigation/disconnect (the persistence point).
+        if _is_driver_session(req.session_id):
+            return {"ok": True}
         await _pty_manager.unfocus(req.session_id)
         return {"ok": True}
 
@@ -2193,6 +2339,27 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                     f"{_detail.cwd}. Cannot deliver the message."
                 ),
             )
+        # Driver-backed providers (Codex) submit through the DriverManager.
+        # Gate on effective can_send: a read-only / no-tmux Codex session 409s
+        # here instead of falling through and wrongly spawning a *claude* PTY
+        # against the Codex cwd (the read-only-honesty bug). Until caps flip in
+        # 4e this is always a 409 for Codex.
+        provider = _detail.provider if _detail is not None else "claude"
+        if _driver_supports(provider):
+            _require_capability(provider, "can_send")
+            if _driver_manager is None:
+                raise HTTPException(status_code=503, detail="driver manager not ready")
+            cwd = _detail.cwd or str(Path(_detail.file_path).parent)
+            await _driver_manager.focus(
+                req.session_id,
+                provider=provider,
+                cwd=cwd,
+                model=req.model,
+                resume_uuid=req.session_id,
+            )
+            app.state.driver_sessions.add(req.session_id)
+            await _driver_manager.submit(req.session_id, req.content)
+            return {"ok": True}
         # Lazily ensure focus. The frontend wires onFocus on the chat input
         # but that doesn't always fire (autofocus on mount, programmatic
         # focus, navigation between sessions with cursor still in input).
@@ -2281,14 +2448,24 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             )
         return {"ok": True}
 
+    def _is_driver_session(session_id: str) -> bool:
+        """True if this session is currently routed to the DriverManager."""
+        return session_id in app.state.driver_sessions
+
     @app.post("/api/pty/kill")
     async def pty_kill(req: _PtyKillRequest):
+        if _is_driver_session(req.session_id) and _driver_manager is not None:
+            await _driver_manager.kill(req.session_id)
+            app.state.driver_sessions.discard(req.session_id)
+            return {"ok": True}
         await _pty_manager.kill(req.session_id)
         return {"ok": True}
 
     @app.get("/api/pty/native-snapshot")
     async def pty_native_snapshot(session_id: str = Query(...)):
         try:
+            if _is_driver_session(session_id) and _driver_manager is not None:
+                return await _driver_manager.native_snapshot(session_id)
             return _pty_manager.native_snapshot(session_id)
         except RuntimeError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
@@ -2296,10 +2473,15 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     @app.post("/api/pty/input")
     async def pty_native_input(req: _PtyNativeInputRequest):
         try:
-            await _pty_manager.write_raw_input(
-                req.session_id,
-                decode_terminal_input(req.data),
-            )
+            if _is_driver_session(req.session_id) and _driver_manager is not None:
+                await _driver_manager.write_raw_input(
+                    req.session_id, decode_terminal_input(req.data)
+                )
+            else:
+                await _pty_manager.write_raw_input(
+                    req.session_id,
+                    decode_terminal_input(req.data),
+                )
         except RuntimeError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         return {"ok": True}
@@ -2307,13 +2489,18 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     @app.post("/api/pty/resize")
     async def pty_resize(req: _PtyResizeRequest):
         try:
-            await _pty_manager.resize(req.session_id, req.rows, req.cols)
+            if _is_driver_session(req.session_id) and _driver_manager is not None:
+                await _driver_manager.resize(req.session_id, req.rows, req.cols)
+            else:
+                await _pty_manager.resize(req.session_id, req.rows, req.cols)
         except RuntimeError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         return {"ok": True}
 
     @app.get("/api/pty/status")
     async def pty_status(session_id: str = Query(...)):
+        if _is_driver_session(session_id) and _driver_manager is not None:
+            return _driver_manager.status(session_id)
         return _pty_manager.status(session_id)
 
     @app.get("/api/pty/ownership/{session_id}")

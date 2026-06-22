@@ -1,0 +1,185 @@
+"""Phase 4b — server capability gating, /api/providers, provider-aware
+open-terminal. No tmux/codex binary needed: every assertion here is about the
+*gate*, which fires before any driver spawn.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import AsyncIterator
+from unittest.mock import patch
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from clau_decode.db import Database
+from clau_decode.drivers import DriverAvailability
+from clau_decode.models import AppConfig, Project, Session
+
+
+def _make_app(db_path: Path, config: AppConfig):
+    from clau_decode.server import create_app
+
+    return create_app(config, db_path)
+
+
+async def _seed(db_path: Path, *, session_id: str, provider: str, cwd: str, fp: str):
+    async with Database(db_path) as db:
+        await db.init_schema()
+        project = Project(
+            id=f"proj-{provider}",
+            display_name="cap-test",
+            raw_path="-cap",
+            data_source="test",
+            resolved_path=cwd,
+        )
+        await db.upsert_project(project)
+        await db.upsert_session(
+            Session(
+                id=session_id,
+                project_id=project.id,
+                file_path=fp,
+                cwd=cwd,
+                provider=provider,
+            )
+        )
+
+
+@pytest.fixture
+async def env(tmp_path) -> AsyncIterator[dict]:
+    db_path = tmp_path / "cap.db"
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    codex_fp = tmp_path / "rollout-codex.jsonl"
+    codex_fp.write_text("")
+    claude_fp = tmp_path / "claude.jsonl"
+    claude_fp.write_text("")
+    await _seed(
+        db_path,
+        session_id="codex-sess-1",
+        provider="codex",
+        cwd=str(cwd),
+        fp=str(codex_fp),
+    )
+    await _seed(
+        db_path,
+        session_id="claude-sess-1",
+        provider="claude",
+        cwd=str(cwd),
+        fp=str(claude_fp),
+    )
+    yield {"db_path": db_path, "cwd": str(cwd)}
+
+
+# ---------------------------------------------------------------------------
+# /api/providers
+# ---------------------------------------------------------------------------
+
+
+async def test_providers_endpoint_shape(env):
+    app = _make_app(env["db_path"], AppConfig())
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.get("/api/providers")
+    assert r.status_code == 200
+    by_name = {p["name"]: p for p in r.json()}
+    assert {"claude", "codex"} <= set(by_name)
+
+    codex = by_name["codex"]
+    # Phase 4b: Codex caps are still read-only (can_send flips in 4e).
+    assert codex["caps"]["can_send"] is False
+    assert codex["effective"]["can_send"] is False
+    assert codex["driver_backed"] is True
+    assert "available" in codex["availability"]
+
+    claude = by_name["claude"]
+    # Claude is not driver-backed; it sends over its own PTY path → can_send.
+    assert claude["effective"]["can_send"] is True
+    assert claude["driver_backed"] is False
+    assert claude["availability"]["available"] is True
+
+
+async def test_providers_availability_degrades_without_backend(env, monkeypatch):
+    # Even if Codex caps later flip, a box without tmux must report unavailable.
+    monkeypatch.setattr(
+        "clau_decode.server._driver_availability",
+        lambda p: DriverAvailability(available=False, reason="no tmux"),
+    )
+    app = _make_app(env["db_path"], AppConfig())
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.get("/api/providers")
+    codex = next(p for p in r.json() if p["name"] == "codex")
+    assert codex["availability"]["available"] is False
+    assert codex["effective"]["can_send"] is False
+
+
+# ---------------------------------------------------------------------------
+# Capability gate — 409 for read-only Codex
+# ---------------------------------------------------------------------------
+
+
+async def test_pty_submit_codex_returns_409(env):
+    app = _make_app(env["db_path"], AppConfig())
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.post(
+            "/api/pty/submit", json={"session_id": "codex-sess-1", "content": "hi"}
+        )
+    assert r.status_code == 409
+    assert r.json()["detail"]["kind"] == "capability_unsupported"
+    assert r.json()["detail"]["capability"] == "can_send"
+    assert r.json()["detail"]["provider"] == "codex"
+
+
+async def test_pty_focus_codex_returns_409(env):
+    app = _make_app(env["db_path"], AppConfig())
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.post("/api/pty/focus", json={"session_id": "codex-sess-1"})
+    assert r.status_code == 409
+    assert r.json()["detail"]["kind"] == "capability_unsupported"
+
+
+# Claude is never capability-gated (it owns its direct-PTY path). That
+# guarantee is asserted positively by test_providers_endpoint_shape
+# (claude.effective.can_send is True) and negatively by the pre-existing
+# Claude pty_submit suite remaining green — no fragile lifespan-less stub here.
+
+
+# ---------------------------------------------------------------------------
+# Provider-aware open-terminal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS AppleScript branch")
+async def test_open_terminal_codex_uses_codex_resume(env):
+    app = _make_app(env["db_path"], AppConfig())
+    with patch("subprocess.Popen") as mock_popen:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            r = await c.post("/api/sessions/codex-sess-1/open-terminal")
+    assert r.status_code == 200
+    script = mock_popen.call_args[0][0][2]
+    assert "codex resume codex-sess-1" in script
+    assert " -r codex-sess-1" not in script  # never the claude flag
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS AppleScript branch")
+async def test_open_terminal_claude_unchanged(env):
+    app = _make_app(env["db_path"], AppConfig())
+    with patch("subprocess.Popen") as mock_popen:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            r = await c.post("/api/sessions/claude-sess-1/open-terminal")
+    assert r.status_code == 200
+    script = mock_popen.call_args[0][0][2]
+    assert "-r claude-sess-1" in script
+    assert "codex resume" not in script

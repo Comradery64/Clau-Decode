@@ -336,6 +336,10 @@ class TmuxDriver(ProviderDriver):
     def last_output_ms(self) -> int:
         return self._last_output_ms
 
+    def dimensions(self) -> tuple[int, int]:
+        """Return the driven pane's ``(rows, cols)``."""
+        return self._rows, self._cols
+
     def set_on_chunk(self, cb: Callable[[bytes], None] | None) -> None:
         self._on_chunk = cb
 
