@@ -15,30 +15,44 @@ commits). This doc is self-contained; a fresh session can run it from here.
 2. **Converging Claude onto tmux is a LATER, OPTIONAL feature** — behind an
    opt-in setting, not wired in v1. The driver abstraction must be built so
    Claude *could* be routed through it later with no rework, but v1 does not do it.
-3. **Driving is mac/linux-only and that's acceptable** (see Platform below).
+3. **tmux is the POSIX backend now; native Windows is a FUTURE backend** under
+   the same `ProviderDriver` abstraction, not a dead end (see Platform below).
 
 ## Platform & portability (the resolved Windows question)
 - **The recall lens — decode / view / search / analytics — is already
   cross-platform** (pure file parsing + SQLite). It is the bulk of the product
   value and is unaffected by anything here. Windows users keep it fully.
-- **Live driving is ALREADY POSIX-only today.** The existing Claude path uses
+- **The CLIs run on Windows; clau-decode's *transport* does not (yet).** Both
+  `claude` and `codex` install/run natively on Windows. The only thing that's
+  POSIX-only is clau-decode's PTY transport — the existing Claude path uses
   `pty` / `termios` / `fcntl` / `pty.openpty()` (`pty_runner.py`) with zero
-  Windows handling. So Windows users cannot drive Claude live *now* either.
-  Adding tmux for Codex therefore does **not** shrink the app's platform reach —
-  it adds a *binary* dependency (`tmux`) on the platforms where driving already
-  works (mac/linux).
+  Windows handling. So the limitation is ours to lift, not the CLIs'.
+- **Choosing tmux does NOT cost us Windows.** Native Windows driving requires a
+  **ConPTY / `pywinpty` backend regardless** of tmux (Python's `pty` is POSIX-
+  only), and that backend would serve *both* providers' Windows driving. So the
+  real design is not "tmux vs Windows" — it's "which backends live under
+  `ProviderDriver`, in what order." tmux wins for mac/linux because it gives
+  **persistence / idle-survival for free** (the fix for the 5-min-reaper-kills-
+  long-tasks bug); a ConPTY backend is the separate, later path to Windows.
+- **Multi-backend by design.** `ProviderDriver` is the seam; backends are chosen
+  at runtime by `availability()`. v1 ships exactly one backend (`TmuxDriver` —
+  POSIX + `tmux`). The interface stays backend-neutral (no tmux assumptions leak
+  above it) so a `ConptyDriver` *could* be added later — but see the Windows
+  stance below: it is intentionally NOT a committed work item.
 - **Strategy = detect + degrade, never force.** Driving is gated on a runtime
-  `DriverAvailability` check (POSIX **and** `tmux` on PATH **and** `codex` on
-  PATH). If any is missing, Codex stays **read-only** (the capability-gated UI
-  from step 4c shows read-only affordances) — no hard failure, no crash.
-- **Windows guidance (documented, not forced):** full recall lens + read-only
-  Codex out of the box; **WSL2 is an optional power-user path** for those who
-  want live driving (mention in README, don't require it). **Native-Windows
-  driving (ConPTY / `pywinpty`, tmux-free) is explicitly out of scope** — a
-  separate future effort if demand appears. Do not block Phase 4 on it.
-- Net: tmux is the right call. It is generic across future CLIs, gives
-  persistence/idle-survival for free, and only constrains a capability that is
-  already POSIX-only.
+  `DriverAvailability` check. If no backend is available, the provider stays
+  **read-only** (the capability-gated UI from 4c) — no hard failure.
+- **Windows = WSL2 is the blessed path, by design (a feature, not a fallback).**
+  On native Windows: full recall lens out of the box (cross-platform already),
+  read-only Codex. For live driving, **the recommended path is WSL2** — and we
+  treat that as a deliberate positive: it onboards Windows devs to WSL2 (a
+  better dev environment for these CLIs anyway), and inside WSL2 the exact same
+  tmux backend works with zero special-casing. README should present WSL2 as
+  *the* Windows driving setup, not an apology.
+- **Native-Windows driving (ConPTY/`pywinpty`, tmux-free) is deferred, demand-
+  gated.** The abstraction keeps the door open, but we do not build it unless
+  real users who genuinely can't use WSL2 ask for it. WSL2 covers Windows for
+  v1 and beyond.
 
 ---
 
