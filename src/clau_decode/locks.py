@@ -19,7 +19,7 @@ Sidecar schema (JSON, single line)::
     {
       "owner_kind": "clau-decode",
       "pid": 12345,
-      "hostname": "examplehost.local",
+      "hostname": "example-host.local",
       "heartbeat_at": "2026-05-26T14:30:01.234567+00:00",
       "ui_endpoint": "http://127.0.0.1:4242"
     }
