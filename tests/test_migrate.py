@@ -347,6 +347,70 @@ class TestSymlinkHints:
         assert hints == []
 
 
+class TestBackup:
+    def _populated_dest(self, tmp_path):
+        dest = tmp_path / ".claude"
+        (dest / "projects" / "p1").mkdir(parents=True)
+        (dest / "projects" / "p1" / "s.jsonl").write_text('{"cwd":"/x"}\n')
+        (dest / ".cache").mkdir()  # derived → must be skipped
+        (dest / ".cache" / "junk").write_text("x")
+        dest_json = tmp_path / ".claude.json"
+        dest_json.write_text("{}")
+        return dest, dest_json
+
+    def test_backup_dest_copies_and_skips_caches(self, tmp_path):
+        dest, dest_json = self._populated_dest(tmp_path)
+        made = migrate._backup_dest(dest, dest_json)
+        assert len(made) == 2  # the tree + the .claude.json
+        tree = next(p for p in made if p.is_dir())
+        assert (tree / "projects" / "p1" / "s.jsonl").exists()
+        assert not (tree / ".cache").exists()  # cache excluded
+        assert migrate._find_existing_backup(dest) == tree
+
+    def test_find_existing_backup_none_when_absent(self, tmp_path):
+        dest = tmp_path / ".claude"
+        dest.mkdir()
+        assert migrate._find_existing_backup(dest) is None
+
+    def test_explicit_backup_flag_satisfies_gate_and_copies(self, tmp_path):
+        src, _ = _make_source(tmp_path / "src")
+        dest, dest_json = self._populated_dest(tmp_path)
+        rc = migrate.run(
+            _args(
+                source=[src],
+                dest_dir=dest,
+                dest_json=dest_json,
+                apply=True,
+                backup=True,
+            )
+        )
+        assert rc == 0  # --backup alone satisfies the apply gate
+        assert migrate._find_existing_backup(dest) is not None
+
+    def test_guided_offers_backup_when_dest_not_greenfield(self, tmp_path, monkeypatch):
+        bundle = tmp_path / "bundle"
+        _make_source(bundle / "native" / "dot-claude")
+        dest, dest_json = self._populated_dest(tmp_path)
+
+        monkeypatch.setattr(migrate.sys.stdin, "isatty", lambda: True)
+        answers = iter(
+            [
+                "",  # proceed with merge (Y)
+                "",  # mode → Verbatim
+                "",  # "Make a backup now?" → default Y
+                "y",  # apply
+            ]
+        )
+        monkeypatch.setattr("builtins.input", lambda *a, **k: next(answers))
+
+        rc = migrate.run(_args(bundle=bundle, dest_dir=dest, dest_json=dest_json))
+        assert rc == 0
+        # a backup was created before applying
+        assert migrate._find_existing_backup(dest) is not None
+        # dest's own pre-existing session survived the merge
+        assert (dest / "projects" / "p1" / "s.jsonl").exists()
+
+
 class TestReRunAndSupersede:
     """Re-running a real (path-rewriting) migration must be idempotent, and a newer
     (longer) version of the same session UUID must win under the canonical name —

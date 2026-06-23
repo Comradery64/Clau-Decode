@@ -35,6 +35,7 @@ import shutil
 import subprocess
 import sys
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 # File extensions treated as text for path rewriting (everything else copied
@@ -115,11 +116,14 @@ and `~/.cc-mirror/crad/config` (crad), plus a copy of the migrate tool itself.
    want clean native paths. It asks for FROM/TO and rewrites both the folder names
    and the `cwd` inside each transcript.
 
-## Re-runs are safe
+## Backups & re-runs are safe
 
-The merge is non-destructive and idempotent: existing files are never overwritten,
-session collisions keep the longer (complete) transcript under the real `<uuid>.jsonl`
-name, and re-running changes nothing. Your destination's own chats are preserved.
+If this machine already has Claude data, the wizard checks for a backup and offers
+to make one (a timestamped `~/.claude.backup-<stamp>`) before it writes anything —
+you don't need to prepare one yourself. The merge is also non-destructive and
+idempotent: existing files are never overwritten, session collisions keep the longer
+(complete) transcript under the real `<uuid>.jsonl` name, and re-running changes
+nothing. Your destination's own chats are preserved.
 
 ## Configs
 
@@ -641,6 +645,35 @@ def _symlink_hints(roots: Counter[str], home: Path | None = None) -> list[str]:
     return hints
 
 
+def _find_existing_backup(dest_dir: Path) -> Path | None:
+    """Most recent sibling backup of ``dest_dir`` (``<name>.backup-*``), if any."""
+    name = dest_dir.name
+    backups = sorted(
+        (p for p in dest_dir.parent.glob(f"{name}.backup-*") if p.is_dir()),
+        reverse=True,
+    )
+    return backups[0] if backups else None
+
+
+def _backup_dest(dest_dir: Path, dest_json: Path) -> list[Path]:
+    """Copy the destination config tree + its ``.claude.json`` to timestamped
+    siblings (caches/vendored dirs skipped, symlinks preserved). Returns the paths
+    created. This is the safety net the wizard offers in place of demanding the
+    user assert ``--i-have-a-backup``."""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    ignore = shutil.ignore_patterns(*(set(_SKIP_DIRS) | set(_CAPTURE_EXCLUDES)))
+    made: list[Path] = []
+    if dest_dir.is_dir():
+        b = dest_dir.with_name(f"{dest_dir.name}.backup-{stamp}")
+        shutil.copytree(dest_dir, b, ignore=ignore, symlinks=True)
+        made.append(b)
+    if dest_json.is_file():
+        bj = dest_json.with_name(f"{dest_json.name}.backup-{stamp}")
+        shutil.copy2(dest_json, bj)
+        made.append(bj)
+    return made
+
+
 def _detect_phase(bundle_dir: Path, dest_dir: Path) -> str:
     """Heuristic: ``merge`` only when a staged bundle is present AND the destination
     ``~/.claude`` is still sparse (new machine importing the bundle). A staged bundle
@@ -825,10 +858,24 @@ def _guided_merge(args: argparse.Namespace, bundle: Path) -> int:
     if rc != 0:
         return rc
     print()
-    if not _confirm(
-        "Apply these changes? (make sure ~/.claude and ~/.claude.json are backed up)",
-        default=False,
-    ):
+    # Safety net: rather than make the user assert they have a backup, check for
+    # one and offer to make it. Only worth it when the destination already holds
+    # data (a greenfield ~/.claude has nothing to lose).
+    dest = args.dest_dir
+    if (dest / "projects").is_dir() and any((dest / "projects").iterdir()):
+        existing = _find_existing_backup(dest)
+        if existing:
+            print(f"Backup already present: {existing.name}")
+        elif _confirm(f"No backup of {dest} found. Make one now?", default=True):
+            try:
+                for b in _backup_dest(dest, args.dest_json):
+                    print(f"  backed up -> {b}")
+            except OSError as exc:
+                print(f"  backup failed ({exc}) — not applying.")
+                return 1
+        else:
+            print("  proceeding WITHOUT a backup (your choice).")
+    if not _confirm("Apply these changes now?", default=False):
         print("Aborted — nothing written.")
         return 0
     merge_args.apply = True
@@ -858,7 +905,7 @@ def _guided(args: argparse.Namespace) -> int:
         print("  capture (old machine):  clau-decode migrate --capture")
         print(
             "  merge   (new machine):  clau-decode migrate --source <dir> "
-            "--from <old> --to <new> --apply --i-have-a-backup"
+            "--apply --backup"
         )
         return 2
     bundle: Path = args.bundle
@@ -936,6 +983,12 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         help="required with --apply; confirm dest is backed up",
     )
     parser.add_argument(
+        "--backup",
+        action="store_true",
+        help="before --apply, copy the destination to a timestamped backup "
+        "(satisfies the backup requirement automatically)",
+    )
+    parser.add_argument(
         "--capture",
         action="store_true",
         help="stage a move bundle (run on the OLD machine) instead of merging",
@@ -972,15 +1025,23 @@ def run(args: argparse.Namespace) -> int:
     if bool(args.frm) != bool(args.to):
         print("error: --from and --to must be given together (or neither)", flush=True)
         return 2
-    if args.apply and not args.i_have_a_backup:
+    if args.apply and not args.i_have_a_backup and not getattr(args, "backup", False):
         print(
-            "error: --apply requires --i-have-a-backup "
-            "(back up the destination ~/.claude and ~/.claude.json first)",
+            "error: --apply needs either --backup (make one now) or "
+            "--i-have-a-backup (you already have one)",
             flush=True,
         )
         return 2
 
     apply = args.apply
+    # --backup: make the safety copy before touching anything.
+    if apply and getattr(args, "backup", False):
+        try:
+            for b in _backup_dest(args.dest_dir, args.dest_json):
+                print(f"backed up -> {b}", flush=True)
+        except OSError as exc:
+            print(f"error: backup failed ({exc}) — aborting", flush=True)
+            return 1
     mode = "APPLY" if apply else "DRY-RUN"
     print(
         f"[{mode}] merging {len(sources)} source(s) into {args.dest_dir}  "
