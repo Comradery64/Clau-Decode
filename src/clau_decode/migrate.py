@@ -31,6 +31,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -102,15 +103,22 @@ and `~/.cc-mirror/crad/config` (crad), plus a copy of the migrate tool itself.
 
 2. When asked for a mode, choose **[V]erbatim+symlinks** (the default/recommended).
    This does NOT rewrite paths — so it can never cobble (`/Dev/Dev/...`) or conflate
-   your work and personal trees. The wizard prints the exact symlink commands for
-   YOUR roots at the end; they look like:
+   your work and personal trees. At the end the wizard writes **`restore-paths.sh`**
+   into this bundle and offers to run it. That script does BOTH halves of the restore:
 
-       mkdir -p ~/ExternalDrive-archive && sudo ln -s ~/ExternalDrive-archive /Volumes/ExternalDrive   # external media
-       sudo ln -s /Users/<newuser> /Users/<olduser>                   # username change
+       # 1. bridge the old roots onto this machine (sudo)
+       sudo ln -s ~/ExternalDrive-archive /Volumes/ExternalDrive        # external media
+       sudo ln -s /Users/<newuser> /Users/<olduser>   # username change
+       # 2. recreate EVERY project's full working directory under those bridges
+       mkdir -p "/Volumes/ExternalDrive/Dev/VPS/my-vps"      # …one per session
 
-   Run those once. Now `cd` into any project's original path and `claude --resume`
-   lists its sessions. Restore code under the archive dir for projects you'll keep
-   coding in (resume-to-read works even with an empty dir).
+   The second half is the part a root symlink alone misses: `claude --resume` does a
+   `chdir` into each session's *full* recorded path, so bridging `/Volumes/ExternalDrive` to an
+   empty archive still fails ("working directory no longer exists") until that deep
+   path exists. Let the wizard run `restore-paths.sh` (or run it yourself); then `cd`
+   into any project's original path and `claude --resume` lists its sessions. Resume
+   works with an empty dir — drop the actual code back in only for projects you'll
+   keep coding in.
 
 3. Only pick **[R]ewrite one prefix** if EVERY chat lived under a single root and you
    want clean native paths. It asks for FROM/TO and rewrites both the folder names
@@ -615,34 +623,96 @@ def _project_roots(sources: list[Path]) -> Counter[str]:
     return roots
 
 
-def _symlink_hints(roots: Counter[str], home: Path | None = None) -> list[str]:
-    """Shell commands that make each old project root resolve on THIS machine, so
-    verbatim-migrated chats stay resumable without any path rewrite. ``/Users/<old>``
-    roots get a username bridge; other roots (external media like ``/Volumes/ExternalDrive``)
-    get a local archive dir + symlink. Throwaway roots (``/``, ``/private``, ``/tmp``)
-    are skipped."""
+def _is_throwaway_root(root: str) -> bool:
+    """True for roots no resume should depend on (``/``, ``/private``, ``/tmp``,
+    ``/var``) — created fresh per run, never worth bridging or recreating."""
+    segs = [s for s in root.split("/") if s]
+    return not segs or root == "/" or segs[0] in ("private", "tmp", "var")
+
+
+def _root_bridges(
+    roots: Counter[str], home: Path | None = None
+) -> list[tuple[str, str, str]]:
+    """``(link, target, why)`` for each old project root that must resolve on THIS
+    machine so verbatim-migrated chats stay resumable. ``/Users/<old>`` roots bridge
+    to the current home; other roots (external media like ``/Volumes/ExternalDrive``) bridge to a
+    local ``<name>-archive`` dir. Throwaway roots are skipped. A same-username
+    ``/Users/<me>`` root needs no bridge (it already resolves) — but its session
+    *leaf* dirs may still be missing, which ``_project_cwds`` + the restore script
+    handle separately."""
     home = home or Path.home()
     user = home.name
-    hints: list[str] = []
+    out: list[tuple[str, str, str]] = []
     for root in sorted(roots):
-        segs = [s for s in root.split("/") if s]
-        if not segs or root in ("/",) or segs[0] in ("private", "tmp", "var"):
+        if _is_throwaway_root(root):
             continue
+        segs = [s for s in root.split("/") if s]
         if segs[0] == "Users" and len(segs) >= 2:
             old_user = segs[1]
             if old_user != user:
-                hints.append(
-                    f"sudo ln -s /Users/{user} /Users/{old_user}"
-                    f"   # bridge old username '{old_user}' -> '{user}'"
+                out.append(
+                    (f"/Users/{old_user}", str(home), f"old username '{old_user}' -> '{user}'")
                 )
-            # same username: path already resolves, no symlink needed.
+            # same username: root already resolves, no bridge needed.
         else:
             archive = home / (segs[-1] + "-archive")
-            hints.append(
-                f"mkdir -p {archive} && sudo ln -s {archive} {root}"
-                f"   # make old media path '{root}' resolve locally"
+            out.append((root, str(archive), f"old media path '{root}'"))
+    return out
+
+
+def _project_cwds(sources: list[Path]) -> list[str]:
+    """Every distinct real project ``cwd`` across ``sources`` — the directories that
+    must EXIST for ``claude --resume`` to ``chdir`` into. Throwaway roots are dropped.
+    Bridging a root (``/Volumes/ExternalDrive``) is not enough on its own: the session's *full*
+    path must exist under it, so these are what the restore script recreates."""
+    seen: set[str] = set()
+    for src in sources:
+        projects = src / "projects"
+        if not projects.is_dir():
+            continue
+        for pdir in projects.iterdir():
+            if not pdir.is_dir():
+                continue
+            cwd = read_first_cwd(pdir)
+            if not cwd or not cwd.startswith("/") or _is_throwaway_root(cwd):
+                continue
+            seen.add(cwd)
+    return sorted(seen)
+
+
+def _restore_script(
+    roots: Counter[str], cwds: list[str], home: Path | None = None
+) -> str:
+    """A self-contained, idempotent bash script that makes verbatim-migrated sessions
+    resumable: (1) bridge each old root onto this machine, then (2) recreate every
+    project ``cwd`` under it. Step 2 is the piece a root symlink alone misses — an
+    empty bridged archive has none of the deep session paths, so resume still fails.
+    Guards make it safe to re-run and keep it from clobbering a real mounted volume."""
+    bridges = _root_bridges(roots, home)
+    lines = [
+        "#!/usr/bin/env bash",
+        "# Generated by `clau-decode migrate`. Makes verbatim-migrated Claude sessions",
+        "# resumable: bridges old project roots, then recreates every project working",
+        "# directory under them (resume needs the dir to EXIST, not the code). Idempotent.",
+        "set -e",
+        "",
+    ]
+    if bridges:
+        lines.append("# 1. Bridge old project roots onto this machine (needs sudo).")
+        for link, target, why in bridges:
+            ql, qt = shlex.quote(link), shlex.quote(target)
+            lines.append(f"mkdir -p {qt}")
+            lines.append(
+                f"[ -e {ql} ] || [ -L {ql} ] || sudo ln -s {qt} {ql}   # {why}"
             )
-    return hints
+        lines.append("")
+    lines.append(
+        "# 2. Recreate each session's working directory (resolves through the bridges)."
+    )
+    for cwd in cwds:
+        lines.append(f"mkdir -p {shlex.quote(cwd)}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _find_existing_backup(dest_dir: Path) -> Path | None:
@@ -881,20 +951,40 @@ def _guided_merge(args: argparse.Namespace, bundle: Path) -> int:
     merge_args.apply = True
     rc = run(merge_args)
     if rc == 0 and not frm:
-        hints = _symlink_hints(roots)
-        if hints:
+        cwds = _project_cwds(sources)
+        bridges = _root_bridges(roots)
+        if cwds:
+            script_dir = bundle if bundle.is_dir() else Path.cwd()
+            script_path = script_dir / "restore-paths.sh"
+            atomic_write_text(script_path, _restore_script(roots, cwds))
+            os.chmod(script_path, 0o755)
             print(
-                "\nFinal step — make the old project paths resolve so "
-                "`claude --resume` works.\nRun these once (sudo for /Volumes & "
-                "/Users), then restore code under any archive dir you care to keep "
-                "coding in:\n"
+                "\nFinal step — verbatim sessions resume only once their working\n"
+                "directories EXIST. Bridging a root (e.g. /Volumes/ExternalDrive) is NOT enough on\n"
+                "its own: each project's full path must be recreated under it, or resume\n"
+                f"fails with 'working directory no longer exists'. I wrote a script that\n"
+                f"bridges the roots and recreates all {len(cwds)} project dirs:\n\n"
+                f"  {script_path}\n"
             )
-            for h in hints:
-                print(f"  {h}")
-            print(
-                "\nAfter that: `cd` into a project's original path and "
-                "`claude --resume` will list its sessions."
-            )
+            if bridges:
+                print("It runs these root bridges (sudo) first:")
+                for link, target, why in bridges:
+                    print(f"  sudo ln -s {target} {link}   # {why}")
+                print()
+            if _confirm(
+                f"Run {script_path.name} now? (uses sudo for the symlinks)",
+                default=True,
+            ):
+                rc2 = subprocess.run(["bash", str(script_path)]).returncode
+                if rc2 == 0:
+                    print(
+                        "\nDone — `cd` into any project's original path and "
+                        "`claude --resume` will list its sessions."
+                    )
+                else:
+                    print(f"\nScript exited {rc2}. Re-run manually:  bash {script_path}")
+            else:
+                print(f"Run it when ready:  bash {script_path}")
     return rc
 
 
