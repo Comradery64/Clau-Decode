@@ -82,6 +82,64 @@ _CAPTURE_EXCLUDES = (
 )
 
 _NON_ALNUM = re.compile(r"[^a-zA-Z0-9]")
+
+# The runbook travels INSIDE the bundle (written by --capture), so it can never be
+# lost as a loose file. It documents the no-LLM, one-command flow end to end.
+_HANDOFF = """\
+# Claude move bundle — runbook
+
+This bundle was staged by `clau-decode migrate --capture` on the OLD machine.
+It carries your Claude chat history + human configs from both `~/.claude` (native)
+and `~/.cc-mirror/crad/config` (crad), plus a copy of the migrate tool itself.
+
+## On the NEW machine
+
+1. Copy this whole folder over, then from inside it run ONE of:
+       clau-decode migrate              # if clau-decode is installed
+       python3 migrate.py               # install-free (uses the bundled copy)
+   It auto-detects the **merge** step and folds everything into native `~/.claude`.
+
+2. When asked for a mode, choose **[V]erbatim+symlinks** (the default/recommended).
+   This does NOT rewrite paths — so it can never cobble (`/Dev/Dev/...`) or conflate
+   your work and personal trees. The wizard prints the exact symlink commands for
+   YOUR roots at the end; they look like:
+
+       mkdir -p ~/ExternalDrive-archive && sudo ln -s ~/ExternalDrive-archive /Volumes/ExternalDrive   # external media
+       sudo ln -s /Users/<newuser> /Users/<olduser>                   # username change
+
+   Run those once. Now `cd` into any project's original path and `claude --resume`
+   lists its sessions. Restore code under the archive dir for projects you'll keep
+   coding in (resume-to-read works even with an empty dir).
+
+3. Only pick **[R]ewrite one prefix** if EVERY chat lived under a single root and you
+   want clean native paths. It asks for FROM/TO and rewrites both the folder names
+   and the `cwd` inside each transcript.
+
+## Re-runs are safe
+
+The merge is non-destructive and idempotent: existing files are never overwritten,
+session collisions keep the longer (complete) transcript under the real `<uuid>.jsonl`
+name, and re-running changes nothing. Your destination's own chats are preserved.
+
+## Configs
+
+`commands/ skills/ agents/ hooks/ memory/` are UNION-merged. The singletons
+`CLAUDE.md` and `settings.json` are first-wins: any differing version lands beside the
+live file as `<name>.from-<source>` for you to hand-merge. After migrating, check:
+
+    cat ~/.claude/CLAUDE.md | head        # is this the content you want active?
+    ls ~/.claude/*.from-* 2>/dev/null     # anything parked to reconcile?
+
+## Secrets do NOT travel
+
+`.credentials.json` and caches are excluded by design — re-auth Claude on the new
+machine.
+
+## After the merge
+
+If you use clau-decode: `rm -f ~/.cache/clau-decode/index.db` to force a clean
+reindex, then relaunch. (A stale index can point at the old DB path and show nothing.)
+"""
 # Characters that could *continue* a longer volume/path component; if the prefix
 # is immediately followed by one of these it is NOT a standalone match (so
 # ``/Volumes/ExternalDriveCard`` is left alone while ``cd /Volumes/ExternalDrive &&`` rewrites).
@@ -531,6 +589,58 @@ def _infer_from_prefix(sources: list[Path]) -> str | None:
     return _longest_common_dir_prefix(under) or best_root
 
 
+def _project_roots(sources: list[Path]) -> Counter[str]:
+    """Distinct depth-2 absolute roots of project cwds across ``sources``, with a
+    count each — e.g. ``{'/Volumes/ExternalDrive': 44, '/Users/me': 3}``. This is what tells
+    us whether a single prefix rewrite can even work (one root) or whether the chats
+    span unrelated trees (many roots) and want verbatim + symlinks instead."""
+    roots: Counter[str] = Counter()
+    for src in sources:
+        projects = src / "projects"
+        if not projects.is_dir():
+            continue
+        for pdir in projects.iterdir():
+            if not pdir.is_dir():
+                continue
+            cwd = read_first_cwd(pdir)
+            if not cwd or not cwd.startswith("/"):
+                continue
+            segs = [s for s in cwd.split("/") if s]
+            root = "/" + "/".join(segs[:2]) if len(segs) >= 2 else "/" + "".join(segs)
+            roots[root] += 1
+    return roots
+
+
+def _symlink_hints(roots: Counter[str], home: Path | None = None) -> list[str]:
+    """Shell commands that make each old project root resolve on THIS machine, so
+    verbatim-migrated chats stay resumable without any path rewrite. ``/Users/<old>``
+    roots get a username bridge; other roots (external media like ``/Volumes/ExternalDrive``)
+    get a local archive dir + symlink. Throwaway roots (``/``, ``/private``, ``/tmp``)
+    are skipped."""
+    home = home or Path.home()
+    user = home.name
+    hints: list[str] = []
+    for root in sorted(roots):
+        segs = [s for s in root.split("/") if s]
+        if not segs or root in ("/",) or segs[0] in ("private", "tmp", "var"):
+            continue
+        if segs[0] == "Users" and len(segs) >= 2:
+            old_user = segs[1]
+            if old_user != user:
+                hints.append(
+                    f"sudo ln -s /Users/{user} /Users/{old_user}"
+                    f"   # bridge old username '{old_user}' -> '{user}'"
+                )
+            # same username: path already resolves, no symlink needed.
+        else:
+            archive = home / (segs[-1] + "-archive")
+            hints.append(
+                f"mkdir -p {archive} && sudo ln -s {archive} {root}"
+                f"   # make old media path '{root}' resolve locally"
+            )
+    return hints
+
+
 def _detect_phase(bundle_dir: Path, dest_dir: Path) -> str:
     """Heuristic: ``merge`` only when a staged bundle is present AND the destination
     ``~/.claude`` is still sparse (new machine importing the bundle). A staged bundle
@@ -594,24 +704,43 @@ def _capture(args: argparse.Namespace) -> int:
     if (crad / "projects").is_dir():
         print("  → ~/.cc-mirror/crad/config")
         _stage(crad, bundle / "crad-config")
-    # The bundle carries its own copy of this tool for the install-free merge.
+    # The bundle carries its own copy of this tool for the install-free merge,
+    # and a generated runbook so the instructions can never be lost as a loose file.
     shutil.copy2(Path(__file__), bundle / "migrate.py")
+    atomic_write_text(bundle / "HANDOFF.md", _HANDOFF)
 
-    # Count ALL transcript files recursively (top-level conversations PLUS nested
-    # <session>/subagents/*.jsonl), so the number matches `find … -name '*.jsonl'`
-    # and the live source — a top-level-only count under-reports by ~75% and looks
-    # like data loss.
-    def _count_jsonl(p: Path) -> int:
-        return sum(1 for _ in p.rglob("*.jsonl")) if p.is_dir() else 0
+    # Break the .jsonl files into the categories that actually matter, so the
+    # report can't be mistaken for a session count. A flat total counts nested
+    # <session>/subagents/*.jsonl and .bak backups alongside real conversations,
+    # which over-reports resumable sessions by ~4x and reads like data loss.
+    def _counts(p: Path) -> tuple[int, int, int]:
+        """(resumable sessions, subagent transcripts, backups) under projects/."""
+        if not p.is_dir():
+            return (0, 0, 0)
+        sessions = subagents = backups = 0
+        for jf in p.rglob("*.jsonl"):
+            if ".bak." in jf.name:
+                backups += 1
+            elif jf.parent.name == "subagents":
+                subagents += 1
+            elif jf.parent.parent == p:  # top-level <project>/<uuid>.jsonl
+                sessions += 1
+            else:
+                subagents += 1  # any other nested transcript
+        return (sessions, subagents, backups)
 
-    nfiles = _count_jsonl(bundle / "native" / "dot-claude" / "projects")
-    cfiles = _count_jsonl(bundle / "crad-config" / "projects")
-    print(f"\nDone. transcript files staged — native: {nfiles}  crad: {cfiles}")
-    if not (bundle / "HANDOFF.md").is_file():
-        print("note: no HANDOFF.md in the bundle — add the runbook before the move.")
+    ns, nsub, nbak = _counts(bundle / "native" / "dot-claude" / "projects")
+    cs, csub, cbak = _counts(bundle / "crad-config" / "projects")
+    sessions, subagents, backups = ns + cs, nsub + csub, nbak + cbak
+    total = sessions + subagents + backups
+    print(
+        f"\nStaged: {sessions} resumable sessions (native {ns} + crad {cs})\n"
+        f"        + {subagents} subagent transcripts, {backups} backups"
+        f"  ->  {total} files total"
+    )
     print(
         f"Carry '{bundle}' to the new machine, then run `clau-decode migrate` "
-        "there (it will detect the merge step)."
+        "there (it will detect the merge step). See HANDOFF.md in the bundle."
     )
     return 0
 
@@ -635,21 +764,50 @@ def _guided_merge(args: argparse.Namespace, bundle: Path) -> int:
         print("error: no Claude config trees found to merge.")
         return 1
 
-    inferred = _infer_from_prefix(sources)
-    if inferred:
-        print(f"Detected old project-path prefix: {inferred}")
-    frm = _prompt(
-        "Old path prefix to rewrite FROM (blank = no rewrite)", inferred or ""
+    # Survey the roots the chats actually live under. One root → a single prefix
+    # rewrite can work cleanly. Many roots (e.g. /Volumes/ExternalDrive + /Users/<old>) → a
+    # single prefix WILL cobble paths (doubled segments, work/personal conflated),
+    # so verbatim + symlinks is the robust default.
+    roots = _project_roots(sources)
+    real_roots = [
+        r
+        for r in roots
+        if r not in ("/",) and not r.startswith(("/private", "/tmp", "/var"))
+    ]
+    if roots:
+        print("\nProject paths span these roots:")
+        for r, n in roots.most_common():
+            print(f"  {n:4d}  {r}")
+    print(
+        "\nRecommended: migrate VERBATIM (no path rewrite) and bridge the old paths\n"
+        "with symlinks on this machine — robust across external media and a changed\n"
+        "username, and it can't cobble or conflate paths. A single-prefix rewrite is\n"
+        "only safe when every chat lives under ONE root."
     )
-    to = ""
-    if frm:
-        default_to = frm if Path(frm).is_dir() else ""
-        to = _prompt(
-            "Where does that code live on THIS machine now (rewrite TO)", default_to
+    default_mode = "V" if len(real_roots) != 1 else "V"
+    choice = (
+        _prompt(
+            "Mode: [V]erbatim+symlinks (recommended) or [R]ewrite one prefix",
+            default_mode,
         )
-        if not to:
-            print("error: a TO prefix is required once a FROM prefix is set.")
-            return 2
+        .strip()
+        .lower()
+    )
+    frm = to = ""
+    if choice.startswith("r"):
+        inferred = _infer_from_prefix(sources)
+        if inferred:
+            print(f"Detected old project-path prefix: {inferred}")
+        frm = _prompt("Old path prefix to rewrite FROM", inferred or "")
+        if frm:
+            default_to = frm if Path(frm).is_dir() else ""
+            to = _prompt(
+                "Where does that code live on THIS machine now (rewrite TO)",
+                default_to,
+            )
+            if not to:
+                print("error: a TO prefix is required once a FROM prefix is set.")
+                return 2
 
     merge_args = argparse.Namespace(
         source=sources,
@@ -674,7 +832,23 @@ def _guided_merge(args: argparse.Namespace, bundle: Path) -> int:
         print("Aborted — nothing written.")
         return 0
     merge_args.apply = True
-    return run(merge_args)
+    rc = run(merge_args)
+    if rc == 0 and not frm:
+        hints = _symlink_hints(roots)
+        if hints:
+            print(
+                "\nFinal step — make the old project paths resolve so "
+                "`claude --resume` works.\nRun these once (sudo for /Volumes & "
+                "/Users), then restore code under any archive dir you care to keep "
+                "coding in:\n"
+            )
+            for h in hints:
+                print(f"  {h}")
+            print(
+                "\nAfter that: `cd` into a project's original path and "
+                "`claude --resume` will list its sessions."
+            )
+    return rc
 
 
 def _guided(args: argparse.Namespace) -> int:

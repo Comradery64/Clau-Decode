@@ -253,6 +253,7 @@ class TestGuided:
         answers = iter(
             [
                 "",  # Proceed with merge? (default Y)
+                "R",  # Mode: rewrite one prefix
                 "",  # FROM prefix (accept the inferred default)
                 "/Users/me/Dev",  # TO prefix
                 "y",  # Apply?
@@ -273,6 +274,77 @@ class TestGuided:
             '"cwd":"/Volumes/ExternalDrive' in p.read_text()
             for p in (dest / "projects").rglob("*.jsonl")
         )
+
+    def test_guided_merge_verbatim_default_keeps_paths(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        # Verbatim mode (the recommended default) must NOT rewrite paths, and must
+        # print the symlink recipe so the old paths resolve for `claude --resume`.
+        bundle = tmp_path / "bundle"
+        _make_source(bundle / "native" / "dot-claude")  # cwd /Volumes/ExternalDrive/Dev/app
+        dest = tmp_path / "dest"
+
+        monkeypatch.setattr(migrate.sys.stdin, "isatty", lambda: True)
+        answers = iter(
+            [
+                "",  # Proceed with merge? (default Y)
+                "",  # Mode: accept default → Verbatim
+                "y",  # Apply?
+            ]
+        )
+        monkeypatch.setattr("builtins.input", lambda *a, **k: next(answers))
+
+        rc = migrate.run(
+            _args(bundle=bundle, dest_dir=dest, dest_json=tmp_path / "d.json")
+        )
+        assert rc == 0
+
+        # Session kept under its ORIGINAL encoded path, cwd untouched.
+        kept = dest / "projects" / "-Volumes-SD-Dev-app" / "sess1.jsonl"
+        assert kept.exists()
+        assert '"cwd": "/Volumes/ExternalDrive/Dev/app"' in kept.read_text()
+        assert not (dest / "projects" / "-Users-me-Dev").exists()
+
+        # The symlink recipe for /Volumes/ExternalDrive was printed.
+        out = capsys.readouterr().out
+        assert "ln -s" in out and "/Volumes/ExternalDrive" in out
+
+
+class TestProjectRoots:
+    def test_counts_distinct_depth2_roots(self, tmp_path):
+        s = _src_with_cwds(
+            tmp_path / "s",
+            ["/Volumes/ExternalDrive/Dev/a", "/Volumes/ExternalDrive/Work/b", "/Users/olduser/x"],
+        )
+        roots = migrate._project_roots([s])
+        assert roots["/Volumes/ExternalDrive"] == 2
+        assert roots["/Users/olduser"] == 1
+
+
+class TestSymlinkHints:
+    def test_username_bridge_and_media_archive(self, tmp_path):
+        home = tmp_path / "Users" / "newuser"
+        home.mkdir(parents=True)
+        roots = migrate.Counter(
+            {"/Volumes/ExternalDrive": 44, "/Users/olduser": 3, "/private/tmp": 1, "/": 1}
+        )
+        hints = migrate._symlink_hints(roots, home=home)
+        joined = "\n".join(hints)
+        # external media → archive dir + symlink
+        assert "/Volumes/ExternalDrive" in joined and "ExternalDrive-archive" in joined
+        # old username → bridge to current user
+        assert "ln -s /Users/newuser /Users/olduser" in joined
+        # throwaway roots produce no symlink (only the 2 real roots do)
+        assert len(hints) == 2
+        assert "/private/tmp" not in joined
+
+    def test_same_username_needs_no_bridge(self, tmp_path):
+        home = tmp_path / "Users" / "olduser"
+        home.mkdir(parents=True)
+        hints = migrate._symlink_hints(
+            migrate.Counter({"/Users/olduser": 5}), home=home
+        )
+        assert hints == []
 
 
 class TestReRunAndSupersede:
