@@ -174,14 +174,17 @@ class TestHelpers:
     def test_unmangle_project_id(self):
         from clau_decode.parser import _unmangle_project_id
 
-        assert _unmangle_project_id("-Volumes-SD-Work-foo") == "Volumes/SD/Work/foo"
-        assert _unmangle_project_id("-Users-olduser-project") == "Users/olduser/project"
+        assert (
+            _unmangle_project_id("-Volumes-ExternalDrive-Work-foo")
+            == "Volumes/ExternalDrive/Work/foo"
+        )
+        assert _unmangle_project_id("-Users-me-project") == "Users/me/project"
 
     def test_unmangle_preserves_non_leading_hyphens(self):
         from clau_decode.parser import _unmangle_project_id
 
         # Directory names with double hyphens indicate literal hyphens in the path
-        result = _unmangle_project_id("-Volumes-SD-Work-my--project")
+        result = _unmangle_project_id("-Volumes-ExternalDrive-Work-my--project")
         assert "my-project" in result
 
     def test_derive_session_id_valid(self):

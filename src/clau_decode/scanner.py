@@ -38,7 +38,7 @@ def resolve_path(mangled: str) -> str | None:
     treating double-dashes as literal hyphens (matching _unmangle_project_id).
 
     Args:
-        mangled: A directory name like '-Volumes-SD-Work-foo' or
+        mangled: A directory name like '-Volumes-ExternalDrive-Work-foo' or
                  '-Users-alice-my--project'.
 
     Returns:

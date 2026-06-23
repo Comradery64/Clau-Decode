@@ -19,7 +19,8 @@ from a folder name.
 Pure standard library, no web-server imports -- so this module also runs standalone
 (``python3 migrate.py --help``) and is unit-testable in isolation.
 
-Safety: dry-run by default; ``--apply`` is gated behind ``--i-have-a-backup``;
+Safety: dry-run by default; ``--apply`` needs ``--backup`` (make one now) or
+``--i-have-a-backup`` (the guided wizard offers to make a backup automatically);
 non-destructive (a differing destination file is never overwritten -- the incoming
 copy is written as a ``.from-<source>`` sidecar); ``.claude.json``/``history.jsonl``
 writes are atomic and file contents are never printed.
@@ -110,7 +111,7 @@ and `~/.cc-mirror/crad/config` (crad), plus a copy of the migrate tool itself.
        sudo ln -s ~/ExternalDrive-archive /Volumes/ExternalDrive        # external media
        sudo ln -s /Users/<newuser> /Users/<olduser>   # username change
        # 2. recreate EVERY project's full working directory under those bridges
-       mkdir -p "/Volumes/ExternalDrive/Dev/VPS/my-vps"      # …one per session
+       mkdir -p "/Volumes/ExternalDrive/Dev/my-project"      # …one per session
 
    The second half is the part a root symlink alone misses: `claude --resume` does a
    `chdir` into each session's *full* recorded path, so bridging `/Volumes/ExternalDrive` to an
@@ -651,7 +652,11 @@ def _root_bridges(
             old_user = segs[1]
             if old_user != user:
                 out.append(
-                    (f"/Users/{old_user}", str(home), f"old username '{old_user}' -> '{user}'")
+                    (
+                        f"/Users/{old_user}",
+                        str(home),
+                        f"old username '{old_user}' -> '{user}'",
+                    )
                 )
             # same username: root already resolves, no bridge needed.
         else:
@@ -982,7 +987,9 @@ def _guided_merge(args: argparse.Namespace, bundle: Path) -> int:
                         "`claude --resume` will list its sessions."
                     )
                 else:
-                    print(f"\nScript exited {rc2}. Re-run manually:  bash {script_path}")
+                    print(
+                        f"\nScript exited {rc2}. Re-run manually:  bash {script_path}"
+                    )
             else:
                 print(f"Run it when ready:  bash {script_path}")
     return rc

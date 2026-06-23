@@ -447,7 +447,7 @@ def _derive_session_id(path: Path) -> str:
 
 
 def _unmangle_project_id(directory_name: str) -> str:
-    """Convert directory name like '-Volumes-SD-Work-foo' → 'Volumes/SD/Work/foo'.
+    """Convert directory name like '-Volumes-ExternalDrive-Work-foo' → 'Volumes/ExternalDrive/Work/foo'.
 
     Rules:
       - Strip the leading '-'

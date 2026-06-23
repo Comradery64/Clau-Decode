@@ -8,7 +8,7 @@ def fake_claude_dir(tmp_path):
     """Build a fake ~/.claude directory structure."""
     projects = tmp_path / "projects"
     proj_a = projects / "-Users-alice-project-foo"
-    proj_b = projects / "-Volumes-SD-Work-bar"
+    proj_b = projects / "-Volumes-ExternalDrive-Work-bar"
     proj_a.mkdir(parents=True)
     proj_b.mkdir(parents=True)
 

@@ -13,7 +13,10 @@ from clau_decode import migrate
 # ---------------------------------------------------------------------------
 class TestEncode:
     def test_non_alnum_becomes_dash(self):
-        assert migrate.encode("/Volumes/ExternalDrive/Dev/My App") == "-Volumes-SD-Dev-My-App"
+        assert (
+            migrate.encode("/Volumes/ExternalDrive/Dev/My App")
+            == "-Volumes-ExternalDrive-Dev-My-App"
+        )
         assert migrate.encode("/a/.hidden_dir") == "-a--hidden-dir"
 
 
@@ -21,14 +24,18 @@ class TestRewritePrefix:
     def test_rewrites_at_path_boundaries(self):
         for nxt in ("/x", '"', " && ls", "", ":foo", ")"):
             text = f"/Volumes/ExternalDrive{nxt}"
-            out, n = migrate.rewrite_prefix(text, "/Volumes/ExternalDrive", "/Users/me/Dev")
+            out, n = migrate.rewrite_prefix(
+                text, "/Volumes/ExternalDrive", "/Users/me/Dev"
+            )
             assert out == f"/Users/me/Dev{nxt}", text
             assert n == 1
 
     def test_leaves_longer_volume_names_alone(self):
         for tail in ("Card/x", "-backup/y", "2/z", ".bak"):
             text = f"/Volumes/ExternalDrive{tail}"
-            out, n = migrate.rewrite_prefix(text, "/Volumes/ExternalDrive", "/Users/me/Dev")
+            out, n = migrate.rewrite_prefix(
+                text, "/Volumes/ExternalDrive", "/Users/me/Dev"
+            )
             assert out == text
             assert n == 0
 
@@ -38,9 +45,22 @@ class TestRewritePrefix:
 
 class TestRemapKey:
     def test_exact_and_prefixed(self):
-        assert migrate.remap_key("/Volumes/ExternalDrive", "/Volumes/ExternalDrive", "/new") == "/new"
-        assert migrate.remap_key("/Volumes/ExternalDrive/a", "/Volumes/ExternalDrive", "/new") == "/new/a"
-        assert migrate.remap_key("/other/a", "/Volumes/ExternalDrive", "/new") == "/other/a"
+        assert (
+            migrate.remap_key(
+                "/Volumes/ExternalDrive", "/Volumes/ExternalDrive", "/new"
+            )
+            == "/new"
+        )
+        assert (
+            migrate.remap_key(
+                "/Volumes/ExternalDrive/a", "/Volumes/ExternalDrive", "/new"
+            )
+            == "/new/a"
+        )
+        assert (
+            migrate.remap_key("/other/a", "/Volumes/ExternalDrive", "/new")
+            == "/other/a"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +68,7 @@ class TestRemapKey:
 # ---------------------------------------------------------------------------
 def _make_source(root, *, with_config=True):
     """Build a minimal Claude config tree under ``root`` (a project on /Volumes/ExternalDrive)."""
-    proj = root / "projects" / "-Volumes-SD-Dev-app"
+    proj = root / "projects" / "-Volumes-ExternalDrive-Dev-app"
     sub = proj / "sess1" / "subagents"
     sub.mkdir(parents=True)
     cwd = "/Volumes/ExternalDrive/Dev/app"
@@ -201,13 +221,20 @@ class TestDiscoverSources:
 
 class TestInferFromPrefix:
     def test_single_root(self, tmp_path):
-        s = _src_with_cwds(tmp_path / "s", ["/Volumes/ExternalDrive/Dev/a", "/Volumes/ExternalDrive/Dev/b"])
+        s = _src_with_cwds(
+            tmp_path / "s",
+            ["/Volumes/ExternalDrive/Dev/a", "/Volumes/ExternalDrive/Dev/b"],
+        )
         assert migrate._infer_from_prefix([s]).startswith("/Volumes/ExternalDrive")
 
     def test_picks_dominant_root_not_lookalike(self, tmp_path):
         s = _src_with_cwds(
             tmp_path / "s",
-            ["/Volumes/ExternalDrive/Dev/a", "/Volumes/ExternalDrive/Work/b", "/Volumes/ExternalDriveCard/c"],
+            [
+                "/Volumes/ExternalDrive/Dev/a",
+                "/Volumes/ExternalDrive/Work/b",
+                "/Volumes/ExternalDriveCard/c",
+            ],
         )
         # most common depth-2 root wins; must NOT broaden to /Volumes
         assert migrate._infer_from_prefix([s]) == "/Volumes/ExternalDrive"
@@ -246,7 +273,9 @@ class TestGuided:
     def test_guided_merge_end_to_end(self, tmp_path, monkeypatch):
         # A staged bundle → the wizard auto-detects the 'merge' phase.
         bundle = tmp_path / "bundle"
-        _make_source(bundle / "native" / "dot-claude")  # cwd /Volumes/ExternalDrive/Dev/app
+        _make_source(
+            bundle / "native" / "dot-claude"
+        )  # cwd /Volumes/ExternalDrive/Dev/app
         dest = tmp_path / "dest"
 
         monkeypatch.setattr(migrate.sys.stdin, "isatty", lambda: True)
@@ -281,7 +310,9 @@ class TestGuided:
         # Verbatim mode (the recommended default) must NOT rewrite paths, and must
         # print the symlink recipe so the old paths resolve for `claude --resume`.
         bundle = tmp_path / "bundle"
-        _make_source(bundle / "native" / "dot-claude")  # cwd /Volumes/ExternalDrive/Dev/app
+        _make_source(
+            bundle / "native" / "dot-claude"
+        )  # cwd /Volumes/ExternalDrive/Dev/app
         dest = tmp_path / "dest"
 
         monkeypatch.setattr(migrate.sys.stdin, "isatty", lambda: True)
@@ -290,6 +321,7 @@ class TestGuided:
                 "",  # Proceed with merge? (default Y)
                 "",  # Mode: accept default → Verbatim
                 "y",  # Apply?
+                "n",  # Run restore-paths.sh now? → no (don't sudo/mkdir in tests)
             ]
         )
         monkeypatch.setattr("builtins.input", lambda *a, **k: next(answers))
@@ -300,51 +332,76 @@ class TestGuided:
         assert rc == 0
 
         # Session kept under its ORIGINAL encoded path, cwd untouched.
-        kept = dest / "projects" / "-Volumes-SD-Dev-app" / "sess1.jsonl"
+        kept = dest / "projects" / "-Volumes-ExternalDrive-Dev-app" / "sess1.jsonl"
         assert kept.exists()
         assert '"cwd": "/Volumes/ExternalDrive/Dev/app"' in kept.read_text()
         assert not (dest / "projects" / "-Users-me-Dev").exists()
 
-        # The symlink recipe for /Volumes/ExternalDrive was printed.
+        # The restore recipe bridges the /Volumes/ExternalDrive root.
         out = capsys.readouterr().out
         assert "ln -s" in out and "/Volumes/ExternalDrive" in out
+        # and a restore-paths.sh that recreates the session's full cwd was written.
+        script = (bundle / "restore-paths.sh").read_text()
+        assert "mkdir -p /Volumes/ExternalDrive/Dev/app" in script
 
 
 class TestProjectRoots:
     def test_counts_distinct_depth2_roots(self, tmp_path):
         s = _src_with_cwds(
             tmp_path / "s",
-            ["/Volumes/ExternalDrive/Dev/a", "/Volumes/ExternalDrive/Work/b", "/Users/olduser/x"],
+            [
+                "/Volumes/ExternalDrive/Dev/a",
+                "/Volumes/ExternalDrive/Work/b",
+                "/Users/olduser/x",
+            ],
         )
         roots = migrate._project_roots([s])
         assert roots["/Volumes/ExternalDrive"] == 2
         assert roots["/Users/olduser"] == 1
 
 
-class TestSymlinkHints:
+class TestRootBridges:
     def test_username_bridge_and_media_archive(self, tmp_path):
         home = tmp_path / "Users" / "newuser"
         home.mkdir(parents=True)
         roots = migrate.Counter(
-            {"/Volumes/ExternalDrive": 44, "/Users/olduser": 3, "/private/tmp": 1, "/": 1}
+            {
+                "/Volumes/ExternalDrive": 44,
+                "/Users/olduser": 3,
+                "/private/tmp": 1,
+                "/": 1,
+            }
         )
-        hints = migrate._symlink_hints(roots, home=home)
-        joined = "\n".join(hints)
-        # external media → archive dir + symlink
-        assert "/Volumes/ExternalDrive" in joined and "ExternalDrive-archive" in joined
-        # old username → bridge to current user
-        assert "ln -s /Users/newuser /Users/olduser" in joined
-        # throwaway roots produce no symlink (only the 2 real roots do)
-        assert len(hints) == 2
-        assert "/private/tmp" not in joined
+        bridges = migrate._root_bridges(roots, home=home)
+        links = {link: target for link, target, _why in bridges}
+        # external media → bridged to a local <name>-archive dir
+        assert links["/Volumes/ExternalDrive"].endswith("ExternalDrive-archive")
+        # old username → bridged to the current home
+        assert links["/Users/olduser"] == str(home)
+        # throwaway roots (/private/tmp, /) skipped → only the 2 real roots
+        assert len(bridges) == 2
 
     def test_same_username_needs_no_bridge(self, tmp_path):
         home = tmp_path / "Users" / "olduser"
         home.mkdir(parents=True)
-        hints = migrate._symlink_hints(
-            migrate.Counter({"/Users/olduser": 5}), home=home
+        assert (
+            migrate._root_bridges(migrate.Counter({"/Users/olduser": 5}), home=home)
+            == []
         )
-        assert hints == []
+
+
+class TestRestoreScript:
+    def test_recreates_every_cwd_and_bridges_root(self, tmp_path):
+        home = tmp_path / "Users" / "newuser"
+        home.mkdir(parents=True)
+        roots = migrate.Counter({"/Volumes/ExternalDrive": 2})
+        cwds = ["/Volumes/ExternalDrive/Dev/a", "/Volumes/ExternalDrive/Work/b"]
+        script = migrate._restore_script(roots, cwds, home=home)
+        assert script.startswith("#!/usr/bin/env bash")
+        # bridges the root, then mkdir -p every full session cwd under it
+        assert "ln -s" in script
+        assert "mkdir -p /Volumes/ExternalDrive/Dev/a" in script
+        assert "mkdir -p /Volumes/ExternalDrive/Work/b" in script
 
 
 class TestBackup:
@@ -399,6 +456,7 @@ class TestBackup:
                 "",  # mode → Verbatim
                 "",  # "Make a backup now?" → default Y
                 "y",  # apply
+                "n",  # Run restore-paths.sh now? → no (don't sudo/mkdir in tests)
             ]
         )
         monkeypatch.setattr("builtins.input", lambda *a, **k: next(answers))
@@ -451,7 +509,7 @@ class TestReRunAndSupersede:
         dest, dj = tmp_path / "dest", tmp_path / "dj.json"
         self._merge(src, dest, dj, tmp_path)
         # the session grows (a turn is appended) in the source, same UUID/filename
-        sess = src / "projects" / "-Volumes-SD-Dev-app" / "sess1.jsonl"
+        sess = src / "projects" / "-Volumes-ExternalDrive-Dev-app" / "sess1.jsonl"
         sess.write_text(
             sess.read_text()
             + json.dumps({"sessionId": "sess1", "type": "assistant"})
