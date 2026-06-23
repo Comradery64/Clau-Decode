@@ -685,6 +685,34 @@ def _project_cwds(sources: list[Path]) -> list[str]:
     return sorted(seen)
 
 
+def _cobble_examples(
+    frm: str, to: str, cwds: list[str], limit: int = 6
+) -> list[tuple[str, str]]:
+    """``(original_cwd, cobbled_result)`` for cwds a ``frm -> to`` rewrite would
+    cobble — i.e. produce a doubled consecutive path segment (``/Dev/Work/Dev/…``,
+    ``/Work/Work/…``) that wasn't in the original. This is exactly the mistake that
+    happens when ``to`` ends with a segment that also begins the path remainder under
+    ``frm`` (e.g. ``--from /Volumes/ExternalDrive --to ~/Dev/Work`` over
+    ``/Volumes/ExternalDrive/Work/x``). Empty when the rewrite is clean."""
+    if not frm or not to:
+        return []
+
+    def doubled(path: str) -> bool:
+        segs = [s for s in path.split("/") if s]
+        return any(a == b for a, b in zip(segs, segs[1:]))
+
+    out: list[tuple[str, str]] = []
+    for cwd in cwds:
+        if cwd != frm and not cwd.startswith(frm + "/"):
+            continue
+        new = to + cwd[len(frm):]
+        if doubled(new) and not doubled(cwd):
+            out.append((cwd, new))
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _restore_script(
     roots: Counter[str], cwds: list[str], home: Path | None = None
 ) -> str:
@@ -711,12 +739,28 @@ def _restore_script(
                 f"[ -e {ql} ] || [ -L {ql} ] || sudo ln -s {qt} {ql}   # {why}"
             )
         lines.append("")
-    lines.append(
-        "# 2. Recreate each session's working directory (resolves through the bridges)."
-    )
+    lines += [
+        "# 2. Ensure each session's working directory exists (resolves through the",
+        "#    bridges). A cwd that ALREADY resolves to real content (code you restored,",
+        "#    e.g. an archive you copied back) is left untouched and counted as restored;",
+        "#    only genuinely-missing paths are created as empty read-only placeholders.",
+        "restored=0 created=0",
+        "ensure() {",
+        '  if [ -d "$1" ] && [ -n "$(ls -A "$1" 2>/dev/null)" ]; then',
+        "    restored=$((restored+1))   # real code already here — not a ghost",
+        "  else",
+        '    mkdir -p "$1"; created=$((created+1))',
+        "  fi",
+        "}",
+    ]
     for cwd in cwds:
-        lines.append(f"mkdir -p {shlex.quote(cwd)}")
-    lines.append("")
+        lines.append(f"ensure {shlex.quote(cwd)}")
+    lines += [
+        'echo "restore-paths: $restored project(s) already had code (fully resumable),"\\',
+        '     "$created created as empty placeholders (resume opens read-only until you"\\',
+        '     "restore their code)."',
+        "",
+    ]
     return "\n".join(lines)
 
 
@@ -916,6 +960,25 @@ def _guided_merge(args: argparse.Namespace, bundle: Path) -> int:
             if not to:
                 print("error: a TO prefix is required once a FROM prefix is set.")
                 return 2
+            # Cobble guard: a TO ending in a segment that also begins the path
+            # remainder under FROM doubles segments (/Dev/Work/Dev/…) and leaves every
+            # session pointing at a path that never existed. Show concrete examples and
+            # require explicit confirmation before going ahead.
+            cobbles = _cobble_examples(frm, to, _project_cwds(sources))
+            if cobbles:
+                print(
+                    f"\n⚠  This rewrite would COBBLE paths — '{to}' duplicates a segment\n"
+                    f"   already under '{frm}', producing doubled dirs that won't exist:"
+                )
+                for orig, new in cobbles:
+                    print(f"     {orig}\n       -> {new}")
+                print(
+                    "   This is the classic mistake that scrambles history. Verbatim+\n"
+                    "   symlinks (restart and pick [V]) avoids it entirely."
+                )
+                if not _confirm("Proceed with this cobbling rewrite anyway?", default=False):
+                    print("Aborted — nothing written. Re-run and choose [V]erbatim.")
+                    return 0
 
     merge_args = argparse.Namespace(
         source=sources,
