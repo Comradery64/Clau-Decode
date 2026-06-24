@@ -39,6 +39,7 @@ export default function SettingsModal() {
   const closeSettings = useAppStore((s) => s.closeSettings);
   const showParentFolder = useAppStore((s) => s.showParentFolder);
   const setShowParentFolder = useAppStore((s) => s.setShowParentFolder);
+  const setShowProviderTag = useAppStore((s) => s.setShowProviderTag);
   // Seed from the boot-time config fetch (warmed by App.tsx for theme). If the
   // cache hasn't populated yet — e.g. opened before the boot fetch resolved —
   // fall back to the deduped fetcher so we don't fire a second call.
@@ -244,6 +245,15 @@ export default function SettingsModal() {
                       label="Show parent folder in project names"
                       checked={showParentFolder}
                       onChange={setShowParentFolder}
+                    />
+                    <ToggleRow
+                      label="Show provider tag on chats"
+                      hint="Adds a small label (e.g. GPT) to non-Claude sessions in the sidebar"
+                      checked={config?.show_provider_tag ?? false}
+                      onChange={(v) => {
+                        setShowProviderTag(v);
+                        if (config) save({ ...config, show_provider_tag: v });
+                      }}
                     />
                   </>
                 )}

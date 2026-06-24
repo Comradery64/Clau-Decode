@@ -83,7 +83,12 @@ export default function App() {
   useEffect(() => {
     // Cached so SettingsModal's first open paints instantly off the same
     // network round-trip used here for theme.
-    getConfigCached().then((cfg) => applyTheme(cfg.theme)).catch(() => {});
+    getConfigCached()
+      .then((cfg) => {
+        applyTheme(cfg.theme);
+        useAppStore.getState().setShowProviderTag(cfg.show_provider_tag ?? false);
+      })
+      .catch(() => {});
     // Stash host info in the store so SessionItem etc. can gate host-side
     // actions (Open in terminal, Reveal in Finder) when accessed remotely.
     api.getHostInfo()

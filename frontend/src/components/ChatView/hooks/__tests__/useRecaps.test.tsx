@@ -22,6 +22,7 @@ const config: AppConfig = {
   port: 4242,
   host: "127.0.0.1",
   edit_enabled: true,
+  show_provider_tag: false,
   claude_default_permission_mode: "dontAsk",
   chat_send_shortcut: "enter",
   native_pty_font_family: "monaspace-argon",

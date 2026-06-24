@@ -52,6 +52,11 @@ interface AppState {
 
   setActiveProvider: (provider: string) => void;
   setProviders: (providers: ProviderInfo[]) => void;
+  // Mirror of AppConfig.show_provider_tag — gates the sidebar provider tag.
+  // Held in the store so every SessionItem reads it reactively; synced from
+  // config at boot and on Settings save. Off by default.
+  showProviderTag: boolean;
+  setShowProviderTag: (show: boolean) => void;
 
   selectSession: (id: string | null) => void;
   setPendingScrollMessageId: (id: string | null) => void;
@@ -118,6 +123,8 @@ export const useAppStore = create<AppState>((set) => ({
   setActiveProvider: (provider) => set({ activeProvider: provider }),
   setProviders: (providers) =>
     set({ providers: Object.fromEntries(providers.map((p) => [p.name, p])) }),
+  showProviderTag: false,
+  setShowProviderTag: (show) => set({ showProviderTag: show }),
 
   selectSession: (id) => set({ selectedSessionId: id }),
   setPendingScrollMessageId: (id) => set({ pendingScrollMessageId: id }),

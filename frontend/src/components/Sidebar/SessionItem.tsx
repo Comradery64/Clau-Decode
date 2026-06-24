@@ -65,6 +65,7 @@ export function SessionItem({ session, isActive, onClick, runnerStatus }: Sessio
   const archived = useArchivedSet();
   const viewed = useViewedAt();
   const selectionMode = useAppStore((s) => s.selectionMode);
+  const showProviderTag = useAppStore((s) => s.showProviderTag);
   const selectedSessionIds = useAppStore((s) => s.selectedSessionIds);
   const toggleSessionSelected = useAppStore((s) => s.toggleSessionSelected);
   const isSelected = selectedSessionIds.has(session.id);
@@ -455,11 +456,11 @@ export function SessionItem({ session, isActive, onClick, runnerStatus }: Sessio
                 {displayTitle}
               </span>
 
-              {/* Provider marker — shown only for non-claude providers. Kept
-                  deliberately subtle (muted monochrome label, no pill/border)
-                  so it recedes and scales as more CLIs are added rather than
-                  crowding each row with a coloured tag. */}
-              {!selectionMode && session.provider && session.provider !== "claude" && (
+              {/* Provider marker — opt-in (Settings → "Show provider tag on
+                  chats", off by default) so rows aren't crowded as more CLIs
+                  integrate. When on, kept deliberately subtle: a muted
+                  monochrome label, no pill/border. */}
+              {showProviderTag && !selectionMode && session.provider && session.provider !== "claude" && (
                 <span
                   aria-label={`Provider: ${session.provider}`}
                   title={session.provider}

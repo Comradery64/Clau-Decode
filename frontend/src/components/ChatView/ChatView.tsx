@@ -3,6 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
 import type { AppConfig, NativePtyState, SessionDetail } from "../../api/types";
 import { api } from "../../api/client";
+import { getCached, fetchSession } from "../../api/sessionCache";
 import { useAppStore } from "../../store";
 import { lsGetMap, LS } from "../../utils/localStorage";
 import { emit, on } from "../../utils/events";
@@ -22,6 +23,15 @@ import { OwnershipBanner } from "./OwnershipBanner";
 import { ProviderThemeProvider, resolveCaps } from "./ProviderThemeContext";
 
 type ChatViewMode = "decoded" | "native" | "sbs";
+
+// Apply the provider skin synchronously: set <html data-provider> imperatively
+// (so the CSS recalc happens in the same commit as the content swap, no
+// store→useEffect frame lag) AND mirror it into the store for any other
+// consumers (App's mirror effect then no-ops on the same value).
+function applyProviderSkin(provider: string): void {
+  document.documentElement.setAttribute("data-provider", provider);
+  useAppStore.getState().setActiveProvider(provider);
+}
 
 // Per-session view-mode memory: which mode each session was last viewed in.
 // sessionStorage so it survives in-tab navigation, forgotten on tab close.
@@ -360,27 +370,28 @@ export default function ChatView() {
   useEffect(() => {
     if (!selectedSessionId) {
       setSession(null);
-      useAppStore.getState().setActiveProvider("claude");
+      applyProviderSkin("claude");
       return;
     }
     let cancelled = false;
-    api
-      .getSession(selectedSessionId)
-      .then((detail) => {
-        if (!cancelled) {
-          const renamed = lsGetMap(LS.RENAMED)[selectedSessionId];
-          // Apply the provider skin in the SAME tick as the content swap so the
-          // shell re-themes in one paint with the message panel — not a frame
-          // later via store→useEffect→setAttribute, which is the staggered
-          // "main panel changes first, skin catches up" effect. We set the
-          // <html> attribute imperatively here; setActiveProvider keeps the
-          // store in sync for any other consumers (App's effect then no-ops).
-          const provider = detail.provider ?? "claude";
-          document.documentElement.setAttribute("data-provider", provider);
-          setSession(renamed ? { ...detail, title: renamed } : detail);
-          useAppStore.getState().setActiveProvider(provider);
-        }
-      })
+    const renamed = lsGetMap(LS.RENAMED)[selectedSessionId];
+    const apply = (detail: SessionDetail) => {
+      // Apply the provider skin imperatively in the SAME commit as the content
+      // swap, so the whole shell re-themes in one paint instead of piecemeal.
+      applyProviderSkin(detail.provider ?? "claude");
+      setSession(renamed ? { ...detail, title: renamed } : detail);
+    };
+    // Route through the SAME shared sessionCache that MessageList + ChatInputBar
+    // use (via useSessionDetail). Previously ChatView fetched uncached via
+    // api.getSession, so the message panel (cached, fast) swapped on a different
+    // clock than the header/skin/composer (uncached, slow) — the clunky
+    // piecemeal switch. Now a cache hit resolves synchronously in this same
+    // effect pass, so header + skin + messages + composer all flip together;
+    // a miss shares ONE deduped fetch with the panel, so they still land as one.
+    const cached = getCached(selectedSessionId);
+    if (cached) apply(cached);
+    fetchSession(selectedSessionId, api.getSession)
+      .then((detail) => { if (!cancelled) apply(detail); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [selectedSessionId]);

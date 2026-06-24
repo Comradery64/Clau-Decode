@@ -198,6 +198,9 @@ class AppConfig(BaseModel):
     port: int = 4242
     host: str = "127.0.0.1"
     edit_enabled: bool = True
+    # Show a small per-provider tag on non-Claude sidebar rows. Off by default
+    # — opt-in, since a tag on every chat adds clutter as more CLIs integrate.
+    show_provider_tag: bool = False
     claude_default_permission_mode: str = "default"
     chat_send_shortcut: Literal["enter", "modEnter"] = "enter"
     native_pty_font_family: Literal[

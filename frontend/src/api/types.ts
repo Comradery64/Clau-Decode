@@ -217,6 +217,7 @@ export interface AppConfig {
   port: number;
   host: string;
   edit_enabled: boolean;
+  show_provider_tag: boolean;
   claude_default_permission_mode: PermissionMode;
   chat_send_shortcut: ChatSendShortcut;
   native_pty_font_family: NativePtyFontFamily;
