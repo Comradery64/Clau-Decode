@@ -67,6 +67,14 @@ Requires Python 3.10+. The wheel ships the pre-built frontend, so **no Node.js i
 > Prefer not to install? Run it straight from a clone — see [Development](#development).
 > Advanced: `pip install` works too, but only **inside an activated virtualenv** — never your system/Homebrew Python (PEP 668 will block it, and a global install can shadow other checkouts).
 
+### Troubleshooting: existing clone won't pull
+
+This repo's history has been rewritten. If an old clone fails to update (e.g. `fatal: refusing to merge unrelated histories`, or diverged-branch errors), reset it to the new history:
+
+```bash
+git fetch origin && git reset --hard origin/main
+```
+
 ## Features
 
 ### Session browser
