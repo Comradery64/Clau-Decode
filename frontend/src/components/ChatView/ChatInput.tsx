@@ -74,6 +74,12 @@ export function ChatInput({
   // Provider-aware composer copy (the composer only renders for drivable
   // providers; this keeps the prompt correct once Codex driving is enabled).
   const { provider } = useProviderTheme();
+  // Reset the model selection to Auto when the provider changes — the option
+  // sets differ (Claude vs Codex), so a stale claude-opus-* must not be passed
+  // to `codex --model`. Fires only on an actual provider change.
+  useEffect(() => {
+    setModel("default");
+  }, [provider]);
 
   const [autoRestoreSuppressed, setAutoRestoreSuppressed] = useState(false);
 
@@ -432,6 +438,7 @@ export function ChatInput({
                 permissionMode={permissionMode}
                 setPermissionMode={setPermissionMode}
                 defaultPermissionMode={defaultPermissionMode}
+                provider={provider}
               />
               <SendShortcutHint label={sendShortcutLabel} />
               <SendStopButton

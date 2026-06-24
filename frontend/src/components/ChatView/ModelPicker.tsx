@@ -8,14 +8,35 @@ interface PermissionModeMeta {
   tone: "neutral" | "danger" | "warn" | "info";
 }
 
-export const MODEL_OPTIONS = [
+interface ModelOption {
+  value: string;
+  label: string;
+  description: string;
+}
+
+export const MODEL_OPTIONS: ModelOption[] = [
   { value: "default", label: "Auto", description: "Let the CLI pick the best model." },
   { value: "claude-opus-4-7", label: "Opus", description: "Highest capability, highest cost." },
   { value: "claude-sonnet-4-6", label: "Sonnet", description: "Balanced speed and capability." },
   { value: "claude-haiku-4-5", label: "Haiku", description: "Fastest and cheapest." },
-] as const;
+];
 
-export type ModelId = typeof MODEL_OPTIONS[number]["value"];
+// Codex model menu (passed to `codex --model <m>`). "Auto" omits the flag so
+// codex uses the model from ~/.codex/config.toml. Switching models mid-session
+// is best done via codex's own `/model` command in the Native view.
+const CODEX_MODEL_OPTIONS: ModelOption[] = [
+  { value: "default", label: "Auto", description: "Use your codex config's default model." },
+  { value: "gpt-5.5", label: "GPT-5.5", description: "OpenAI's general flagship." },
+  { value: "gpt-5.5-codex", label: "GPT-5.5 Codex", description: "Coding-tuned variant." },
+];
+
+export function modelOptionsFor(provider: string): ModelOption[] {
+  return provider === "codex" ? CODEX_MODEL_OPTIONS : MODEL_OPTIONS;
+}
+
+// Loose string: the value is passed verbatim as the CLI's --model argument, and
+// the option set is provider-dependent (see modelOptionsFor).
+export type ModelId = string;
 
 const PERMISSION_MODES: PermissionModeMeta[] = [
   { value: "default", label: "default", description: "Claude prompts appear in Native View when needed.", tone: "info" },
@@ -47,6 +68,9 @@ interface ModelPickerProps {
   permissionMode: PermissionMode;
   setPermissionMode: (m: PermissionMode) => void;
   defaultPermissionMode: PermissionMode;
+  /** Active provider — selects the model list and whether the claude-specific
+   * permission tab is shown (Codex has no equivalent here). */
+  provider?: string;
 }
 
 export function ModelPicker({
@@ -55,7 +79,12 @@ export function ModelPicker({
   permissionMode,
   setPermissionMode,
   defaultPermissionMode,
+  provider = "claude",
 }: ModelPickerProps) {
+  const modelOptions = modelOptionsFor(provider);
+  // The permission modes are Claude-specific (and the Codex driver doesn't
+  // consume permissionMode), so only Claude shows the Permission tab.
+  const showPermission = provider !== "codex";
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerTab, setPickerTab] = useState<"model" | "permission">("model");
   const [bypassConfirmed, setBypassConfirmed] = useState(false);
@@ -101,7 +130,11 @@ export function ModelPicker({
       <button
         type="button"
         onClick={() => setPickerOpen((v) => !v)}
-        title={`${MODEL_OPTIONS.find((m) => m.value === model)?.label ?? "Auto"} · ${meta.label}`}
+        title={
+          showPermission
+            ? `${modelOptions.find((m) => m.value === model)?.label ?? "Auto"} · ${meta.label}`
+            : (modelOptions.find((m) => m.value === model)?.label ?? "Auto")
+        }
         style={{
           display: "flex",
           alignItems: "center",
@@ -117,20 +150,24 @@ export function ModelPicker({
           fontWeight: 500,
         }}
       >
-        {(overridden || model !== "default") && (
+        {((showPermission && overridden) || model !== "default") && (
           <span
             style={{
               width: "6px",
               height: "6px",
               borderRadius: "50%",
-              background: overridden ? modeColor : "var(--accent-orange)",
+              background: showPermission && overridden ? modeColor : "var(--accent-orange)",
               display: "inline-block",
             }}
           />
         )}
-        <span>{MODEL_OPTIONS.find((m) => m.value === model)?.label ?? "Auto"}</span>
-        <span style={{ color: "var(--text-tertiary)" }}>·</span>
-        <span>{meta.label}</span>
+        <span>{modelOptions.find((m) => m.value === model)?.label ?? "Auto"}</span>
+        {showPermission && (
+          <>
+            <span style={{ color: "var(--text-tertiary)" }}>·</span>
+            <span>{meta.label}</span>
+          </>
+        )}
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
           <path d="M2 4l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -151,7 +188,9 @@ export function ModelPicker({
             overflow: "hidden",
           }}
         >
-          {/* Tab bar */}
+          {/* Tab bar — Codex has no Claude-style permission modes, so it shows
+              only the model list (no tabs). */}
+          {showPermission && (
           <div style={{ display: "flex", borderBottom: "1px solid var(--border-subtle)" }}>
             {(["model", "permission"] as const).map((tab) => {
               const isActive = pickerTab === tab;
@@ -180,9 +219,10 @@ export function ModelPicker({
               );
             })}
           </div>
+          )}
 
           {/* Tab content */}
-          {pickerTab === "model" && MODEL_OPTIONS.map((m) => {
+          {(!showPermission || pickerTab === "model") && modelOptions.map((m) => {
             const active = m.value === model;
             return (
               <button

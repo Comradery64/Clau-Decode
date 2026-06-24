@@ -369,9 +369,16 @@ export default function ChatView() {
       .then((detail) => {
         if (!cancelled) {
           const renamed = lsGetMap(LS.RENAMED)[selectedSessionId];
+          // Apply the provider skin in the SAME tick as the content swap so the
+          // shell re-themes in one paint with the message panel — not a frame
+          // later via store→useEffect→setAttribute, which is the staggered
+          // "main panel changes first, skin catches up" effect. We set the
+          // <html> attribute imperatively here; setActiveProvider keeps the
+          // store in sync for any other consumers (App's effect then no-ops).
+          const provider = detail.provider ?? "claude";
+          document.documentElement.setAttribute("data-provider", provider);
           setSession(renamed ? { ...detail, title: renamed } : detail);
-          // Lift provider to app root so the sidebar also receives the skin.
-          useAppStore.getState().setActiveProvider(detail.provider ?? "claude");
+          useAppStore.getState().setActiveProvider(provider);
         }
       })
       .catch(() => {});
