@@ -342,7 +342,7 @@ class TestGuided:
         assert "ln -s" in out and "/Volumes/ExternalDrive" in out
         # and a restore-paths.sh that recreates the session's full cwd was written.
         script = (bundle / "restore-paths.sh").read_text()
-        assert "mkdir -p /Volumes/ExternalDrive/Dev/app" in script
+        assert "ensure /Volumes/ExternalDrive/Dev/app" in script
 
 
 class TestProjectRoots:
@@ -398,10 +398,15 @@ class TestRestoreScript:
         cwds = ["/Volumes/ExternalDrive/Dev/a", "/Volumes/ExternalDrive/Work/b"]
         script = migrate._restore_script(roots, cwds, home=home)
         assert script.startswith("#!/usr/bin/env bash")
-        # bridges the root, then mkdir -p every full session cwd under it
+        # bridges the root, then ensures (creates if missing) every full session cwd under it
         assert "ln -s" in script
-        assert "mkdir -p /Volumes/ExternalDrive/Dev/a" in script
-        assert "mkdir -p /Volumes/ExternalDrive/Work/b" in script
+        assert "ensure /Volumes/ExternalDrive/Dev/a" in script
+        assert "ensure /Volumes/ExternalDrive/Work/b" in script
+        # step 3: relink each session into its bridge-resolved project dir so
+        # `claude --resume` (which resolves symlinks in getcwd) can find it.
+        assert "relink /Volumes/ExternalDrive/Dev/a" in script
+        assert "relink /Volumes/ExternalDrive/Work/b" in script
+        assert "sed 's/[^a-zA-Z0-9]/-/g'" in script  # encoding mirrors claude
 
 
 class TestBackup:
