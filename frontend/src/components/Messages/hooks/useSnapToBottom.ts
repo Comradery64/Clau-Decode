@@ -16,20 +16,38 @@ export function useSnapToBottom(
 
   // Track whether the user is *pinned to the bottom* (following) vs reading
   // history. The streaming snap (below) only re-pins while this is true.
-  // Use the small SNAP_THRESHOLD_PX, NOT the lenient NEAR_BOTTOM_PX (80px):
-  // with 80px, scrolling up "a little" (≤80px) to read still counted as
-  // "near bottom", so the next detail update (e.g. a `refresh` event) yanked
-  // the user back to the bottom — the reported bug. A genuine follow keeps
-  // dist≈0 between snaps, so the tighter threshold doesn't break auto-follow.
+  //
+  // Direction-based, NOT a distance threshold: ANY upward scroll — even a few
+  // px — stops the follow, and the user only re-engages it by returning to the
+  // bottom. The old `dist < NEAR_BOTTOM_PX` (80px) check meant scrolling up "a
+  // little" still counted as near-bottom, so the next detail update (e.g. a
+  // `refresh` SSE event) yanked the user back down — the reported bug. A
+  // distance threshold alone can't fix it (a scroll smaller than the threshold
+  // still snaps), so we gate on intent: wheel-up or a decrease in scrollTop.
   useEffect(() => {
     const container = containerRef?.current;
     if (!container) return;
+    let lastTop = container.scrollTop;
     const onScroll = () => {
       const dist = container.scrollHeight - container.scrollTop - container.clientHeight;
-      nearBottomRef.current = dist < SCROLL.SNAP_THRESHOLD_PX;
+      if (container.scrollTop < lastTop - 1) {
+        // Moved up → reading history → stop following.
+        nearBottomRef.current = false;
+      } else if (dist <= SCROLL.SNAP_THRESHOLD_PX) {
+        // At (or returned to) the bottom → follow the stream again.
+        nearBottomRef.current = true;
+      }
+      lastTop = container.scrollTop;
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) nearBottomRef.current = false;
     };
     container.addEventListener("scroll", onScroll, { passive: true });
-    return () => container.removeEventListener("scroll", onScroll);
+    container.addEventListener("wheel", onWheel, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+      container.removeEventListener("wheel", onWheel);
+    };
   }, [sessionId]);
 
   // Streaming auto-scroll: snap to bottom on detail updates, but only while
