@@ -14,19 +14,26 @@ export function useSnapToBottom(
   const scrolledSessionRef = useRef<string | null>(null);
   const nearBottomRef = useRef(true);
 
-  // Track whether the user is reading history (scrolled up) vs at the bottom
+  // Track whether the user is *pinned to the bottom* (following) vs reading
+  // history. The streaming snap (below) only re-pins while this is true.
+  // Use the small SNAP_THRESHOLD_PX, NOT the lenient NEAR_BOTTOM_PX (80px):
+  // with 80px, scrolling up "a little" (≤80px) to read still counted as
+  // "near bottom", so the next detail update (e.g. a `refresh` event) yanked
+  // the user back to the bottom — the reported bug. A genuine follow keeps
+  // dist≈0 between snaps, so the tighter threshold doesn't break auto-follow.
   useEffect(() => {
     const container = containerRef?.current;
     if (!container) return;
     const onScroll = () => {
       const dist = container.scrollHeight - container.scrollTop - container.clientHeight;
-      nearBottomRef.current = dist < SCROLL.NEAR_BOTTOM_PX;
+      nearBottomRef.current = dist < SCROLL.SNAP_THRESHOLD_PX;
     };
     container.addEventListener("scroll", onScroll, { passive: true });
     return () => container.removeEventListener("scroll", onScroll);
   }, [sessionId]);
 
-  // Streaming auto-scroll: snap to bottom on detail updates
+  // Streaming auto-scroll: snap to bottom on detail updates, but only while
+  // the user is pinned to the bottom (following the stream).
   useEffect(() => {
     if (!detail || detail.id !== sessionId) return;
     if (scrolledSessionRef.current !== sessionId) return;
@@ -65,15 +72,29 @@ export function useSnapToBottom(
     if (!container) return;
 
     let stickToBottom = true;
+    let lastTop = container.scrollTop;
     const snap = () => {
-      if (stickToBottom) container.scrollTop = container.scrollHeight;
+      if (stickToBottom) {
+        container.scrollTop = container.scrollHeight;
+        // Record our own downward snap so the scroll handler below doesn't
+        // mistake it for the user moving.
+        lastTop = container.scrollTop;
+      }
     };
 
+    // Cancel the snap window the moment the user scrolls UP. Detect intent by
+    // direction (scrollTop decreased) and via the wheel event — both are
+    // immune to the race where a ResizeObserver snap fires in the same tick
+    // and would otherwise reset the position before a distance check noticed.
     const onUserScroll = () => {
-      const dist = container.scrollHeight - container.scrollTop - container.clientHeight;
-      if (dist > SCROLL.SNAP_THRESHOLD_PX) stickToBottom = false;
+      if (container.scrollTop < lastTop - 1) stickToBottom = false;
+      lastTop = container.scrollTop;
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) stickToBottom = false;
     };
     container.addEventListener("scroll", onUserScroll, { passive: true });
+    container.addEventListener("wheel", onWheel, { passive: true });
 
     let ro: ResizeObserver | null = null;
     const inner = container.firstElementChild as HTMLElement | null;
@@ -91,6 +112,7 @@ export function useSnapToBottom(
     return () => {
       ro?.disconnect();
       container.removeEventListener("scroll", onUserScroll);
+      container.removeEventListener("wheel", onWheel);
       clearTimeout(timeout);
     };
   }, [sessionId, hasCurrentDetail, pendingScrollMessageId]);
