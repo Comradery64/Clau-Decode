@@ -78,6 +78,9 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
   const wroteSnapshotRef = useRef<string | null>(null);
   const lastNoticeRef = useRef<string | null>(null);
   const closeWarnedRef = useRef(false);
+  // Set by the terminal-creation effect to its syncTerminalSize so other
+  // effects (e.g. the alive transition) can re-fit + re-assert the size.
+  const syncSizeRef = useRef<(() => void) | null>(null);
   const [initialSize, setInitialSize] = useState<{ rows: number; cols: number } | null>(null);
   const [terminalReady, setTerminalReady] = useState(0);
   const [nativeFont, setNativeFont] = useState<NativePtyFontFamily>(
@@ -137,21 +140,22 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
     };
   }, [sessionId]);
 
-  // Closing or refreshing the tab fires `pagehide`, which kills the live Codex
-  // process (the tmux session is torn down — see the handler above). Codex
-  // turns cost real quota and can run for minutes, so guard against an
-  // accidental close/refresh with the browser's native confirm, and point the
-  // user at the durable escape hatches (keep the tab open, or open the session
-  // in a real terminal where it survives independently). Only live Codex
-  // sessions are guarded: Claude's native PTY is cheap to respawn and resumes
-  // from its JSONL, so warning there would just be noise.
+  // Closing or refreshing the tab fires `pagehide`, which kills the live native
+  // process (the PTY / tmux session is torn down — see the handler above). For
+  // ANY harness (Claude, Codex, …) that means losing the running turn, which
+  // can be long and — for metered backends — costs real quota. So guard a live
+  // native session against an accidental close/refresh with the browser's
+  // native confirm, and point the user at the durable escape hatches (keep the
+  // tab open, or open the session in a real terminal where it survives
+  // independently).
   useEffect(() => {
-    if (provider !== "codex" || !alive) return undefined;
+    if (!alive) return undefined;
+    const label = provider ? provider.charAt(0).toUpperCase() + provider.slice(1) : "session";
     if (!closeWarnedRef.current) {
       closeWarnedRef.current = true;
       onNotice?.({
         kind: "info",
-        text: "Closing or refreshing this tab stops the Codex process. Keep the tab open, or open the session in your terminal to keep it running.",
+        text: `Closing or refreshing this tab stops the running ${label} process. Keep the tab open, or open the session in your terminal to keep it running.`,
       });
     }
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -225,6 +229,24 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
       if (!inputFlushRaf) inputFlushRaf = requestAnimationFrame(flushInput);
     });
 
+    // Wheel scrolling. On the NORMAL buffer (e.g. Claude, which keeps its
+    // history in xterm's scrollback) let xterm scroll natively — return true.
+    // On the ALTERNATE buffer the app owns the whole screen: xterm has no
+    // scrollback, and its default "alternate scroll" translates the wheel into
+    // cursor-arrow keys. A composer-focused full-screen TUI like Codex consumes
+    // those arrows as input-history navigation — the reported "scroll wheel
+    // scrolls my prompt history instead of the conversation" bug. Codex scrolls
+    // its transcript on Shift+Up / Shift+Down, so map wheel ticks to those and
+    // route them through the same coalescing buffer as keystrokes.
+    terminal.attachCustomWheelEventHandler((e) => {
+      if (terminal.buffer.active.type !== "alternate") return true;
+      const lines = Math.max(1, Math.min(8, Math.round(Math.abs(e.deltaY) / 40)));
+      const seq = e.deltaY < 0 ? "\x1b[1;2A" : "\x1b[1;2B"; // Shift+Up / Shift+Down
+      inputBuffer += seq.repeat(lines);
+      if (!inputFlushRaf) inputFlushRaf = requestAnimationFrame(flushInput);
+      return false; // cancel xterm's default alternate-scroll → arrow keys
+    });
+
     const setInitialTerminalSize = (nextInitialSize: { rows: number; cols: number }) => {
       if (initialSizeRef.current) return false;
       initialSizeRef.current = nextInitialSize;
@@ -241,6 +263,7 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
       if (setInitialTerminalSize({ rows, cols: nativeCols })) return;
       void resize(rows, nativeCols);
     };
+    syncSizeRef.current = syncTerminalSize;
     syncTerminalSize();
     setInitialTerminalSize({ rows: terminal.rows, cols: nativeCols });
     const raf = requestAnimationFrame(syncTerminalSize);
@@ -258,6 +281,7 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
       terminal.dispose();
       if (terminalRef.current === terminal) terminalRef.current = null;
       wroteSnapshotRef.current = null;
+      syncSizeRef.current = null;
     };
   }, [nativeCols, resize, writeInput]);
 
@@ -331,7 +355,13 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
     const terminal = terminalRef.current;
     if (!terminal) return;
     repaintedRef.current = true;
-    void resize(terminal.rows, nativeCols);
+    // Re-fit to the ACTUAL laid-out size and push it to the backend. Using the
+    // live fit (not the terminal.rows captured at spawn) closes the race where
+    // the PTY spawned at a short height before layout settled and never got
+    // corrected — which left the app drawing into only the top rows with a
+    // blank gap below (the "broken viewport" bug).
+    if (syncSizeRef.current) syncSizeRef.current();
+    else void resize(terminal.rows, nativeCols);
   }, [alive, resize, nativeCols]);
 
   // NOTE: there used to be a scroll-settle hack here that called

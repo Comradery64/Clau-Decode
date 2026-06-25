@@ -94,4 +94,28 @@ describe("useScrollPositionMemory", () => {
       expect(el.scrollTop).toBe(1200);
     });
   });
+
+  it("does NOT snap to bottom on a DOM mutation after the reader scrolls up a little", async () => {
+    // Regression: scrolling up within one viewport of the bottom used to still
+    // count as "near bottom", so a relative-timestamp tick (MutationObserver)
+    // yanked the reader back down. The reader must stay put.
+    const el = document.createElement("div");
+    Object.defineProperty(el, "scrollHeight", { value: 2000, configurable: true });
+    Object.defineProperty(el, "clientHeight", { value: 300, configurable: true });
+
+    render(<Harness el={el} forceBottomRequest={0} />);
+    // Parked at the bottom (max scrollTop = 2000 - 300 = 1700).
+    el.scrollTop = 1700;
+    fireEvent.scroll(el);
+    // Scroll up a little (50px) — within a viewport, but past the snap threshold.
+    el.scrollTop = 1650;
+    fireEvent.scroll(el);
+
+    // A DOM mutation fires (e.g. a relative-time label updates).
+    mutationCallbacks.forEach((callback) => callback());
+
+    // Give the rAF-coalesced restore a chance to run, then assert no snap-down.
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(el.scrollTop).toBe(1650);
+  });
 });

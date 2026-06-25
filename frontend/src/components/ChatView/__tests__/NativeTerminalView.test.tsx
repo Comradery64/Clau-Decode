@@ -66,6 +66,11 @@ const { fitDimensions, configSource, fitAddonInstances, terminalInstances, MockF
       this.dataHandler = handler;
       return { dispose: vi.fn() };
     });
+    wheelHandler: ((e: WheelEvent) => boolean) | null = null;
+    buffer = { active: { type: "normal" as "normal" | "alternate" } };
+    attachCustomWheelEventHandler = vi.fn((handler: (e: WheelEvent) => boolean) => {
+      this.wheelHandler = handler;
+    });
     // xterm exposes a unicode service; xtermTerminal.ts sets activeVersion and
     // the Unicode11 addon registers a provider against it.
     unicode = { activeVersion: "6", register: vi.fn() };
@@ -340,7 +345,7 @@ describe("NativeTerminalView", () => {
       expect(onNotice).toHaveBeenCalledWith(
         expect.objectContaining({
           kind: "info",
-          text: expect.stringContaining("stops the Codex process"),
+          text: expect.stringContaining("stops the running Codex process"),
         }),
       );
     });
@@ -350,16 +355,58 @@ describe("NativeTerminalView", () => {
     expect(evt.defaultPrevented).toBe(true);
   });
 
-  it("does NOT guard a Claude native session against close", async () => {
+  it("also warns before closing a live Claude native session (all harnesses)", async () => {
     const onNotice = vi.fn();
+    // No provider wrapper → defaults to "claude".
     render(<NativeTerminalView sessionId="sess-native" onNotice={onNotice} />);
     await waitFor(() => expect(terminalInstances[0]).toBeTruthy());
 
+    await waitFor(() => {
+      expect(onNotice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "info",
+          text: expect.stringContaining("stops the running Claude process"),
+        }),
+      );
+    });
+
     const evt = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(evt);
-    expect(evt.defaultPrevented).toBe(false);
-    expect(onNotice).not.toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("stops the Codex process") }),
-    );
+    expect(evt.defaultPrevented).toBe(true);
+  });
+
+  it("on the alternate buffer, wheel scrolls via Shift+Up/Down (not arrow history)", async () => {
+    render(<NativeTerminalView sessionId="sess-native" />);
+    await waitFor(() => expect(terminalInstances[0]).toBeTruthy());
+    const term = terminalInstances[0];
+    await waitFor(() => expect(term.wheelHandler).toBeTruthy());
+    term.buffer.active.type = "alternate";
+
+    // Wheel up by 100px → 3 lines of Shift+Up; handler cancels xterm default.
+    const ret = term.wheelHandler!({ deltaY: -100, preventDefault: () => {} } as unknown as WheelEvent);
+    expect(ret).toBe(false);
+    await waitFor(() => {
+      expect(api.ptyInput).toHaveBeenCalledWith("sess-native", "\x1b[1;2A".repeat(3));
+    });
+
+    // Wheel down → Shift+Down.
+    term.wheelHandler!({ deltaY: 100, preventDefault: () => {} } as unknown as WheelEvent);
+    await waitFor(() => {
+      expect(api.ptyInput).toHaveBeenCalledWith("sess-native", "\x1b[1;2B".repeat(3));
+    });
+  });
+
+  it("on the normal buffer, wheel defers to native xterm scrollback (no input sent)", async () => {
+    render(<NativeTerminalView sessionId="sess-native" />);
+    await waitFor(() => expect(terminalInstances[0]).toBeTruthy());
+    const term = terminalInstances[0];
+    await waitFor(() => expect(term.wheelHandler).toBeTruthy());
+    term.buffer.active.type = "normal";
+    vi.mocked(api.ptyInput).mockClear();
+
+    const ret = term.wheelHandler!({ deltaY: -100, preventDefault: () => {} } as unknown as WheelEvent);
+    expect(ret).toBe(true);
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(api.ptyInput).not.toHaveBeenCalled();
   });
 });

@@ -1,10 +1,24 @@
 import { useEffect, useRef } from "react";
 import { useAppStore } from "../../../store";
+import { SCROLL } from "../../../config/ui";
 
 const USER_SCROLL_INTENT_MS = 750;
 
+// "Near bottom" (within ~one viewport) is the loose test used to decide whether
+// a session-switch should restore an old read position or just let the snap
+// hook land at the current bottom.
 function isNearBottom(top: number, height: number, clientHeight: number): boolean {
   return height - top - clientHeight < clientHeight;
+}
+
+// "At bottom" is the STRICT test (within SNAP_THRESHOLD_PX). Resize/mutation
+// re-pinning must use this, not isNearBottom: with the viewport-sized threshold,
+// scrolling up even a little still counted as "near bottom", so every DOM
+// mutation (e.g. a relative-timestamp tick) force-snapped the reader back down
+// — the reported "scroll up a little → yanked to the bottom" bug. Only a reader
+// genuinely parked at the bottom should be kept pinned as content grows.
+function isAtBottom(top: number, height: number, clientHeight: number): boolean {
+  return height - top - clientHeight <= SCROLL.SNAP_THRESHOLD_PX;
 }
 
 // Remember each session's scroll position so re-selecting a session lands the
@@ -66,7 +80,7 @@ export function useScrollPositionMemory(
       }
       const last = scrollPositions.current.get(sessionId);
       if (!last) return;
-      if (isNearBottom(last.top, last.height, el.clientHeight)) {
+      if (isAtBottom(last.top, last.height, el.clientHeight)) {
         forceBottom();
         return;
       }
