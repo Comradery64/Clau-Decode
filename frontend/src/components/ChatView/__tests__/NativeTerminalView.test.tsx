@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NativeTerminalView } from "../NativeTerminalView";
+import { ProviderThemeProvider, defaultCapsFor } from "../ProviderThemeContext";
 import { api } from "../../../api/client";
 import { emit } from "../../../utils/events";
 
@@ -324,5 +325,41 @@ describe("NativeTerminalView", () => {
 
     unmount();
     expect(api.ptyBlur).toHaveBeenCalledWith("sess-native");
+  });
+
+  it("warns before closing a live Codex session (notice + beforeunload guard)", async () => {
+    const onNotice = vi.fn();
+    render(
+      <ProviderThemeProvider value={{ provider: "codex", caps: defaultCapsFor("codex") }}>
+        <NativeTerminalView sessionId="sess-native" onNotice={onNotice} />
+      </ProviderThemeProvider>,
+    );
+    await waitFor(() => expect(terminalInstances[0]).toBeTruthy());
+
+    await waitFor(() => {
+      expect(onNotice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "info",
+          text: expect.stringContaining("stops the Codex process"),
+        }),
+      );
+    });
+
+    const evt = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(evt);
+    expect(evt.defaultPrevented).toBe(true);
+  });
+
+  it("does NOT guard a Claude native session against close", async () => {
+    const onNotice = vi.fn();
+    render(<NativeTerminalView sessionId="sess-native" onNotice={onNotice} />);
+    await waitFor(() => expect(terminalInstances[0]).toBeTruthy());
+
+    const evt = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(evt);
+    expect(evt.defaultPrevented).toBe(false);
+    expect(onNotice).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("stops the Codex process") }),
+    );
   });
 });

@@ -163,6 +163,38 @@ async def test_no_idle_reaper_session_survives_idle(tmp_path, monkeypatch):
 
 
 @requires_tmux
+async def test_dead_driver_is_dropped_so_session_can_reopen(tmp_path, monkeypatch):
+    """Regression (Phase 4f): when a driver's attach client dies out-of-band
+    (codex /quit, crash, tmux killed) — NOT via dm.kill — the manager must drop
+    the spent driver so a later focus() rebuilds a fresh one. Before the fix,
+    on_dead left the dead driver in _drivers and focus() called spawn() on it,
+    raising 'already spawned' (HTTP 500), leaving the session unreopenable until
+    a server restart."""
+    _patch_fake_build(monkeypatch)
+    dm, _bus, db = await _make_manager(tmp_path)
+    sid = "codex-dead-reopen"
+    try:
+        await dm.focus(sid, provider="codex", cwd=os.getcwd())
+        assert dm.is_alive(sid)
+        driver = dm._drivers[sid]
+        # Out-of-band death: kill the tmux session so the attach client EOFs and
+        # the driver's on_dead callback fires.
+        await driver._tmux("kill-session", "-t", driver._tmux_session)
+        # Let the reader callback observe EOF and run on_dead → drop the driver.
+        for _ in range(50):
+            if not dm.has(sid):
+                break
+            await asyncio.sleep(0.1)
+        assert not dm.has(sid), "spent driver was not dropped after out-of-band death"
+        # Reopening must succeed (rebuild + respawn), not raise 'already spawned'.
+        await dm.focus(sid, provider="codex", cwd=os.getcwd())
+        assert dm.is_alive(sid)
+    finally:
+        await dm.shutdown()
+        await db.__aexit__(None, None, None)
+
+
+@requires_tmux
 async def test_kill_removes_tracking(tmp_path, monkeypatch):
     _patch_fake_build(monkeypatch)
     dm, _bus, db = await _make_manager(tmp_path)

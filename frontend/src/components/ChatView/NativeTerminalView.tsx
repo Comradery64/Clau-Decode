@@ -3,6 +3,7 @@ import { api, getCachedConfig, getConfigCached } from "../../api/client";
 import type { NativePtyFontFamily } from "../../api/types";
 import { nativePtyFontStack, DEFAULT_NATIVE_PTY_FONT } from "../../constants/nativePtyFonts";
 import { on } from "../../utils/events";
+import { useProviderTheme } from "./ProviderThemeContext";
 import { useNativePty } from "./hooks/useNativePty";
 import {
   applyNativeTerminalTheme,
@@ -70,11 +71,13 @@ function readDecodedTerminalTheme(): ITheme {
 }
 
 export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewProps) {
+  const { provider } = useProviderTheme();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<NativeTerminal | null>(null);
   const initialSizeRef = useRef<{ rows: number; cols: number } | null>(null);
   const wroteSnapshotRef = useRef<string | null>(null);
   const lastNoticeRef = useRef<string | null>(null);
+  const closeWarnedRef = useRef(false);
   const [initialSize, setInitialSize] = useState<{ rows: number; cols: number } | null>(null);
   const [terminalReady, setTerminalReady] = useState(0);
   const [nativeFont, setNativeFont] = useState<NativePtyFontFamily>(
@@ -102,6 +105,7 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
     initialSizeRef.current = null;
     setInitialSize(null);
     wroteSnapshotRef.current = null;
+    closeWarnedRef.current = false;
   }, [sessionId]);
 
   useEffect(() => {
@@ -132,6 +136,32 @@ export function NativeTerminalView({ sessionId, onNotice }: NativeTerminalViewPr
       void api.ptyBlur(sessionId).catch(() => {});
     };
   }, [sessionId]);
+
+  // Closing or refreshing the tab fires `pagehide`, which kills the live Codex
+  // process (the tmux session is torn down — see the handler above). Codex
+  // turns cost real quota and can run for minutes, so guard against an
+  // accidental close/refresh with the browser's native confirm, and point the
+  // user at the durable escape hatches (keep the tab open, or open the session
+  // in a real terminal where it survives independently). Only live Codex
+  // sessions are guarded: Claude's native PTY is cheap to respawn and resumes
+  // from its JSONL, so warning there would just be noise.
+  useEffect(() => {
+    if (provider !== "codex" || !alive) return undefined;
+    if (!closeWarnedRef.current) {
+      closeWarnedRef.current = true;
+      onNotice?.({
+        kind: "info",
+        text: "Closing or refreshing this tab stops the Codex process. Keep the tab open, or open the session in your terminal to keep it running.",
+      });
+    }
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Legacy browsers key off a non-empty returnValue to show the prompt.
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [provider, alive, onNotice]);
 
   // Create the xterm terminal. Recreated when the session or configured width
   // changes; font and theme are applied in place (below) so they don't remount.

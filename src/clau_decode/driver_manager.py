@@ -128,6 +128,25 @@ class DriverManager:
                 _log.warning(
                     "driver: dead publish raised (session %s): %s", session_id, exc
                 )
+            # Drop the spent driver so a later focus() rebuilds a fresh one.
+            # An out-of-band death (codex /quit, crash, tmux killed) leaves the
+            # driver with a closed attach client but a stale _attach_proc; if we
+            # keep it in _drivers, focus()'s respawn branch calls spawn() on it
+            # and raises "already spawned" (HTTP 500) — the session then stays
+            # unreopenable until the server restarts. Guard on is_alive() so a
+            # concurrently re-spawned driver for the same id is never evicted.
+            driver = self._drivers.get(session_id)
+            if driver is not None and not driver.is_alive():
+                self._drivers.pop(session_id, None)
+                self._providers.pop(session_id, None)
+                if self._active_session_id == session_id:
+                    self._active_session_id = None
+                # Release the leaked master fd / reap the dead attach client
+                # off the reader callback (kill-session is idempotent if gone).
+                try:
+                    asyncio.get_running_loop().create_task(driver.kill())
+                except RuntimeError:  # pragma: no cover — no running loop
+                    pass
 
         return _cb
 
