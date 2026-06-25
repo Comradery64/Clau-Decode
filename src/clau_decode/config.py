@@ -12,7 +12,8 @@ Contract (for Agent 2 to implement):
     - Return XDG_CONFIG_HOME/clau-decode/config.json (or ~/.config/clau-decode/config.json)
 
   get_db_path() -> Path
-    - Return XDG_CACHE_HOME/clau-decode/index.db (or ~/.cache/clau-decode/index.db)
+    - Return XDG_DATA_HOME/clau-decode/index.db (or ~/.local/share/clau-decode/index.db),
+      transparently migrating a legacy ~/.cache DB on first use
 
 SOLID notes:
   - No global state — callers hold the config object; this module is pure I/O

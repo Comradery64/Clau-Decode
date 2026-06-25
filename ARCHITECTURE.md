@@ -37,7 +37,7 @@ flowchart LR
   subgraph Filesystem[Filesystem]
     JSONL[~/.claude/projects/**/*.jsonl]
     Cfg[~/.config/clau-decode/config.json]
-    Cache[~/.cache/clau-decode/index.db]
+    Cache[~/.local/share/clau-decode/index.db]
   end
 
   SPA -->|fetch + EventSource| Server
@@ -120,7 +120,7 @@ spec](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.ht
 | Purpose | Path (default) | Notes |
 |---------|----------------|-------|
 | User config | `~/.config/clau-decode/config.json` (or `$XDG_CONFIG_HOME/clau-decode/config.json`) | Atomic writes (`*.tmp` → rename) |
-| Session index | `~/.cache/clau-decode/index.db` (or `$XDG_CACHE_HOME/clau-decode/index.db`) | SQLite + FTS5; safe to delete to force a full rescan |
+| Session index | `~/.local/share/clau-decode/index.db` (or `$XDG_DATA_HOME/clau-decode/index.db`) | SQLite + FTS5; durable (holds stars/archives/titles). Use `--force-refresh` to rescan rather than deleting |
 | Scanned sessions | `~/.claude/projects/**/*.jsonl` (configurable) | Read-only by default; written only via the runner or `--enable-edit` |
 
 No remote storage. No outbound network calls except optional pricing-table

@@ -18,6 +18,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   overwritten — the incoming copy lands as a `.from-<source>` sidecar). Dry-run by
   default; `--apply` is gated behind `--i-have-a-backup`. Pure standard library.
 
+### Fixed
+
+- **Post-migrate reindex guidance pointed at the wrong path and a destructive step.**
+  The `migrate` runbook (and `README`/`ARCHITECTURE`/`config` docs) told users to
+  `rm -f ~/.cache/clau-decode/index.db`, but the index moved to the durable
+  `~/.local/share/clau-decode/index.db`, and deleting it discards non-regenerable
+  state (stars, archives, custom titles). It also missed the real symptom: migrated
+  files are copied verbatim and keep their old mtimes, so an incremental scan skips
+  them. Guidance now points at `clau-decode --force-refresh`, which re-parses every
+  session file without touching the DB.
+
 ## [0.3.1.3] - 2026-06-15
 
 ### Fixed

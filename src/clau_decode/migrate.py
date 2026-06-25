@@ -150,8 +150,11 @@ machine.
 
 ## After the merge
 
-If you use clau-decode: `rm -f ~/.cache/clau-decode/index.db` to force a clean
-reindex, then relaunch. (A stale index can point at the old DB path and show nothing.)
+If you use clau-decode: run `clau-decode --force-refresh`, then relaunch. Migrated
+files are copied verbatim and keep their old mtimes, so an incremental scan skips
+them; --force-refresh re-parses every session file. Do NOT delete the index DB —
+that path moved (it now lives under ~/.local/share, not ~/.cache) and the DB holds
+non-regenerable state (stars, archives, custom titles) that a delete would discard.
 """
 # Characters that could *continue* a longer volume/path component; if the prefix
 # is immediately followed by one of these it is NOT a standalone match (so
@@ -1255,8 +1258,10 @@ def run(args: argparse.Namespace) -> int:
         )
     else:
         print(
-            "\nDone. If you use clau-decode: rm -f ~/.cache/clau-decode/index.db "
-            "to force a clean reindex, then launch clau-decode."
+            "\nDone. If you use clau-decode: run `clau-decode --force-refresh` "
+            "(migrated files keep their old mtimes, so an incremental scan skips "
+            "them), then launch clau-decode. Don't delete the index DB — that "
+            "discards stars/archives/custom titles."
         )
     return 0
 

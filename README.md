@@ -207,8 +207,10 @@ or directly:
 }
 ```
 
-The session index lives at `~/.cache/clau-decode/index.db`. Delete it to force a
-full rescan, or run `clau-decode --force-refresh`.
+The session index lives at `~/.local/share/clau-decode/index.db` (durable, so it
+survives cache clears). To force a full rescan, run `clau-decode --force-refresh` —
+prefer this over deleting the DB, which also discards stars, archives, and custom
+titles.
 
 ## Architecture
 
