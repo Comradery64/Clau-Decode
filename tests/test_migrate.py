@@ -402,6 +402,11 @@ class TestRestoreScript:
         assert "ln -s" in script
         assert "ensure /Volumes/ExternalDrive/Dev/a" in script
         assert "ensure /Volumes/ExternalDrive/Work/b" in script
+        # step 3: relink each session into its bridge-resolved project dir so
+        # `claude --resume` (which resolves symlinks in getcwd) can find it.
+        assert "relink /Volumes/ExternalDrive/Dev/a" in script
+        assert "relink /Volumes/ExternalDrive/Work/b" in script
+        assert "sed 's/[^a-zA-Z0-9]/-/g'" in script  # encoding mirrors claude
 
 
 class TestBackup:
