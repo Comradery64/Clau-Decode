@@ -53,6 +53,19 @@ def test_spawn_builder_resume_with_model():
     assert argv == ["codex", "resume", "abc-123", "--model", "gpt-5.5"]
 
 
+def test_build_driver_fresh_vs_resume():
+    """fresh=True spawns a brand-new codex (no resume target); the default
+    resumes by session_id. The `fresh` flag is required because resume_uuid=None
+    alone is ambiguous (it falls back to session_id) — this is what lets a NEW
+    Codex chat spawn fresh instead of trying to resume a non-existent rollout."""
+    fresh = build_driver("codex", "sid-x", "/tmp", fresh=True)
+    assert fresh._spawn_command == ["codex"]
+    resume_default = build_driver("codex", "sid-x", "/tmp")
+    assert resume_default._spawn_command == ["codex", "resume", "sid-x"]
+    resume_explicit = build_driver("codex", "sid-x", "/tmp", resume_uuid="real-y")
+    assert resume_explicit._spawn_command == ["codex", "resume", "real-y"]
+
+
 def test_spawn_builder_sandbox_omitted_by_default():
     assert "--sandbox" not in codex_spawn_builder(resume_uuid="x")
 

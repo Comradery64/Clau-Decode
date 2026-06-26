@@ -162,12 +162,15 @@ class DriverManager:
         cwd: str,
         model: str | None = None,
         resume_uuid: str | None = None,
+        new_chat: bool = False,
         rows: int | None = None,
     ) -> None:
         """Ensure a live driver for ``session_id`` and mark it active.
 
         Spawns on first focus; reattaches if the tmux session outlived the app
-        (persistence/reconnect); otherwise re-uses the live driver.
+        (persistence/reconnect); otherwise re-uses the live driver. ``new_chat``
+        spawns the CLI fresh (no resume) — for a brand-new chat whose real
+        rollout id the CLI mints itself.
         """
         cols = self._native_cols
         eff_rows = rows if rows is not None else DEFAULT_ROWS
@@ -180,6 +183,7 @@ class DriverManager:
                     cwd,
                     model=model,
                     resume_uuid=resume_uuid,
+                    fresh=new_chat,
                     on_chunk=self._make_on_chunk(session_id),
                     on_dead=self._make_on_dead(session_id),
                     rows=eff_rows,
@@ -255,6 +259,31 @@ class DriverManager:
                 self._active_session_id = None
         if driver is not None:
             await driver.kill()
+
+    async def rekey(self, old_session_id: str, new_session_id: str) -> bool:
+        """Re-key a live driver from a placeholder id to its real id, in place.
+
+        Adopts the real Codex rollout UUID once codex creates it on the first
+        message: the running tmux session is renamed and the driver moves to the
+        new key, so a later focus(new_session_id) reuses the SAME live process
+        (no respawn, no double-codex-on-one-rollout conflict). Returns True if a
+        driver was re-keyed.
+        """
+        if old_session_id == new_session_id:
+            return False
+        async with self._session_lock(old_session_id):
+            driver = self._drivers.pop(old_session_id, None)
+            provider = self._providers.pop(old_session_id, None)
+            if driver is None:
+                return False
+            if hasattr(driver, "rename"):
+                await driver.rename(new_session_id)  # type: ignore[attr-defined]
+            self._drivers[new_session_id] = driver
+            if provider is not None:
+                self._providers[new_session_id] = provider
+            if self._active_session_id == old_session_id:
+                self._active_session_id = new_session_id
+        return True
 
     async def shutdown(self) -> None:
         for session_id in list(self._drivers.keys()):

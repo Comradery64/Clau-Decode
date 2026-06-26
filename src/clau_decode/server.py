@@ -297,6 +297,10 @@ class _NewSessionRequest(BaseModel):
     # their first message (see issue #9 fix — auto-greeting was wrong).
     cwd: str | None = None
     permission_mode: str | None = None
+    # Provider for the new chat. Defaults to the active profile (Claude). When
+    # the user hits "+" from inside a Codex chat the FE passes "codex" so the
+    # new chat stays Codex instead of falling back to the active profile.
+    provider: str | None = None
 
 
 @dataclass(frozen=True)
@@ -860,6 +864,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             "is_fork": False,
             "permission_mode": pending.permission_mode,
             "last_message_role": None,
+            # Provider drives the FE skin + caps for the empty chat. A pending
+            # Codex chat must report "codex" so the composer/toggle/skin match
+            # before any rollout exists; everything else is Claude.
+            "provider": "codex" if pending.bin_name == "codex" else "claude",
             "messages": [],
         }
 
@@ -1266,11 +1274,113 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
                 },
             )
 
+    def _find_new_codex_rollout(cwd: str, after_ts: float) -> str | None:
+        """Newest codex rollout written after ``after_ts`` whose session_meta
+        cwd matches ``cwd`` — i.e. the rollout a freshly-spawned codex just
+        created on its first message. Returns its session id, or None.
+
+        Cheap: stat-filters on mtime first and only reads the first line
+        (session_meta) of files newer than ``after_ts``, of which there are
+        ~none until the new rollout appears.
+        """
+        cwd_resolved = os.path.realpath(os.path.expanduser(cwd))
+        best_id: str | None = None
+        best_mtime = after_ts
+        for root in _state["config"].codex_data_paths:
+            root_p = Path(root).expanduser()
+            if not root_p.is_dir():
+                continue
+            for path in root_p.rglob("rollout-*.jsonl"):
+                try:
+                    mt = path.stat().st_mtime
+                except OSError:
+                    continue
+                if mt <= best_mtime:
+                    continue
+                try:
+                    with path.open("r", encoding="utf-8", errors="replace") as fh:
+                        rec = json.loads(fh.readline())
+                except (OSError, ValueError):
+                    continue
+                if rec.get("type") != "session_meta":
+                    continue
+                payload = rec.get("payload", {})
+                rid = payload.get("id")
+                rec_cwd = payload.get("cwd")
+                if not rid or not rec_cwd:
+                    continue
+                if os.path.realpath(os.path.expanduser(rec_cwd)) != cwd_resolved:
+                    continue
+                best_id, best_mtime = rid, mt
+        return best_id
+
+    async def _adopt_codex_session(
+        placeholder_id: str, cwd: str, after_ts: float
+    ) -> None:
+        """Adopt the real Codex rollout UUID for a brand-new Codex chat.
+
+        A fresh ``codex`` invents its own rollout id on the first message (codex
+        has no ``--session-id``), so the chat the user is driving under the
+        placeholder id must be re-keyed to that real id once it appears — else
+        the live session and the on-disk rollout are two different identities.
+        Polls for the new rollout, re-keys the live driver in place (tmux rename,
+        no respawn), drops the placeholder, and signals the FE to navigate.
+        Gives up after 10 min (user never sent a first message) or if the
+        session dies.
+        """
+        deadline = time.time() + 600.0
+        while time.time() < deadline:
+            await asyncio.sleep(1.5)
+            if placeholder_id not in app.state.driver_sessions:
+                return  # session closed / died before a rollout appeared
+            try:
+                real_id = await asyncio.to_thread(
+                    _find_new_codex_rollout, cwd, after_ts
+                )
+            except Exception as exc:  # pragma: no cover — defensive
+                _log.warning("codex adopt: scan raised: %s", exc)
+                continue
+            if not real_id or real_id == placeholder_id:
+                continue
+            if _driver_manager is None:
+                return
+            try:
+                rekeyed = await _driver_manager.rekey(placeholder_id, real_id)
+            except Exception as exc:  # pragma: no cover — defensive
+                _log.warning("codex adopt: rekey raised: %s", exc)
+                return
+            if not rekeyed:
+                return
+            app.state.driver_sessions.discard(placeholder_id)
+            app.state.driver_sessions.add(real_id)
+            async with app.state.pending_sessions_lock:
+                app.state.pending_sessions.pop(placeholder_id, None)
+            _log.info("codex adopt: %s -> %s", placeholder_id, real_id)
+            # Navigate the FE placeholder → real id, and refresh the list so the
+            # newly-materialised rollout shows up.
+            _bus.publish(
+                {"type": "session_adopted", "old": placeholder_id, "new": real_id}
+            )
+            _bus.publish({"type": "refresh", "path": "codex-adopt"})
+            return
+
     async def _resolve_provider(session_id: str) -> str:
-        """Provider for *session_id* from its on-disk detail (default claude)."""
+        """Provider for *session_id* — on-disk detail, else a pending mint.
+
+        A brand-new Codex chat has no rollout yet, so its provider lives only
+        in the pending-session map (bin_name="codex"). Consult it so focus/submit
+        route to the DriverManager and spawn fresh codex instead of treating the
+        empty chat as Claude.
+        """
         async with Database(db_path) as db:
             detail = await db.get_session_detail(session_id)
-        return detail.provider if detail is not None else "claude"
+        if detail is not None:
+            return detail.provider
+        async with app.state.pending_sessions_lock:
+            pending = app.state.pending_sessions.get(session_id)
+        if pending is not None and _driver_supports(pending.bin_name):
+            return pending.bin_name
+        return "claude"
 
     @app.get("/api/providers")
     async def get_providers():
@@ -1514,7 +1624,14 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         # would never appear in their active-profile sidebar. We validate
         # the resolved bin up front so the caller learns about a missing
         # CLI now rather than only on their first message.
-        bin_name = _active_profile_bin_name(_state["config"])
+        # Provider override (e.g. "+" from inside a Codex chat) wins over the
+        # active-profile default so the new chat stays on the same harness. A
+        # driver-backed provider maps to its CLI bin (codex → "codex"); anything
+        # else falls back to the active profile's binary.
+        if req.provider and _driver_supports(req.provider):
+            bin_name = req.provider
+        else:
+            bin_name = _active_profile_bin_name(_state["config"])
         if shutil.which(bin_name) is None:
             raise HTTPException(status_code=503, detail=f"{bin_name} not found on PATH")
 
@@ -2266,19 +2383,32 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         # / non-drivable Codex session 409s here rather than bringing a live
         # process up (until caps flip in 4e this is always a 409 for Codex).
         provider = await _resolve_provider(req.session_id)
+        driver_new_chat = req.new_chat or resolved_new_chat
         if _driver_supports(provider):
             _require_capability(provider, "can_send")
             if _driver_manager is None:
                 raise HTTPException(status_code=503, detail="driver manager not ready")
+            # A brand-new driver chat has no rollout to resume — spawn fresh
+            # (resume_uuid=None). The CLI (codex) mints its OWN rollout UUID on
+            # the first message; we adopt it below so the placeholder id is
+            # replaced by the real, persisted session.
+            adopt_after_ts = time.time() - 2.0
             await _driver_manager.focus(
                 req.session_id,
                 provider=provider,
                 cwd=cwd,
                 model=req.model,
                 resume_uuid=req.session_id,
+                new_chat=driver_new_chat,
                 rows=req.rows,
             )
             app.state.driver_sessions.add(req.session_id)
+            if driver_new_chat:
+                # Watch for the real rollout codex writes on the first message,
+                # then re-key placeholder → real id and tell the FE to navigate.
+                asyncio.ensure_future(
+                    _adopt_codex_session(req.session_id, cwd, adopt_after_ts)
+                )
             return {"ok": True}
         # Caller's explicit req.new_chat wins; otherwise use the resolver's
         # inferred value (True iff session lives in pending_sessions only).
@@ -2351,20 +2481,36 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         # here instead of falling through and wrongly spawning a *claude* PTY
         # against the Codex cwd (the read-only-honesty bug). Until caps flip in
         # 4e this is always a 409 for Codex.
-        provider = _detail.provider if _detail is not None else "claude"
+        # Resolve provider via the pending-aware helper so a brand-new Codex
+        # chat (no on-disk detail yet) still routes to the DriverManager instead
+        # of falling through to the Claude PTY path.
+        provider = await _resolve_provider(req.session_id)
         if _driver_supports(provider):
             _require_capability(provider, "can_send")
             if _driver_manager is None:
                 raise HTTPException(status_code=503, detail="driver manager not ready")
-            cwd = _detail.cwd or str(Path(_detail.file_path).parent)
+            if _detail is not None:
+                cwd = _detail.cwd or str(Path(_detail.file_path).parent)
+                driver_new_chat = False
+            else:
+                async with app.state.pending_sessions_lock:
+                    pending = app.state.pending_sessions.get(req.session_id)
+                cwd = pending.cwd if pending is not None else os.getcwd()
+                driver_new_chat = pending is not None
+            adopt_after_ts = time.time() - 2.0
             await _driver_manager.focus(
                 req.session_id,
                 provider=provider,
                 cwd=cwd,
                 model=req.model,
                 resume_uuid=req.session_id,
+                new_chat=driver_new_chat,
             )
             app.state.driver_sessions.add(req.session_id)
+            if driver_new_chat:
+                asyncio.ensure_future(
+                    _adopt_codex_session(req.session_id, cwd, adopt_after_ts)
+                )
             await _driver_manager.submit(req.session_id, req.content)
             return {"ok": True}
         # Lazily ensure focus. The frontend wires onFocus on the chat input

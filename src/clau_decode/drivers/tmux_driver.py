@@ -180,6 +180,22 @@ class TmuxDriver(ProviderDriver):
         rc, _ = await self._tmux("has-session", "-t", self._tmux_session)
         return rc == 0
 
+    async def rename(self, new_session_id: str) -> None:
+        """Re-label this driver's tmux session in place (no process restart).
+
+        Used to adopt the real Codex rollout UUID once codex creates it on the
+        first message: the fresh-spawned ``codex`` keeps running and the attach
+        client / fd stay live — only the identity (tmux session + buffer name,
+        ``session_id``) flips from the placeholder to the real id.
+        """
+        safe = _SAFE_NAME.sub("_", new_session_id)
+        new_tmux = f"cd_{safe}"
+        if new_tmux != self._tmux_session:
+            await self._tmux("rename-session", "-t", self._tmux_session, new_tmux)
+            self._tmux_session = new_tmux
+            self._buffer = new_tmux
+        self.session_id = new_session_id
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

@@ -83,20 +83,31 @@ def build_driver(
     *,
     model: str | None = None,
     resume_uuid: str | None = None,
+    fresh: bool = False,
     **driver_kwargs,
 ) -> ProviderDriver:
     """Construct a ``ProviderDriver`` for ``provider`` (not yet spawned).
 
     For Codex the resume UUID *is* ``Session.id``, so it defaults to
     ``session_id`` — the v1 happy path turns a viewed session continuable with
-    no caller bookkeeping. Pass ``resume_uuid=None`` explicitly via the builder
-    only for a fresh (non-resume) session.
+    no caller bookkeeping.
+
+    Pass ``fresh=True`` for a brand-new chat: the CLI is spawned with NO resume
+    target (codex mints its own rollout UUID on the first message; we adopt it
+    afterward). ``fresh`` is explicit because ``resume_uuid=None`` alone is
+    ambiguous — it falls back to ``session_id`` for the resume happy path.
     """
     backend = _BACKENDS.get(provider)
     if backend is None:
         raise KeyError(f"no live-driving backend registered for {provider!r}")
+    if fresh:
+        effective_resume: str | None = None
+    elif resume_uuid is not None:
+        effective_resume = resume_uuid
+    else:
+        effective_resume = session_id
     spawn_command = backend.spawn_builder(
-        resume_uuid=resume_uuid if resume_uuid is not None else session_id,
+        resume_uuid=effective_resume,
         model=model,
     )
     return backend.driver_cls(session_id, cwd, spawn_command, **driver_kwargs)

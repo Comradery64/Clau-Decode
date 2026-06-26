@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { useAppStore } from "./store";
 import { api, createEventSource, getConfigCached } from "./api/client";
-import { useRoute, getChatIdFromRoute } from "./router";
+import { useRoute, getChatIdFromRoute, navigateTo } from "./router";
 import { emit } from "./utils/events";
 import { applySessionMetaEvent, refetchSessionMeta } from "./utils/sessionMeta";
 import { LS, lsGetMap, lsGetRaw } from "./utils/localStorage";
@@ -159,6 +159,15 @@ export default function App() {
   useEffect(() => {
     const es = createEventSource({
       onRefresh: () => emit("refresh", undefined),
+      // A brand-new Codex chat just adopted its real rollout id (the live
+      // driver was re-keyed in place server-side). Refresh the list, and if
+      // we're viewing the placeholder, follow it to the real session.
+      onSessionAdopted: ({ old, new: newId }) => {
+        emit("refresh", undefined);
+        if (useAppStore.getState().selectedSessionId === old) {
+          navigateTo(`/chat/${newId}`);
+        }
+      },
       // SSE reconnected after a drop (e.g. the server restarted) — the tab
       // missed events while down, so re-sync: a "refresh" refetches the
       // session list and the open conversation (useSessionDetail listens for

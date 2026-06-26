@@ -29,17 +29,24 @@ import { isNativePtyFocused } from "../../utils/nativePtyFocus";
 export async function startNewSession(): Promise<string | null> {
   try {
     let cwd: string | undefined;
+    let provider: string | undefined;
     const currentSid = useAppStore.getState().selectedSessionId;
     if (currentSid) {
       try {
         const detail = await api.getSession(currentSid);
         cwd = detail.cwd ?? undefined;
+        // Inherit the current chat's provider so "+" from inside a Codex chat
+        // stays Codex instead of falling back to the active (Claude) profile.
+        provider = detail.provider ?? undefined;
       } catch {
         // Fall through to backend default — better than blocking the new
         // chat over a transient detail-fetch failure.
       }
     }
-    const r = await api.newSession(cwd ? { cwd } : undefined);
+    const opts: { cwd?: string; provider?: string } = {};
+    if (cwd) opts.cwd = cwd;
+    if (provider && provider !== "claude") opts.provider = provider;
+    const r = await api.newSession(Object.keys(opts).length ? opts : undefined);
     navigateTo(`/chat/${r.session_id}`);
     return r.session_id;
   } catch {

@@ -276,7 +276,7 @@ export const api = {
   // the CLI. The session materialises on disk only when the user submits their
   // first message via ptySubmit; the watcher → SSE pipeline indexes it as
   // soon as the JSONL appears. Caller navigates to /chat/<session_id>.
-  newSession: (opts?: { cwd?: string; permission_mode?: PermissionMode }) =>
+  newSession: (opts?: { cwd?: string; permission_mode?: PermissionMode; provider?: string }) =>
     post<{ session_id: string; cwd: string; permission_mode: PermissionMode }>(
       "/api/sessions/new",
       opts ?? {},
@@ -362,6 +362,10 @@ export interface EventSourceHandlers {
   onSessionMetaBulkMigration?: (payload: {
     applied: { archived: number; starred: number; viewed_at: number };
   }) => void;
+  // Fired when a brand-new driver chat (Codex) adopts its real rollout id: the
+  // placeholder session the user is viewing should navigate to `new`. The live
+  // driver was re-keyed in place, so the new id is already attachable.
+  onSessionAdopted?: (payload: { old: string; new: string }) => void;
   // PTY runner events (pty-runner-plan.md)
   // Emitted at ~1 minute remaining before idle kill.
   onPtyIdleWarn?: (e: { session_id: string; kill_in_seconds: number }) => void;
@@ -426,6 +430,13 @@ export function createEventSource(
       const data = JSON.parse(e.data) as { type: string };
       if (data.type === "refresh") {
         handlers.onRefresh();
+      } else if (data.type === "session_adopted") {
+        const ev = data as { type: "session_adopted"; old: string; new: string };
+        if (handlers.onSessionAdopted) {
+          handlers.onSessionAdopted({ old: ev.old, new: ev.new });
+        } else {
+          console.debug("[SSE] session_adopted (no handler)", ev);
+        }
       } else if (data.type === "session-meta") {
         // Payload only carries the fields that changed (rest are absent
         // from the dict, NOT null) — forward as-is so handlers can branch.

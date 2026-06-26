@@ -33,7 +33,9 @@ FAKE_CLI = os.path.join(os.path.dirname(__file__), "fake_cli.py")
 def _patch_fake_build(monkeypatch):
     """Make DriverManager build TmuxDrivers wired to the fake CLI."""
 
-    def _build(provider, session_id, cwd, *, model=None, resume_uuid=None, **kw):
+    def _build(provider, session_id, cwd, *, model=None, resume_uuid=None, fresh=False, **kw):
+        # `fresh`/`resume_uuid`/`model` only shape the real spawn argv; the fake
+        # CLI ignores them. Consume them so they don't leak into TmuxDriver.
         return TmuxDriver(
             session_id,
             cwd,
@@ -190,6 +192,39 @@ async def test_dead_driver_is_dropped_so_session_can_reopen(tmp_path, monkeypatc
         await dm.focus(sid, provider="codex", cwd=os.getcwd())
         assert dm.is_alive(sid)
     finally:
+        await dm.shutdown()
+        await db.__aexit__(None, None, None)
+
+
+@requires_tmux
+async def test_rekey_relabels_live_driver_in_place(tmp_path, monkeypatch):
+    """Adoption: a brand-new Codex chat is driven under a placeholder id, then
+    re-keyed to the real rollout id once codex creates it. rekey() must move the
+    SAME live driver to the new id (tmux renamed, no respawn) so focus(new) reuses
+    it."""
+    _patch_fake_build(monkeypatch)
+    dm, _bus, db = await _make_manager(tmp_path)
+    placeholder = "codex-placeholder"
+    real = "019eaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    try:
+        await dm.focus(placeholder, provider="codex", cwd=os.getcwd())
+        assert dm.is_alive(placeholder)
+        driver = dm._drivers[placeholder]
+
+        ok = await dm.rekey(placeholder, real)
+        assert ok is True
+        assert not dm.has(placeholder)
+        assert dm.has(real)
+        assert dm.is_alive(real)
+        # Same driver object, now under the real id with a renamed tmux session.
+        assert dm._drivers[real] is driver
+        assert driver.session_id == real
+        assert await driver.has_session()  # the renamed tmux session exists
+
+        # Re-keying a missing id is a no-op (returns False).
+        assert await dm.rekey("nope", "whatever") is False
+    finally:
+        await dm.kill(real)
         await dm.shutdown()
         await db.__aexit__(None, None, None)
 
