@@ -552,9 +552,6 @@ export default function Sidebar() {
   const archived = useArchivedSet();
   const starred = useStarredSet();
 
-  // Collapsible section headers
-  const [starredCollapsed, setStarredCollapsed] = useState(false);
-
   const openSearch = useAppStore((s) => s.openSearch);
   const sessionSortOrder = useAppStore((s) => s.sessionSortOrder);
   const selectedSessionId = useAppStore((s) => s.selectedSessionId);
@@ -914,35 +911,20 @@ export default function Sidebar() {
         {/* Starred section — only shown when there are starred sessions */}
         {!sidebarCollapsed && starredSessions.length > 0 && (
           <div style={{ margin: "4px 0" }}>
-            <button
-              onClick={() => setStarredCollapsed((v) => !v)}
+            <div
               style={{
-                display: "flex",
-                alignItems: "center",
-                width: "100%",
                 padding: "4px 18px 2px",
                 fontSize: "11px",
                 fontWeight: 600,
                 textTransform: "uppercase",
                 letterSpacing: "0.06em",
                 color: "var(--text-tertiary)",
-                background: "none",
-                border: "none",
-                cursor: "pointer",
                 fontFamily: "var(--font-ui)",
-                gap: "4px",
               }}
             >
-              <span style={{ flex: 1, textAlign: "left" }}>Starred</span>
-              <span style={{
-                fontSize: "9px",
-                transition: "transform var(--transition-fast)",
-                transform: starredCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
-                display: "inline-block",
-                marginRight: "4px",
-              }}>▾</span>
-            </button>
-            {!starredCollapsed && starredSessions.map((session) => (
+              Starred
+            </div>
+            {starredSessions.map((session) => (
               <SessionItem
                 key={session.id}
                 session={session}

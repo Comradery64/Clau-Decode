@@ -531,6 +531,11 @@ export function SessionItem({ session, isActive, onClick, runnerStatus }: Sessio
                   right: "0",
                   top: 0,
                   bottom: 0,
+                  // Match the row's right rounded corners — this button is flush
+                  // against the row's right edge and paints the active/hover
+                  // background, so without matching radii its square right edge
+                  // masks the row's rounded corners on a selected/hovered item.
+                  borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
                   color: menuOpen ? "var(--text-primary)" : "var(--text-tertiary)",
                   fontSize: "14px",
                   lineHeight: "30px",
