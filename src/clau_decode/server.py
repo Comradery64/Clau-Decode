@@ -1923,11 +1923,18 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
 
         # Compute the set of allowed root prefixes once for the whole batch.
         # Sessions live at <root>/projects/<proj>/<session>.jsonl so the file
-        # must resolve under one of the scan roots (which already include the
-        # /projects/ sub-tree by construction).
+        # must resolve under one of the configured scan roots. Claude sessions
+        # live under the profile data_paths (get_all_scan_paths); Codex rollouts
+        # live under codex_data_paths (~/.codex/sessions by default). Those are
+        # deliberately NOT in get_all_scan_paths (that one scopes the Claude
+        # watcher/scanner), so they must be added here — otherwise every Codex
+        # session fails this safety check and can't be deleted.
         scan_roots = [
             os.path.realpath(str(Path(p).expanduser()))
-            for p in _state["config"].get_all_scan_paths()
+            for p in (
+                list(_state["config"].get_all_scan_paths())
+                + list(_state["config"].codex_data_paths)
+            )
         ]
 
         # Phase 0: tombstone ALL requested ids BEFORE touching disk or DB so

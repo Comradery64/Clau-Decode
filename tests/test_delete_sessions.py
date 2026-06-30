@@ -166,6 +166,46 @@ async def test_endpoint_deletes_known_session(tmp_path) -> None:
     assert not any(s.id == _SESSION_ID for s in sessions)
 
 
+async def test_endpoint_deletes_codex_session_under_codex_data_path(tmp_path) -> None:
+    """Regression: a Codex rollout lives under ``codex_data_paths``
+    (~/.codex/sessions), which ``get_all_scan_paths()`` deliberately omits —
+    it scopes only the Claude watcher/scanner. The delete path-safety check
+    must include ``codex_data_paths`` too, or every Codex session fails the
+    check ("path outside sessions root") and can't be deleted."""
+    db_path = tmp_path / "ep_codex.db"
+
+    # Disjoint Claude vs Codex roots — so passing requires codex_data_paths
+    # specifically, not just any scan root.
+    claude_root = tmp_path / "claude"
+    codex_root = tmp_path / "codex" / "sessions"
+    codex_root.mkdir(parents=True)
+    rollout_path = codex_root / f"rollout-{_SESSION_ID}.jsonl"
+    rollout_path.write_text("{}\n")
+
+    await _seed(db_path, jsonl_path=str(rollout_path))
+
+    config = AppConfig(
+        data_paths=[str(claude_root)],
+        codex_data_paths=[str(codex_root)],
+    )
+    app = _make_app(db_path, config)
+
+    async with await _client(app) as c:
+        r = await c.post(
+            "/api/sessions/delete",
+            json={"session_ids": [_SESSION_ID]},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    assert body["deleted"] == [_SESSION_ID], (
+        f"Codex session must delete via codex_data_paths; got failed={body['failed']}"
+    )
+    assert body["failed"] == []
+    assert not rollout_path.exists(), "on-disk Codex rollout must be unlinked"
+
+
 async def test_endpoint_failed_for_bogus_id(tmp_path) -> None:
     """Endpoint returns ok=True, deleted=[], failed=[{id,error}] for an id
     that was never indexed (no sessions row, no file_path to validate)."""
