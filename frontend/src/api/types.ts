@@ -459,6 +459,10 @@ export type NativePtyState =
   | "booting"
   | "idle_chat_input"
   | "assistant_streaming"
+  // codex's term for a turn in flight ("esc to interrupt") — the driver state
+  // poller (driver_manager._STATE_TO_NATIVE) emits this for Codex where claude
+  // emits "assistant_streaming". Same meaning: the agent is working, not blocked.
+  | "running"
   | "slash_palette_open"
   | "ask_user_question"
   | "permission_prompt"

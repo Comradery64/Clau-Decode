@@ -17,7 +17,7 @@ import pytest
 
 from clau_decode.db import Database
 from clau_decode.driver_manager import DriverManager
-from clau_decode.drivers import TmuxDriver
+from clau_decode.drivers import DriverState, TmuxDriver
 from clau_decode.events_bus import EventBroadcaster
 from clau_decode import driver_manager as dm_mod
 
@@ -52,6 +52,59 @@ async def _make_manager(tmp_path) -> tuple[DriverManager, EventBroadcaster, Data
     await db.init_schema()
     bus = EventBroadcaster()
     return DriverManager(db, bus), bus, db
+
+
+class _StubDriver:
+    """Minimal driver stand-in for poller unit tests.
+
+    The poller only touches ``is_alive()`` + ``capture_state()``; this stub
+    scripts the returned state so we can exercise the poll loop deterministically
+    without a real tmux capture-pane (and without the fake CLI, which never
+    lands on an approval marker). ``capture_calls`` lets a test assert the loop
+    kept ticking through a deduped steady state.
+    """
+
+    def __init__(self, state: DriverState) -> None:
+        self.state = state
+        self.capture_calls = 0
+
+    def is_alive(self) -> bool:
+        return True
+
+    async def capture_state(self) -> DriverState:
+        self.capture_calls += 1
+        return self.state
+
+
+async def _wait_for_native_state(q, session_id: str, *, timeout: float = 2.0):
+    """Drain ``q`` until a ``pty_native_state`` event for ``session_id`` lands."""
+    deadline = _now_loops() + timeout
+    while _now_loops() < deadline:
+        try:
+            ev = q.get_nowait()
+        except asyncio.QueueEmpty:
+            await asyncio.sleep(0.02)
+            continue
+        if ev.get("type") == "pty_native_state" and ev.get("session_id") == session_id:
+            return ev
+    return None
+
+
+def _drain(q) -> int:
+    """Empty the queue now; returns how many native-state events were dropped."""
+    dropped = 0
+    while True:
+        try:
+            ev = q.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        if ev.get("type") == "pty_native_state":
+            dropped += 1
+    return dropped
+
+
+def _now_loops() -> float:
+    return asyncio.get_event_loop().time()
 
 
 @requires_tmux
@@ -241,6 +294,100 @@ async def test_kill_removes_tracking(tmp_path, monkeypatch):
         assert not dm.is_alive(sid)
         # Double kill is safe.
         await dm.kill(sid)
+    finally:
+        await dm.shutdown()
+        await db.__aexit__(None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# State poller (native-input-required-plan.md, Part A)
+#
+# These are pure unit tests of the poll loop — no tmux, no native_snapshot()
+# call. A codex session at a NEEDS_APPROVAL prompt in Decoded-only has no
+# Native pane mounted, so native_snapshot() never runs; the poller alone must
+# surface the blocked state. We speed the loop with a tiny interval.
+# ---------------------------------------------------------------------------
+
+
+async def test_state_poller_emits_for_active_session_with_dedup(tmp_path, monkeypatch):
+    """A driver at NEEDS_APPROVAL emits pty_native_state via the poller — without
+    any native_snapshot() call — gated to the active session and deduped on a
+    steady state, re-emitting only when the state actually changes."""
+    monkeypatch.setattr(dm_mod, "STATE_POLL_INTERVAL_S", 0.05)
+    dm, bus, db = await _make_manager(tmp_path)
+    q = bus.subscribe()
+    sid = "codex-approval"
+    try:
+        # Inject a stub driver and mark it active — no focus(), no snapshot.
+        driver = _StubDriver(DriverState.NEEDS_APPROVAL)
+        dm._drivers[sid] = driver  # type: ignore[assignment]
+        dm._active_session_id = sid
+        dm._ensure_state_poller()
+
+        # First tick emits the mapped native state for NEEDS_APPROVAL.
+        ev = await _wait_for_native_state(q, sid, timeout=2.0)
+        assert ev is not None, "poller did not emit pty_native_state for active session"
+        assert ev["state"] == "permission_prompt"
+        assert ev["decoded_input_safe"] is False
+
+        # Steady state: keep polling but dedup — no second emit.
+        calls_after_first = driver.capture_calls
+        _drain(q)
+        await asyncio.sleep(0.2)  # several intervals elapse
+        assert driver.capture_calls > calls_after_first, "poller stopped ticking"
+        assert await _wait_for_native_state(q, sid, timeout=0.15) is None, (
+            "steady state re-emitted (dedup regression)"
+        )
+
+        # State change → emits the new mapped state.
+        driver.state = DriverState.IDLE
+        ev = await _wait_for_native_state(q, sid, timeout=2.0)
+        assert ev is not None
+        assert ev["state"] == "idle_chat_input"
+        assert ev["decoded_input_safe"] is True
+    finally:
+        await dm.shutdown()
+        await db.__aexit__(None, None, None)
+
+
+async def test_state_poller_skips_inactive_and_dead_sessions(tmp_path, monkeypatch):
+    """The poller is gated to the one active session: a driver that is not
+    active (or not alive) is never captured, so its state never leaks onto the
+    bus. Death is already emitted by _make_on_dead."""
+    monkeypatch.setattr(dm_mod, "STATE_POLL_INTERVAL_S", 0.05)
+    dm, bus, db = await _make_manager(tmp_path)
+    q = bus.subscribe()
+    bg = "codex-background"
+    try:
+        # Background driver at NEEDS_APPROVAL, but NO active session set.
+        driver = _StubDriver(DriverState.NEEDS_APPROVAL)
+        dm._drivers[bg] = driver  # type: ignore[assignment]
+        assert dm._active_session_id is None
+        dm._ensure_state_poller()
+        await asyncio.sleep(0.25)
+        assert driver.capture_calls == 0, "inactive session was polled"
+        assert await _wait_for_native_state(q, bg, timeout=0.15) is None
+
+        # Now mark it active — it should start emitting.
+        dm._active_session_id = bg
+        ev = await _wait_for_native_state(q, bg, timeout=2.0)
+        assert ev is not None
+        assert ev["state"] == "permission_prompt"
+
+        # A dead active driver is skipped (capture never called again after
+        # it reports dead) — death is surfaced via _make_on_dead, not here.
+        driver.state = DriverState.DEAD
+
+        class _DeadDriver(_StubDriver):
+            def is_alive(self) -> bool:
+                return False
+
+        dead = _DeadDriver(DriverState.NEEDS_APPROVAL)
+        dm._drivers[bg] = dead  # type: ignore[assignment]
+        prior = dead.capture_calls
+        _drain(q)
+        await asyncio.sleep(0.25)
+        assert dead.capture_calls == prior, "dead driver was polled"
     finally:
         await dm.shutdown()
         await db.__aexit__(None, None, None)

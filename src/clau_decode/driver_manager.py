@@ -30,6 +30,16 @@ from .pty_runner import DEFAULT_COLS, DEFAULT_ROWS
 _log = logging.getLogger(__name__)
 
 
+# How often the background state poller scrapes the active driver's screen.
+# Only the ONE active session is polled, so this is ~60 tmux capture-pane
+# forks/min at worst (~2–8 ms each) — cheap relative to the SSE round-trip.
+# Codex's TUI doesn't fire an output chunk when it lands on an approval prompt
+# it drew on its own (it repaints in place), so unlike Claude we can't lean on
+# the output fan-out to reclassify state: we have to poll. See
+# docs/native-input-required-plan.md (Part A).
+STATE_POLL_INTERVAL_S = 1.0
+
+
 # DriverState → the native_state vocabulary the FE already understands
 # (see pty_screen_state.classify_screen). Keeps the Native view's existing
 # state handling working for Codex with zero FE changes.
@@ -71,6 +81,18 @@ class DriverManager:
         # Only the on-screen session's output is broadcast over SSE — mirrors
         # PtyManager, so N background drivers don't firehose the main thread.
         self._active_session_id: str | None = None
+        # Last (state, decoded_input_safe) the poller published per session —
+        # mirrors PtyManager's _last_native_state (pty_runner.py:1361) so a
+        # steady-state screen (e.g. still on the same approval prompt) emits
+        # once, not once per poll tick.
+        self._last_driver_state: dict[str, tuple[str, bool]] = {}
+        # Serialises poller capture-pane calls. Kept SEPARATE from the
+        # per-session _session_locks so a slow capture-pane can't block
+        # submit/resize/write_raw_input on the same session.
+        self._state_poll_lock = asyncio.Lock()
+        # One long-lived background task started on first focus(); cancelled
+        # in shutdown(). Gates emission to the active session only.
+        self._state_poll_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
     # Config / locking
@@ -93,6 +115,64 @@ class DriverManager:
     def is_alive(self, session_id: str) -> bool:
         d = self._drivers.get(session_id)
         return d is not None and d.is_alive()
+
+    # ------------------------------------------------------------------
+    # State poller
+    # ------------------------------------------------------------------
+
+    def _ensure_state_poller(self) -> None:
+        """Start the background state poller once (idempotent).
+
+        Without this, codex's blocked state (approval/trust/login prompt) is
+        only classified inside ``native_snapshot()`` — which the FE calls only
+        when the Native pane mounts. A codex session sitting at an approval
+        prompt in Decoded-only is therefore invisible. The poller reuses
+        ``capture_state()`` + ``_STATE_TO_NATIVE`` and emits ``pty_native_state``
+        on change, gated to the single active session — mirroring how
+        ``PtyManager`` already classifies claude on every output chunk.
+        """
+        if self._state_poll_task is not None and not self._state_poll_task.done():
+            return
+        self._state_poll_task = asyncio.create_task(self._state_poll_loop())
+
+    async def _state_poll_loop(self) -> None:
+        """Poll the active driver's screen and emit ``pty_native_state`` on change.
+
+        Only the active session is polled; a None/missing/dead active driver is
+        skipped (death is already emitted by ``_make_on_dead``). Emits are
+        deduped on ``(state, decoded_input_safe)`` so a steady prompt emits
+        once. The ``capture_state`` call runs under ``_state_poll_lock`` so its
+        tmux fork can't overlap itself, but NOT under ``_session_lock`` so it
+        can't stall submit/resize.
+        """
+        while True:
+            await asyncio.sleep(STATE_POLL_INTERVAL_S)
+            sid = self._active_session_id
+            if sid is None:
+                continue
+            driver = self._drivers.get(sid)
+            if driver is None or not driver.is_alive():
+                continue
+            try:
+                async with self._state_poll_lock:
+                    state = await driver.capture_state()
+                native_state = _STATE_TO_NATIVE.get(state, "idle_chat_input")
+                key = (native_state, state == DriverState.IDLE)
+                if self._last_driver_state.get(sid) == key:
+                    continue
+                self._last_driver_state[sid] = key
+                self._bus.publish(
+                    {
+                        "type": "pty_native_state",
+                        "session_id": sid,
+                        "state": native_state,
+                        "decoded_input_safe": key[1],
+                    }
+                )
+            except Exception as exc:  # pragma: no cover — defensive
+                _log.warning(
+                    "driver: state poll raised (session %s): %s", sid, exc
+                )
 
     # ------------------------------------------------------------------
     # Output fanout
@@ -139,6 +219,7 @@ class DriverManager:
             if driver is not None and not driver.is_alive():
                 self._drivers.pop(session_id, None)
                 self._providers.pop(session_id, None)
+                self._last_driver_state.pop(session_id, None)
                 if self._active_session_id == session_id:
                     self._active_session_id = None
                 # Release the leaked master fd / reap the dead attach client
@@ -198,6 +279,10 @@ class DriverManager:
                 else:
                     await driver.spawn(cols=cols, rows=eff_rows)
             self._active_session_id = session_id
+        # Start (idempotent) the active-session state poller so codex's
+        # blocked state is surfaced even when the Native pane never mounts
+        # (Decoded-only / Split). No-op if already running.
+        self._ensure_state_poller()
 
     async def submit(self, session_id: str, content: str) -> None:
         async with self._session_lock(session_id):
@@ -255,6 +340,7 @@ class DriverManager:
         async with self._session_lock(session_id):
             driver = self._drivers.pop(session_id, None)
             self._providers.pop(session_id, None)
+            self._last_driver_state.pop(session_id, None)
             if self._active_session_id == session_id:
                 self._active_session_id = None
         if driver is not None:
@@ -286,6 +372,16 @@ class DriverManager:
         return True
 
     async def shutdown(self) -> None:
+        # Stop the background poller first so it can't capture_state() a
+        # driver mid-kill and publish a stale state after shutdown begins.
+        task = self._state_poll_task
+        self._state_poll_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # pragma: no cover
+                pass
         for session_id in list(self._drivers.keys()):
             try:
                 await self.kill(session_id)

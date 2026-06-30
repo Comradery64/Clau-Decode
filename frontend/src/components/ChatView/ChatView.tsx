@@ -20,6 +20,7 @@ import { useScrollPositionMemory } from "./hooks/useScrollPositionMemory";
 import { useRecaps } from "./hooks/useRecaps";
 import { useSessionOwnership } from "./hooks/useSessionOwnership";
 import { OwnershipBanner } from "./OwnershipBanner";
+import { NativeActionBanner } from "./NativeActionBanner";
 import { ProviderThemeProvider, resolveCaps } from "./ProviderThemeContext";
 
 type ChatViewMode = "decoded" | "native" | "sbs";
@@ -61,6 +62,19 @@ function nativeStateLabel(
   provider?: string,
 ): string | null {
   if (!state || state === "idle_chat_input" || state === "dead") return null;
+  // The agent is actively working, not blocked — the optimistic "Thinking"
+  // indicator already conveys in-flight state, so the header chip stays quiet.
+  // Without this, codex's RUNNING screen (now emitted by the driver state
+  // poller while a turn processes) would fall through to the default and
+  // wrongly read "Native input required" for a turn that just isn't done yet.
+  // (claude's classify_screen never emits these, so this is codex-specific.)
+  if (
+    state === "running" ||
+    state === "assistant_streaming" ||
+    state === "booting"
+  ) {
+    return null;
+  }
   if (state === "slash_palette_open") return "Slash menu open";
   if (state === "login_required") {
     const providerName = provider === "codex" ? "Codex" : "Claude";
@@ -72,6 +86,23 @@ function nativeStateLabel(
   if (state === "btw_modal") return "Native input required";
   if (state === "model_selector") return "Model selector open";
   return "Native input required";
+}
+
+// The driven agent is BLOCKED waiting for the user to act in the Native pane.
+// These are the states where progress is genuinely halted and the user must
+// switch to Native to respond — the trigger for NativeActionBanner and the
+// amber header chip. Narrower than nativeStateLabel's "Native input required"
+// set: streaming/booting show that label but the agent is still working, so
+// they must NOT trip a "you need to act" banner. (native-input-required-plan.md)
+export function nativeNeedsAction(
+  state: NativePtyState | null | undefined,
+): boolean {
+  return (
+    state === "permission_prompt" ||
+    state === "ask_user_question" ||
+    state === "trust_prompt" ||
+    state === "btw_modal"
+  );
 }
 
 export default function ChatView() {
@@ -555,6 +586,7 @@ export default function ChatView() {
         onViewModeChange={handleViewModeChange}
         canDriveLive={canDriveLive}
         nativeStateLabel={nativeStateLabel(nativeState?.state, session?.provider)}
+        nativeNeedsAction={nativeNeedsAction(nativeState?.state)}
       />
       {session && session.cwd_exists === false && (
         <div
@@ -679,6 +711,17 @@ export default function ChatView() {
             ×
           </button>
         </div>
+      )}
+      {/* Prominent "input required" banner — shown in Decoded & Split (anywhere
+          but Native) when the driven agent is blocked on a prompt, so a user who
+          can't see the live terminal still knows to act. `!foreignOwned` because
+          taking over is the only sane action while another claude holds the PTY. */}
+      {viewMode !== "native" && canDriveLive && nativeState && nativeNeedsAction(nativeState.state) && !foreignOwned && (
+        <NativeActionBanner
+          state={nativeState.state}
+          decodedInputSafe={nativeState.decodedInputSafe}
+          onSwitchToNative={() => handleViewModeChange("native")}
+        />
       )}
       {viewMode === "decoded" && foreignOwned && (
         <OwnershipBanner

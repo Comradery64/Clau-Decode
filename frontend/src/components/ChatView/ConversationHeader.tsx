@@ -76,6 +76,10 @@ interface ConversationHeaderProps {
    * False for read-only / non-drivable providers (e.g. Codex pre-4e). */
   canDriveLive?: boolean;
   nativeStateLabel?: string | null;
+  /** True when the driven agent is blocked on a prompt the user must answer in
+   * Native. Recolors the state chip amber and turns it into a third "switch to
+   * Native" click target. (native-input-required-plan.md, Part B) */
+  nativeNeedsAction?: boolean;
 }
 
 export function ConversationHeader({
@@ -85,6 +89,7 @@ export function ConversationHeader({
   onViewModeChange,
   canDriveLive = true,
   nativeStateLabel = null,
+  nativeNeedsAction = false,
 }: ConversationHeaderProps) {
   const title = session === null ? "Loading…" : (session.title ?? "Untitled");
   const modelLabel = session?.model ? formatModelDisplay(session.model) : null;
@@ -233,18 +238,42 @@ export function ConversationHeader({
           )}
           <OwnershipBadge ownership={ownership} />
           {nativeStateLabel && (
-            <span
-              style={{
-                fontSize: "12px",
-                color: "var(--text-secondary)",
-                padding: "4px 7px",
-                border: "1px solid var(--border-subtle)",
-                borderRadius: "var(--radius-sm)",
-                background: "var(--bg-subtle)",
-              }}
-            >
-              {nativeStateLabel}
-            </span>
+            // When the agent is blocked on a Native prompt, the chip becomes a
+            // third "switch to Native" click target (alongside the banner and
+            // the view toggle) and recolors amber so it can't be missed.
+            nativeNeedsAction ? (
+              <button
+                type="button"
+                onClick={() => onViewModeChange?.("native")}
+                title="Native input required — switch to Native"
+                style={{
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  color: "var(--text-primary)",
+                  padding: "4px 7px",
+                  border: "1px solid var(--accent-amber, #c9b870)",
+                  borderRadius: "var(--radius-sm)",
+                  background: "rgba(201, 184, 112, 0.12)",
+                  cursor: "pointer",
+                  fontFamily: "var(--font-ui)",
+                }}
+              >
+                {nativeStateLabel}
+              </button>
+            ) : (
+              <span
+                style={{
+                  fontSize: "12px",
+                  color: "var(--text-secondary)",
+                  padding: "4px 7px",
+                  border: "1px solid var(--border-subtle)",
+                  borderRadius: "var(--radius-sm)",
+                  background: "var(--bg-subtle)",
+                }}
+              >
+                {nativeStateLabel}
+              </span>
+            )
           )}
           {modelLabel && (
             <span

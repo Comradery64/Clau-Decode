@@ -83,4 +83,40 @@ describe("ConversationHeader", () => {
     expect(screen.queryByRole("button", { name: "Native" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Split" })).not.toBeInTheDocument();
   });
+
+  it("makes the native-state chip an amber, clickable Switch-to-Native button when action is needed", () => {
+    const onViewModeChange = vi.fn();
+    render(
+      <ConversationHeader
+        session={session}
+        ownership={null}
+        viewMode="decoded"
+        onViewModeChange={onViewModeChange}
+        nativeStateLabel="Native input required"
+        nativeNeedsAction
+      />,
+    );
+    const chip = screen.getByRole("button", { name: "Native input required" });
+    // Amber recolor branch was taken (the neutral chip uses --border-subtle).
+    expect(chip.getAttribute("style")).toContain("accent-amber");
+    fireEvent.click(chip);
+    expect(onViewModeChange).toHaveBeenCalledWith("native");
+  });
+
+  it("renders the native-state chip as a non-interactive label when no action is needed", () => {
+    render(
+      <ConversationHeader
+        session={session}
+        ownership={null}
+        viewMode="decoded"
+        onViewModeChange={vi.fn()}
+        nativeStateLabel="Model selector open"
+      />,
+    );
+    // Plain label, not a clickable button — no third click target.
+    expect(
+      screen.queryByRole("button", { name: "Model selector open" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Model selector open")).toBeInTheDocument();
+  });
 });
