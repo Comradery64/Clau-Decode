@@ -213,6 +213,20 @@ class Database:
         assert self._conn is not None
         await self._conn.commit()
 
+    async def checkpoint(self) -> None:
+        """Fold the WAL back into the main db and truncate the -wal sidecar.
+
+        ``TRUNCATE`` checkpoints as far as possible then resets
+        ``index.db-wal`` to zero bytes. It is blocked only by an open *read
+        snapshot* on another connection — so it must run from a connection
+        that is not sitting between reads (see ``_periodic_checkpoint`` in
+        server.py). Without periodic truncation the WAL grew to ~22 GB here,
+        because the default ``wal_autocheckpoint`` is passive and was pinned
+        by long-lived reader connections that never released their snapshot.
+        """
+        assert self._conn is not None
+        await self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
     # -----------------------------------------------------------------------
     # Schema
     # -----------------------------------------------------------------------

@@ -551,6 +551,9 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             await db.reset_truncated_titles()
             await db.migrate_project_id_v2()
             await db.migrate_materialize_v1()
+            # No long-lived readers are open yet at startup, so this is the
+            # cheapest moment to TRUNCATE any WAL bloat left by a prior run.
+            await db.checkpoint()
 
         async def _background_scan() -> None:
             async with Database(db_path) as db:
@@ -577,22 +580,24 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             refresh per path (rather than per event) also throttles the FE's
             on-demand refetch, which itself reparses via GET /api/sessions/{id}.
 
-            A single long-lived DB connection is reused across iterations
-            rather than reopened per event.
+            A fresh DB connection is opened per burst (not one held for the
+            life of the server) so we don't pin a read snapshot between bursts,
+            which would block wal_checkpoint(TRUNCATE) and let index.db-wal
+            grow without bound.
             """
             COALESCE_WINDOW_S = 0.2
-            async with Database(db_path) as db:
+            while True:
+                first = await _watch_queue.get()
+                paths = {first.path}
+                # Let the rest of the burst land, then coalesce by path.
+                await asyncio.sleep(COALESCE_WINDOW_S)
                 while True:
-                    first = await _watch_queue.get()
-                    paths = {first.path}
-                    # Let the rest of the burst land, then coalesce by path.
-                    await asyncio.sleep(COALESCE_WINDOW_S)
-                    while True:
-                        try:
-                            nxt = _watch_queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
-                        paths.add(nxt.path)
+                    try:
+                        nxt = _watch_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    paths.add(nxt.path)
+                async with Database(db_path) as db:
                     for path in paths:
                         try:
                             await _scan_one(db, path)
@@ -615,18 +620,42 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         PERIODIC_RESCAN_S = 60.0
 
         async def _periodic_rescan() -> None:
-            async with Database(db_path) as db:
-                while True:
-                    await asyncio.sleep(PERIODIC_RESCAN_S)
-                    try:
+            while True:
+                await asyncio.sleep(PERIODIC_RESCAN_S)
+                changed = 0
+                try:
+                    # Fresh connection per pass so we don't hold a read
+                    # snapshot across the sleep, which would block
+                    # wal_checkpoint(TRUNCATE) and let index.db-wal grow.
+                    async with Database(db_path) as db:
                         changed = await do_scan(db)
-                    except Exception as exc:
-                        print(f"Warning: periodic rescan failed: {exc}")
-                        continue
-                    if changed:
-                        _bus.publish({"type": "refresh", "path": "periodic-rescan"})
+                except Exception as exc:
+                    print(f"Warning: periodic rescan failed: {exc}")
+                    continue
+                if changed:
+                    _bus.publish({"type": "refresh", "path": "periodic-rescan"})
 
         _state["periodic_rescan_task"] = asyncio.create_task(_periodic_rescan())
+
+        # Fold the WAL back into index.db and truncate index.db-wal on a timer.
+        # SQLite's default wal_autocheckpoint is passive and only fires on
+        # commit, so it is easily pinned by a held read snapshot — and the
+        # PtyManager/DriverManager connection below lives for the whole server
+        # lifetime. This dedicated short-lived connection owns no snapshot, so
+        # TRUNCATE can shrink the WAL that autocheckpoint can't. Without it
+        # index.db-wal grew to ~22 GB.
+        PERIODIC_CHECKPOINT_S = 600.0
+
+        async def _periodic_checkpoint() -> None:
+            while True:
+                await asyncio.sleep(PERIODIC_CHECKPOINT_S)
+                try:
+                    async with Database(db_path) as db:
+                        await db.checkpoint()
+                except Exception as exc:
+                    print(f"Warning: periodic checkpoint failed: {exc}")
+
+        _state["periodic_checkpoint_task"] = asyncio.create_task(_periodic_checkpoint())
 
         async def _refresh_pricing() -> None:
             await _pricing_strat.refresh()
