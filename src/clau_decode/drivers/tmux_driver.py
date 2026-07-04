@@ -59,6 +59,16 @@ SUBMIT_SETTLE_S = 0.4
 # tmux session names forbid "." and ":" and must be otherwise shell-safe.
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_-]")
 
+# Device-Attributes *responses* that xterm.js auto-emits when it sees a DA
+# query in the output stream (Primary ``ESC[?...c`` / Secondary ``ESC[>...c``;
+# xterm's DA2 identity is ``ESC[>0;276;0c``). Over a normal terminal the app
+# consumes its own DA reply inline, but through the web bridge the reply
+# round-trips too slowly and lands in the pane as literal input (``0;276;0c``
+# junk in Codex's composer — one per attach/resize). tmux already answers the
+# pane's DA on its behalf, so these client replies are pure cruft: drop them
+# from the raw-input path. A real keystroke never contains a DA response.
+_TERMINAL_REPORT_RE = re.compile(rb"\x1b\[[?>][0-9;]*c")
+
 # ---------------------------------------------------------------------------
 # Codex TUI markers — captured from the real binary in the Phase-4 spike.
 # Matched against clean ``capture-pane -p`` (no SGR). Order in capture_state
@@ -243,6 +253,11 @@ class TmuxDriver(ProviderDriver):
         if not await self.has_session():
             raise RuntimeError(f"cannot attach: no tmux session for {self.session_id}")
 
+        # Hide tmux's own status bar — the Native view shows only the driven
+        # TUI, never tmux chrome. Set here (not just at spawn) so reconnecting
+        # to a session created before this fix also drops the bar. Idempotent.
+        await self._tmux("set-option", "-t", self._tmux_session, "status", "off")
+
         master_fd, slave_fd = pty.openpty()
         try:
             _set_winsize(slave_fd, self._rows, self._cols)
@@ -322,9 +337,14 @@ class TmuxDriver(ProviderDriver):
         await self._tmux("send-keys", "-t", self._tmux_session, "Enter")
 
     async def write_input(self, data: bytes) -> None:
-        """Forward raw bytes to the pane via the attached client's pty."""
+        """Forward raw bytes to the pane via the attached client's pty.
+
+        Strips xterm's spurious Device-Attributes replies first (see
+        ``_TERMINAL_REPORT_RE``) so they don't corrupt the pane's input line.
+        """
         if self._dead or self._master_fd < 0:
             raise RuntimeError(f"driver for {self.session_id} is not attached")
+        data = _TERMINAL_REPORT_RE.sub(b"", data)
         if not data:
             return
         try:
