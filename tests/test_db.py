@@ -657,3 +657,114 @@ class TestProviderMigration:
         sessions = await db.get_sessions()
         assert len(sessions) == 1
         assert sessions[0].provider == "claude"
+
+
+class TestIncrementalUpsert:
+    """upsert_messages rewrites only rows whose content actually changed,
+    leaving unchanged rows (and their rowids) untouched."""
+
+    async def _rows(self, db, session_id):
+        async with db._conn.execute(
+            "SELECT id, rowid, content_hash FROM messages WHERE session_id=?",
+            (session_id,),
+        ) as cur:
+            return {
+                r["id"]: (r["rowid"], r["content_hash"]) for r in await cur.fetchall()
+            }
+
+    async def _fts(self, db, session_id):
+        async with db._conn.execute(
+            "SELECT message_id, content FROM messages_fts WHERE session_id=?",
+            (session_id,),
+        ) as cur:
+            return {r["message_id"]: r["content"] for r in await cur.fetchall()}
+
+    async def test_initial_index_populates_hash_and_fts(
+        self, db, sample_session, sample_messages
+    ):
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+        rows = await self._rows(db, sample_session.id)
+        assert set(rows) == {"msg-0001", "msg-0002"}
+        assert all(h for _, h in rows.values()), "content_hash must be backfilled"
+        assert "Hello" in (await self._fts(db, sample_session.id))["msg-0001"]
+
+    async def test_noop_reparse_rewrites_nothing(
+        self, db, sample_session, sample_messages
+    ):
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+        before = await self._rows(db, sample_session.id)
+        await db.upsert_messages(sample_messages)  # identical re-parse
+        assert await self._rows(db, sample_session.id) == before  # same rowids + hashes
+
+    async def test_changed_row_updates_fts_but_keeps_sibling_rowid(
+        self, db, sample_session, sample_messages
+    ):
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+        before = await self._rows(db, sample_session.id)
+        edited = list(sample_messages)
+        edited[1] = edited[1].model_copy(
+            update={"content_blocks": [TextBlock(text="Edited reply about penguins")]}
+        )
+        await db.upsert_messages(edited)
+        after = await self._rows(db, sample_session.id)
+        # unchanged sibling keeps its rowid (ordering stays stable)…
+        assert after["msg-0001"] == before["msg-0001"]
+        # …changed row's hash moved and its FTS reflects the new text only
+        assert after["msg-0002"][1] != before["msg-0002"][1]
+        fts = await self._fts(db, sample_session.id)
+        assert "penguins" in fts["msg-0002"]
+        assert "help you today" not in fts["msg-0002"]
+
+    async def test_appended_message_is_added(self, db, sample_session, sample_messages):
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+        extra = Message(
+            id="msg-0003",
+            session_id=sample_session.id,
+            parent_id="msg-0002",
+            role="user",
+            content_blocks=[TextBlock(text="Follow-up question")],
+            timestamp=datetime(2026, 1, 1, 10, 1, 0, tzinfo=timezone.utc),
+        )
+        await db.upsert_messages(sample_messages + [extra])
+        assert "msg-0003" in await self._rows(db, sample_session.id)
+
+    async def test_removed_message_and_its_fts_are_deleted(
+        self, db, sample_session, sample_messages
+    ):
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+        await db.upsert_messages(sample_messages[:1])  # drop msg-0002
+        assert set(await self._rows(db, sample_session.id)) == {"msg-0001"}
+        assert "msg-0002" not in await self._fts(db, sample_session.id)
+
+    async def test_token_backfill_triggers_rewrite(
+        self, db, sample_session, sample_messages
+    ):
+        """Same content, backfilled usage → hash changes → row is rewritten."""
+        from clau_decode.models import TokenUsage
+
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+        before = await self._rows(db, sample_session.id)
+        edited = list(sample_messages)
+        edited[1] = edited[1].model_copy(
+            update={
+                "usage": TokenUsage(
+                    input_tokens=10,
+                    output_tokens=20,
+                    cache_creation_input_tokens=0,
+                    cache_read_input_tokens=0,
+                )
+            }
+        )
+        await db.upsert_messages(edited)
+        after = await self._rows(db, sample_session.id)
+        assert after["msg-0002"][1] != before["msg-0002"][1]  # hash moved
+        async with db._conn.execute(
+            "SELECT output_tokens FROM messages WHERE id='msg-0002'"
+        ) as cur:
+            assert (await cur.fetchone())[0] == 20
