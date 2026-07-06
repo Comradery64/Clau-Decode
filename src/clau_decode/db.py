@@ -31,6 +31,7 @@ SOLID notes:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -175,6 +176,77 @@ def _str_to_dt(s: Optional[str]) -> Optional[datetime]:
 
 
 # ---------------------------------------------------------------------------
+# messages upsert helpers (incremental)
+# ---------------------------------------------------------------------------
+
+# Column order for the messages row tuple. content_hash is last and derived
+# (not read off the Message) — it is appended by upsert_messages.
+_MESSAGE_COLUMNS: tuple[str, ...] = (
+    "id",
+    "session_id",
+    "parent_id",
+    "role",
+    "content_json",
+    "timestamp",
+    "model",
+    "is_sidechain",
+    "is_meta",
+    "cwd",
+    "git_branch",
+    "source_tool_assistant_uuid",
+    "usage_json",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+    "content_hash",
+)
+
+# Upsert by primary key: UPDATE-in-place on conflict (preserves rowid, so the
+# "timestamp ASC, rowid ASC" tie-break in get_session_detail stays stable when
+# only some same-timestamp rows change), INSERT with a fresh rowid otherwise.
+_UPSERT_MESSAGE_SQL = (
+    f"INSERT INTO messages ({', '.join(_MESSAGE_COLUMNS)}) "
+    f"VALUES ({', '.join('?' * len(_MESSAGE_COLUMNS))}) "
+    "ON CONFLICT(id) DO UPDATE SET "
+    + ", ".join(f"{c}=excluded.{c}" for c in _MESSAGE_COLUMNS if c != "id")
+)
+
+
+def _message_row(m: Message) -> tuple:
+    """The messages-table value tuple for *m*, minus the trailing content_hash
+    (order matches :data:`_MESSAGE_COLUMNS` up to but excluding ``content_hash``)."""
+    return (
+        m.id,
+        m.session_id,
+        m.parent_id,
+        m.role,
+        _serialize_content_blocks(m.content_blocks),
+        _dt_to_str(m.timestamp),
+        m.model,
+        1 if m.is_sidechain else 0,
+        1 if m.is_meta else 0,
+        m.cwd,
+        m.git_branch,
+        m.source_tool_assistant_uuid,
+        m.usage.model_dump_json() if m.usage else None,
+        m.usage.input_tokens if m.usage else None,
+        m.usage.output_tokens if m.usage else None,
+        m.usage.cache_creation_input_tokens if m.usage else None,
+        m.usage.cache_read_input_tokens if m.usage else None,
+    )
+
+
+def _row_hash(row: tuple) -> str:
+    """Stable content hash of a :func:`_message_row` tuple. Any change to any
+    persisted field (content, usage/token backfill, model, flags…) changes it,
+    so an unchanged re-parsed row hashes identically and is skipped."""
+    return hashlib.blake2b(
+        json.dumps(row, ensure_ascii=False).encode("utf-8"), digest_size=16
+    ).hexdigest()
+
+
+# ---------------------------------------------------------------------------
 # Database class
 # ---------------------------------------------------------------------------
 
@@ -283,6 +355,7 @@ class Database:
                 output_tokens INTEGER,
                 cache_creation_tokens INTEGER,
                 cache_read_tokens INTEGER,
+                content_hash TEXT,
                 FOREIGN KEY (session_id) REFERENCES sessions(id)
             );
 
@@ -386,6 +459,7 @@ class Database:
         await self._migrate_add_is_fork()
         await self._migrate_add_provider()
         await self._migrate_add_session_meta_flags()
+        await self._migrate_add_content_hash()
 
     async def _ensure_ephemeral_triggers(self) -> None:
         """Create INSERT/UPDATE/DELETE triggers keeping ephemeral_messages_fts in sync.
@@ -448,6 +522,24 @@ class Database:
             if not await cur.fetchone():
                 await self._conn.execute(
                     "ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude'"
+                )
+                await self._conn.commit()
+
+    async def _migrate_add_content_hash(self) -> None:
+        """Idempotent: add content_hash column to messages for incremental upsert.
+
+        Pre-migration rows keep ``content_hash = NULL``; the first incremental
+        ``upsert_messages`` after this runs sees NULL != freshly-computed hash
+        and rewrites each row once, backfilling the column. Subsequent re-parses
+        are then true deltas.
+        """
+        assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT name FROM pragma_table_info('messages') WHERE name='content_hash'"
+        ) as cur:
+            if not await cur.fetchone():
+                await self._conn.execute(
+                    "ALTER TABLE messages ADD COLUMN content_hash TEXT"
                 )
                 await self._conn.commit()
 
@@ -954,81 +1046,102 @@ class Database:
     # -----------------------------------------------------------------------
 
     async def upsert_messages(self, messages: list[Message]) -> None:
-        """Bulk upsert messages and rebuild FTS index entries."""
+        """Incrementally upsert one session's messages + FTS/block-fact indexes.
+
+        Only rows whose persisted content actually changed since the last index
+        are rewritten — detected by comparing a per-row ``content_hash`` against
+        the stored one — instead of rewriting every row and rebuilding the whole
+        session's FTS on each re-parse. On a large, mostly-appended session this
+        turns a full O(N) rewrite (dominated by re-writing every content_json
+        blob) into an O(changed) delta.
+
+        Correctness:
+        - New rows and rows whose hash differs (content edits, streaming
+          completion, usage/token backfill, model/flag changes) are re-upserted.
+        - Rows that vanished from the session (compaction/history rewrite) are
+          hard-deleted, along with their FTS + block-fact entries.
+        - Rows with a stored hash of NULL (pre-``content_hash``-migration) always
+          count as changed, so the first re-parse after migrating backfills the
+          column — a freshly-indexed or just-migrated session behaves exactly
+          like the old bulk path.
+        The upsert is UPDATE-in-place (ON CONFLICT), preserving each unchanged
+        row's rowid so the ``timestamp ASC, rowid ASC`` ordering stays stable.
+        """
         assert self._conn is not None
         if not messages:
             return
 
-        # Get the session_id from the first message — all messages belong to one session
+        # All messages belong to one session.
         session_id = messages[0].session_id
 
-        # Upsert all messages
-        await self._conn.executemany(
-            """
-            INSERT OR REPLACE INTO messages
-                (id, session_id, parent_id, role, content_json, timestamp, model,
-                 is_sidechain, is_meta, cwd, git_branch, source_tool_assistant_uuid,
-                 usage_json, input_tokens, output_tokens, cache_creation_tokens,
-                 cache_read_tokens)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    m.id,
-                    m.session_id,
-                    m.parent_id,
-                    m.role,
-                    _serialize_content_blocks(m.content_blocks),
-                    _dt_to_str(m.timestamp),
-                    m.model,
-                    1 if m.is_sidechain else 0,
-                    1 if m.is_meta else 0,
-                    m.cwd,
-                    m.git_branch,
-                    m.source_tool_assistant_uuid,
-                    m.usage.model_dump_json() if m.usage else None,
-                    m.usage.input_tokens if m.usage else None,
-                    m.usage.output_tokens if m.usage else None,
-                    m.usage.cache_creation_input_tokens if m.usage else None,
-                    m.usage.cache_read_input_tokens if m.usage else None,
-                )
-                for m in messages
-            ],
-        )
+        # Build each row once and hash it; diff against the stored hashes.
+        rows = {m.id: _message_row(m) for m in messages}
+        hashes = {mid: _row_hash(row) for mid, row in rows.items()}
 
-        # Rebuild FTS for this session: delete existing, re-insert
-        await self._conn.execute(
-            "DELETE FROM messages_fts WHERE session_id = ?", (session_id,)
-        )
+        async with self._conn.execute(
+            "SELECT id, content_hash FROM messages WHERE session_id = ?",
+            (session_id,),
+        ) as cur:
+            stored = {r["id"]: r["content_hash"] for r in await cur.fetchall()}
 
-        fts_rows = []
-        for m in messages:
+        changed = [mid for mid, h in hashes.items() if stored.get(mid) != h]
+        removed = [mid for mid in stored if mid not in rows]
+
+        if not changed and not removed:
+            return  # pure no-op re-parse — nothing to write
+
+        # 1. Upsert only the changed/new rows (content_hash appended per column order).
+        if changed:
+            await self._conn.executemany(
+                _UPSERT_MESSAGE_SQL,
+                [rows[mid] + (hashes[mid],) for mid in changed],
+            )
+
+        # 2. Drop FTS + block facts for every touched id, then re-insert for the
+        #    changed ones. message_id is UNINDEXED in fts5, but scanning one
+        #    session's rows for a small IN-list is cheap next to a full rebuild.
+        touched = changed + removed
+        for i in range(0, len(touched), 500):
+            chunk = touched[i : i + 500]
+            placeholders = ",".join("?" * len(chunk))
+            await self._conn.execute(
+                f"DELETE FROM messages_fts WHERE message_id IN ({placeholders})",
+                chunk,
+            )
+            await self._conn.execute(
+                f"DELETE FROM message_blocks WHERE message_id IN ({placeholders})",
+                chunk,
+            )
+
+        by_id = {m.id: m for m in messages}
+        fts_rows: list[tuple] = []
+        block_rows: list[tuple] = []
+        for mid in changed:
+            m = by_id[mid]
             text = _extract_text_for_fts(m.content_blocks)
             if text.strip():
                 fts_rows.append((text, m.session_id, m.id, m.role))
+            block_rows.extend(_block_facts(m.id, m.session_id, m.content_blocks))
 
         if fts_rows:
             await self._conn.executemany(
                 "INSERT INTO messages_fts (content, session_id, message_id, role) VALUES (?, ?, ?, ?)",
                 fts_rows,
             )
-
-        # Rebuild materialized block facts for this session (same delete +
-        # re-insert pattern as FTS, so a re-parse replaces stale rows).
-        await self._conn.execute(
-            "DELETE FROM message_blocks WHERE session_id = ?", (session_id,)
-        )
-        block_rows = [
-            row
-            for m in messages
-            for row in _block_facts(m.id, m.session_id, m.content_blocks)
-        ]
         if block_rows:
             await self._conn.executemany(
                 "INSERT OR REPLACE INTO message_blocks (message_id, session_id, "
                 "block_index, btype, tool_name, file_path, result_chars, tool_use_id) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 block_rows,
+            )
+
+        # 3. Hard-delete rows that vanished from the session (compaction/rewrite).
+        for i in range(0, len(removed), 500):
+            chunk = removed[i : i + 500]
+            placeholders = ",".join("?" * len(chunk))
+            await self._conn.execute(
+                f"DELETE FROM messages WHERE id IN ({placeholders})", chunk
             )
 
         await self._conn.commit()
