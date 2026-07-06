@@ -89,6 +89,14 @@ from .watcher import watch_paths
 
 _log = logging.getLogger(__name__)
 
+# Above this, a single live re-index (parse + incremental upsert) is worth
+# surfacing at INFO — it's the fat-tail (large session) cost that a future
+# offset-tail parse would target. Typical small reindexes stay at debug. If
+# these "slow reindex" lines never show up in normal use, the incremental
+# upsert already keeps reindex under the perceptual budget and offset-tailing
+# isn't warranted (phase-2 go/no-go evidence).
+_SLOW_REINDEX_MS = 150.0
+
 
 def _sse_event_data(path: Path | str) -> str:
     """Serialize a file-change path to an SSE JSON payload.
@@ -511,17 +519,36 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             project_dir = session_path.parent
             root_path = project_dir.parent.parent  # <root>/projects/<proj>/<session>
             project = build_project_from_dir(project_dir.name, str(root_path))
-            current_mtime = session_path.stat().st_mtime
+            stat = session_path.stat()
+            current_mtime = stat.st_mtime
             stored_mtime = await db.get_session_mtime(session_path.stem)
             if stored_mtime == current_mtime:
                 return
             adapter = registry.adapter_for_path(session_path) or registry.get("claude")
+            _t0 = time.perf_counter()
             session, messages = await asyncio.to_thread(adapter.parse, session_path)
+            parse_ms = (time.perf_counter() - _t0) * 1000
             session.project_id = project.id
             project.session_count += 1
             await db.upsert_project(project)
             await db.upsert_session(session, file_mtime=current_mtime)
+            _t1 = time.perf_counter()
             await db.upsert_messages(messages)
+            upsert_ms = (time.perf_counter() - _t1) * 1000
+            # Phase-2 go/no-go: the incremental upsert makes upsert_ms tiny, so a
+            # slow reindex now means the O(N) parse dominates — exactly what an
+            # offset-tail parse would remove. Only the fat-tail cases log at INFO.
+            total_ms = parse_ms + upsert_ms
+            if total_ms >= _SLOW_REINDEX_MS:
+                _log.info(
+                    "slow reindex %s %.1fMB %dmsg: parse=%.0fms upsert=%.0fms total=%.0fms",
+                    session_path.stem[:8],
+                    stat.st_size / 1_048_576,
+                    len(messages),
+                    parse_ms,
+                    upsert_ms,
+                    total_ms,
+                )
         except Exception as exc:
             print(f"Warning: skipping {session_path}: {exc}")
 
