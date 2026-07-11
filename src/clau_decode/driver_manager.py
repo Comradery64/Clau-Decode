@@ -170,9 +170,7 @@ class DriverManager:
                     }
                 )
             except Exception as exc:  # pragma: no cover — defensive
-                _log.warning(
-                    "driver: state poll raised (session %s): %s", sid, exc
-                )
+                _log.warning("driver: state poll raised (session %s): %s", sid, exc)
 
     # ------------------------------------------------------------------
     # Output fanout

@@ -33,7 +33,9 @@ FAKE_CLI = os.path.join(os.path.dirname(__file__), "fake_cli.py")
 def _patch_fake_build(monkeypatch):
     """Make DriverManager build TmuxDrivers wired to the fake CLI."""
 
-    def _build(provider, session_id, cwd, *, model=None, resume_uuid=None, fresh=False, **kw):
+    def _build(
+        provider, session_id, cwd, *, model=None, resume_uuid=None, fresh=False, **kw
+    ):
         # `fresh`/`resume_uuid`/`model` only shape the real spawn argv; the fake
         # CLI ignores them. Consume them so they don't leak into TmuxDriver.
         return TmuxDriver(

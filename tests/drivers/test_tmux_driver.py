@@ -147,7 +147,9 @@ async def test_write_input_strips_device_attribute_replies(monkeypatch):
     line. Real keystrokes around them pass through untouched."""
     d = build_driver("codex", "sid", "/tmp")
     written: list[bytes] = []
-    monkeypatch.setattr(tmux_mod.os, "write", lambda fd, buf: written.append(bytes(buf)) or len(buf))
+    monkeypatch.setattr(
+        tmux_mod.os, "write", lambda fd, buf: written.append(bytes(buf)) or len(buf)
+    )
     d._master_fd = 7  # any non-negative fd; os.write is stubbed
     d._dead = False
     await d.write_input(b"\x1b[>0;276;0c")  # pure DA2 reply → fully stripped → no write

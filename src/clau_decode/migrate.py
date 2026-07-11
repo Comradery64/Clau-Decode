@@ -708,7 +708,7 @@ def _cobble_examples(
     for cwd in cwds:
         if cwd != frm and not cwd.startswith(frm + "/"):
             continue
-        new = to + cwd[len(frm):]
+        new = to + cwd[len(frm) :]
         if doubled(new) and not doubled(cwd):
             out.append((cwd, new))
         if len(out) >= limit:
@@ -1009,7 +1009,9 @@ def _guided_merge(args: argparse.Namespace, bundle: Path) -> int:
                     "   This is the classic mistake that scrambles history. Verbatim+\n"
                     "   symlinks (restart and pick [V]) avoids it entirely."
                 )
-                if not _confirm("Proceed with this cobbling rewrite anyway?", default=False):
+                if not _confirm(
+                    "Proceed with this cobbling rewrite anyway?", default=False
+                ):
                     print("Aborted — nothing written. Re-run and choose [V]erbatim.")
                     return 0
 
