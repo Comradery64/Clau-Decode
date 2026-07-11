@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import uuid
 
@@ -34,7 +35,29 @@ from clau_decode.drivers import tmux_driver as tmux_mod
 _HAS_TMUX = shutil.which("tmux") is not None
 _HAS_CODEX = shutil.which("codex") is not None
 
-requires_tmux = pytest.mark.skipif(not _HAS_TMUX, reason="tmux not on PATH")
+
+def _terminal_supports_clear() -> bool:
+    """The driver bridges tmux via a `tmux attach` client, which needs a
+    terminfo that has the `clear` capability. Headless CI has tmux on PATH but
+    no usable terminal (TERM unset/dumb), so attach fails with
+    "terminal does not support clear". Probe that exact capability (`tput
+    clear`) so these integration tests run where a real terminal exists and
+    skip where it doesn't, instead of hard-failing."""
+    try:
+        return (
+            subprocess.run(["tput", "clear"], capture_output=True, timeout=5).returncode
+            == 0
+        )
+    except Exception:
+        return False
+
+
+_TMUX_USABLE = _HAS_TMUX and _terminal_supports_clear()
+
+requires_tmux = pytest.mark.skipif(
+    not _TMUX_USABLE,
+    reason="needs tmux + a terminal with `clear` (TERM); skipped on headless CI",
+)
 
 FAKE_CLI = os.path.join(os.path.dirname(__file__), "fake_cli.py")
 
@@ -141,6 +164,23 @@ def test_session_name_sanitised():
     assert "." not in d._tmux_session and ":" not in d._tmux_session
 
 
+async def test_write_input_strips_device_attribute_replies(monkeypatch):
+    """xterm's DA replies (ESC[>0;276;0c / ESC[?1;2c) must be dropped before
+    reaching the pane — otherwise they land as literal cruft in Codex's input
+    line. Real keystrokes around them pass through untouched."""
+    d = build_driver("codex", "sid", "/tmp")
+    written: list[bytes] = []
+    monkeypatch.setattr(
+        tmux_mod.os, "write", lambda fd, buf: written.append(bytes(buf)) or len(buf)
+    )
+    d._master_fd = 7  # any non-negative fd; os.write is stubbed
+    d._dead = False
+    await d.write_input(b"\x1b[>0;276;0c")  # pure DA2 reply → fully stripped → no write
+    assert written == []
+    await d.write_input(b"hi\x1b[?1;2cthere")  # DA1 reply embedded in real text
+    assert b"".join(written) == b"hithere"
+
+
 # ---------------------------------------------------------------------------
 # Mechanics — real tmux, fake CLI
 # ---------------------------------------------------------------------------
@@ -186,6 +226,19 @@ async def test_spawn_capture_idle_then_kill():
         await d.kill()
     assert not d.is_alive()
     assert not await d.has_session()
+
+
+@requires_tmux
+async def test_spawn_disables_tmux_status_bar():
+    """The Native view shows only the driven TUI, never tmux's status bar."""
+    d = _fake_driver()
+    try:
+        await d.spawn(cols=80, rows=24)
+        rc, out = await d._tmux("show-options", "-t", d._tmux_session, "status")
+        assert rc == 0
+        assert out.decode().strip().split() == ["status", "off"]
+    finally:
+        await d.kill()
 
 
 @requires_tmux

@@ -22,9 +22,26 @@ from clau_decode.events_bus import EventBroadcaster
 from clau_decode import driver_manager as dm_mod
 
 import shutil
+import subprocess
+
+
+def _terminal_supports_clear() -> bool:
+    """tmux-backed drivers bridge via a `tmux attach` client that needs a
+    terminfo with `clear`. Headless CI has tmux but no usable terminal (TERM
+    unset/dumb) → attach fails ("terminal does not support clear"). Probe that
+    capability so these integration tests skip cleanly there instead of failing."""
+    try:
+        return (
+            subprocess.run(["tput", "clear"], capture_output=True, timeout=5).returncode
+            == 0
+        )
+    except Exception:
+        return False
+
 
 requires_tmux = pytest.mark.skipif(
-    shutil.which("tmux") is None, reason="tmux not on PATH"
+    shutil.which("tmux") is None or not _terminal_supports_clear(),
+    reason="needs tmux + a terminal with `clear` (TERM); skipped on headless CI",
 )
 
 FAKE_CLI = os.path.join(os.path.dirname(__file__), "fake_cli.py")
@@ -33,7 +50,9 @@ FAKE_CLI = os.path.join(os.path.dirname(__file__), "fake_cli.py")
 def _patch_fake_build(monkeypatch):
     """Make DriverManager build TmuxDrivers wired to the fake CLI."""
 
-    def _build(provider, session_id, cwd, *, model=None, resume_uuid=None, fresh=False, **kw):
+    def _build(
+        provider, session_id, cwd, *, model=None, resume_uuid=None, fresh=False, **kw
+    ):
         # `fresh`/`resume_uuid`/`model` only shape the real spawn argv; the fake
         # CLI ignores them. Consume them so they don't leak into TmuxDriver.
         return TmuxDriver(
