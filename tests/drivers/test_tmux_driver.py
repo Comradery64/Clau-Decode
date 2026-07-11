@@ -45,9 +45,7 @@ def _terminal_supports_clear() -> bool:
     skip where it doesn't, instead of hard-failing."""
     try:
         return (
-            subprocess.run(
-                ["tput", "clear"], capture_output=True, timeout=5
-            ).returncode
+            subprocess.run(["tput", "clear"], capture_output=True, timeout=5).returncode
             == 0
         )
     except Exception:

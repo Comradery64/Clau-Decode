@@ -32,9 +32,7 @@ def _terminal_supports_clear() -> bool:
     capability so these integration tests skip cleanly there instead of failing."""
     try:
         return (
-            subprocess.run(
-                ["tput", "clear"], capture_output=True, timeout=5
-            ).returncode
+            subprocess.run(["tput", "clear"], capture_output=True, timeout=5).returncode
             == 0
         )
     except Exception:
