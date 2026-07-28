@@ -88,7 +88,9 @@ def build_project_from_dir(dir_name: str, data_source: str) -> Project:
     )
 
 
-async def scan_paths(root_paths: list[Path]) -> AsyncIterator[tuple[Project, Path]]:
+async def scan_paths(
+    root_paths: list[Path], include_subagents: bool = False
+) -> AsyncIterator[tuple[Project, Path]]:
     """Yield (project, session_path) for every session file found under root_paths.
 
     For each root path:
@@ -96,11 +98,17 @@ async def scan_paths(root_paths: list[Path]) -> AsyncIterator[tuple[Project, Pat
       - Looks for a ``projects/`` subdirectory.
       - Iterates over every immediate child directory inside ``projects/``.
       - Within each project directory, yields one tuple per ``*.jsonl`` file.
+      - If ``include_subagents`` is set, also yields sub-agent (Task tool)
+        transcripts nested under ``<session>/subagents/*.jsonl`` — these are
+        skipped by default since the top-level glob is intentionally
+        non-recursive.
 
     This is an async generator so it can be consumed with ``async for``.
 
     Args:
         root_paths: List of root directories to scan (e.g. ``[Path("~/.claude")]``).
+        include_subagents: Opt-in second pass that also yields sub-agent
+            transcript files (see ``AppConfig.include_subagent_chats``).
 
     Yields:
         Tuples of (Project, Path) where Path points to a ``.jsonl`` session file.
@@ -123,3 +131,9 @@ async def scan_paths(root_paths: list[Path]) -> AsyncIterator[tuple[Project, Pat
                 f for f in project_dir.glob("*.jsonl") if ".bak." not in f.name
             ):
                 yield project, jsonl_file
+
+            if include_subagents:
+                for jsonl_file in sorted(project_dir.glob("*/subagents/*.jsonl")):
+                    if ".bak." in jsonl_file.name:
+                        continue
+                    yield project, jsonl_file

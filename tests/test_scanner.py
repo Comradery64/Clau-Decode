@@ -88,6 +88,63 @@ class TestScanPaths:
         # Originals still found
         assert "aaaaaaaa-0000-0000-0000-000000000001.jsonl" in results
 
+    async def test_include_subagents_off_by_default(self, fake_claude_dir):
+        """Sub-agent transcripts are never yielded unless opted in."""
+        from clau_decode.scanner import scan_paths
+
+        proj_dir = fake_claude_dir / "projects" / "-Users-alice-project-foo"
+        subagents_dir = (
+            proj_dir / "aaaaaaaa-0000-0000-0000-000000000001" / "subagents"
+        )
+        subagents_dir.mkdir(parents=True)
+        (subagents_dir / "agent-xyz.jsonl").write_text(
+            '{"sessionId":"aaaaaaaa-0000-0000-0000-000000000001","isSidechain":true}\n'
+        )
+
+        results = []
+        async for _, path in scan_paths([fake_claude_dir]):
+            results.append(path)
+        assert not any("subagents" in path.parts for path in results)
+
+    async def test_include_subagents_on_yields_subagent_files(self, fake_claude_dir):
+        """With include_subagents=True, agent-*.jsonl files under
+        <session>/subagents/ are yielded in addition to the top-level sessions."""
+        from clau_decode.scanner import scan_paths
+
+        proj_dir = fake_claude_dir / "projects" / "-Users-alice-project-foo"
+        subagents_dir = (
+            proj_dir / "aaaaaaaa-0000-0000-0000-000000000001" / "subagents"
+        )
+        subagents_dir.mkdir(parents=True)
+        (subagents_dir / "agent-xyz.jsonl").write_text(
+            '{"sessionId":"aaaaaaaa-0000-0000-0000-000000000001","isSidechain":true}\n'
+        )
+
+        results = []
+        async for _, path in scan_paths([fake_claude_dir], include_subagents=True):
+            results.append(path)
+        subagent_paths = [p for p in results if "subagents" in p.parts]
+        assert len(subagent_paths) == 1
+        assert subagent_paths[0].name == "agent-xyz.jsonl"
+        # Top-level sessions are still found alongside the subagent file.
+        assert len(results) == 4
+
+    async def test_include_subagents_skips_backup_files(self, fake_claude_dir):
+        """Backup subagent files (*.bak.*.jsonl) are excluded too."""
+        from clau_decode.scanner import scan_paths
+
+        proj_dir = fake_claude_dir / "projects" / "-Users-alice-project-foo"
+        subagents_dir = (
+            proj_dir / "aaaaaaaa-0000-0000-0000-000000000001" / "subagents"
+        )
+        subagents_dir.mkdir(parents=True)
+        (subagents_dir / "agent-xyz.bak.20260505_120000.jsonl").write_text("{}\n")
+
+        results = []
+        async for _, path in scan_paths([fake_claude_dir], include_subagents=True):
+            results.append(path)
+        assert not any(".bak." in path.name for path in results)
+
 
 class TestBuildProjectFromDir:
     def test_basic_path_parsing(self):

@@ -331,7 +331,16 @@ def build_message_tree(messages: list[Message]) -> list[MessageTree]:
             # Sidechain: always attach to parent
             if m.parent_id and m.parent_id in nodes:
                 nodes[m.parent_id].children.append(node)
-            # If parent not found, treat as orphan root (edge case)
+            # Fallback for merged sub-agent transcripts (include_subagent_chats):
+            # the local-root message of an ingested agent-*.jsonl file has a
+            # parent_id that only exists in the PARENT session's own file, so
+            # it never resolves against this node map. source_tool_assistant_uuid
+            # (set at ingest time from the sub-agent's meta.json toolUseId — see
+            # server.py's _ingest_subagent_file) points at the parent assistant
+            # message instead; attach there if it resolves.
+            elif m.source_tool_assistant_uuid and m.source_tool_assistant_uuid in nodes:
+                nodes[m.source_tool_assistant_uuid].children.append(node)
+            # Neither resolved: orphan root (edge case)
             else:
                 roots.append(node)
         elif m.parent_id is None:

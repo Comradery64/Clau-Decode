@@ -439,6 +439,15 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     # so that concurrent/queued scan tasks never re-upsert a deleted session.
     # Scoped to the create_app() closure — one set per app instance.
     _deleted_tombstones: set[str] = set()
+    # In-memory mtime cache for sub-agent transcript files (include_subagent_chats).
+    # These files never get a `sessions` row (see _ingest_subagent_file — they
+    # share the PARENT session's id, so upserting a `sessions` row for them
+    # would corrupt it), so db.get_session_mtime() has nowhere to store their
+    # mtime. Without this, the periodic rescan would re-parse every sub-agent
+    # file on every pass forever. Process-lifetime only (not persisted) — a
+    # restart just reprocesses once, which is harmless since ingest is
+    # idempotent (see Database.merge_messages).
+    _subagent_mtimes: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -447,6 +456,66 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     def _all_scan_roots() -> list[Path]:
         """User-configured paths."""
         return [Path(p).expanduser() for p in _state["config"].get_all_scan_paths()]
+
+    def _is_subagent_path(session_path: Path) -> bool:
+        """True for <session>/subagents/agent-*.jsonl transcript files."""
+        return session_path.parent.name == "subagents"
+
+    async def _ingest_subagent_file(db: Database, session_path: Path) -> None:
+        """Parse a sub-agent (Task tool) transcript and merge its messages
+        into the PARENT session — never as a session of its own.
+
+        Every line in an ``agent-*.jsonl`` file carries the parent session's
+        uuid as its ``sessionId`` (see ``parser._session_id_from_content``),
+        so ``session.id`` here already equals the parent's id. That means we
+        must NOT call ``upsert_session``/``upsert_project`` — doing so would
+        overwrite the parent session's row with metadata scraped from just
+        this sub-agent's messages (wrong title, cwd, message_count,
+        file_path). We only ever insert the messages themselves, via
+        ``merge_messages`` (not ``upsert_messages``, which does a
+        session-scoped delete that would wipe the parent's OTHER messages
+        from the FTS/message_blocks indexes).
+
+        Links the sub-agent's local-root message(s) to the parent assistant
+        message that spawned them, via the sibling ``agent-<id>.meta.json``'s
+        ``toolUseId`` — so ``build_message_tree``'s fallback (parser.py) can
+        nest them under the right node even though their own ``parent_id``
+        doesn't resolve inside this file. Missing/unresolvable meta.json is
+        not fatal: the messages still get ingested and simply surface as an
+        orphan sidechain root.
+        """
+        adapter = registry.adapter_for_path(session_path) or registry.get("claude")
+        session, messages = await asyncio.to_thread(adapter.parse, session_path)
+
+        meta_path = session_path.parent / f"{session_path.stem}.meta.json"
+        tool_use_id: str | None = None
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                tool_use_id = meta.get("toolUseId")
+            except (OSError, json.JSONDecodeError) as exc:
+                _log.debug("Could not read %s: %s", meta_path, exc)
+
+        if tool_use_id:
+            try:
+                parent_message_id = await db.find_message_by_tool_use_id(
+                    session.id, tool_use_id
+                )
+            except Exception as exc:
+                _log.debug(
+                    "Could not resolve toolUseId %s for %s: %s",
+                    tool_use_id,
+                    session_path,
+                    exc,
+                )
+                parent_message_id = None
+            if parent_message_id:
+                local_ids = {m.id for m in messages}
+                for m in messages:
+                    if m.parent_id not in local_ids:
+                        m.source_tool_assistant_uuid = parent_message_id
+
+        await db.merge_messages(messages)
 
     async def do_scan(db: Database) -> int:
         """Scan all configured paths and upsert new / changed sessions into DB.
@@ -457,10 +526,29 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         """
         MAX_SCAN_SIZE = 20 * 1024 * 1024  # skip files > 20 MB; loaded on demand instead
         changed = 0
+        include_subagents = _state["config"].include_subagent_chats
         for adapter in registry.all_adapters():
             roots = adapter.configured_roots(_state["config"])
-            async for project, session_path in adapter.discover(roots):
+            async for project, session_path in adapter.discover(
+                roots, include_subagents=include_subagents
+            ):
                 if session_path.stem in _deleted_tombstones:
+                    continue
+                if _is_subagent_path(session_path):
+                    # Merged into the parent session, never its own row — see
+                    # _ingest_subagent_file. Tracked via an in-memory mtime
+                    # cache since there's no `sessions` row to stash it on.
+                    key = str(session_path)
+                    current_mtime = session_path.stat().st_mtime
+                    if _subagent_mtimes.get(key) == current_mtime:
+                        continue
+                    try:
+                        await _ingest_subagent_file(db, session_path)
+                        _subagent_mtimes[key] = current_mtime
+                        changed += 1
+                        await asyncio.sleep(0)
+                    except Exception as exc:
+                        print(f"Warning: skipping subagent {session_path}: {exc}")
                     continue
                 current_mtime = session_path.stat().st_mtime
                 stored_mtime = await db.get_session_mtime(session_path.stem)
@@ -502,10 +590,30 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         Much faster than do_scan for live updates: one stat + one DB lookup
         instead of iterating every session file to find what changed.
         Path structure assumed: <root>/projects/<project-dir>/<session>.jsonl
+
+        Also the watcher's per-file entry point: ``watch_paths`` (watcher.py)
+        uses ``watchfiles.awatch``, which recurses through every subdirectory
+        and filters purely on the ``.jsonl`` suffix — so sub-agent transcript
+        files already flow through here with no separate wiring needed. Gated
+        on ``include_subagent_chats`` below so the opt-in is honored on the
+        live-watch path too.
         """
         if not session_path.exists() or session_path.suffix != ".jsonl":
             return
         if session_path.stem in _deleted_tombstones:
+            return
+        if _is_subagent_path(session_path):
+            if not _state["config"].include_subagent_chats:
+                return
+            key = str(session_path)
+            current_mtime = session_path.stat().st_mtime
+            if _subagent_mtimes.get(key) == current_mtime:
+                return
+            try:
+                await _ingest_subagent_file(db, session_path)
+                _subagent_mtimes[key] = current_mtime
+            except Exception as exc:
+                print(f"Warning: skipping subagent {session_path}: {exc}")
             return
         try:
             project_dir = session_path.parent
@@ -704,7 +812,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
     app = FastAPI(title="Clau-Decode", version="0.1.0", lifespan=lifespan)
     # Session-detail responses are megabytes of JSON for old chats; gzip cuts
     # transfer time by ~10x. minimum_size avoids overhead for tiny payloads.
-    app.add_middleware(GZipMiddleware, minimum_size=1024)
+    # Localhost-only app, so there's no network to save bytes on: default
+    # compresslevel=9 was pure CPU cost blocking the event loop on large JSON
+    # bodies (measured ~3.4s->~1s); level 1 keeps most of the size savings cheaply.
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=1)
 
     # Pending-session map (issue #9 fix): /api/sessions/new mints metadata into
     # this dict; the first PTY submit for that id materializes the session with

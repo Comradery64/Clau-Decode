@@ -47,11 +47,13 @@ class ClaudeAdapter(ProviderAdapter):
 
     # -- Discovery (async generator) ------------------------------------------
 
-    async def discover(self, roots: list[Path]) -> AsyncIterator[tuple[Project, Path]]:
+    async def discover(
+        self, roots: list[Path], include_subagents: bool = False
+    ) -> AsyncIterator[tuple[Project, Path]]:
         """Yield ``(Project, session_file_path)`` by delegating to ``scan_paths``."""
         from ..scanner import scan_paths
 
-        async for item in scan_paths(roots):
+        async for item in scan_paths(roots, include_subagents=include_subagents):
             yield item
 
     # -- Parsing (synchronous) ------------------------------------------------

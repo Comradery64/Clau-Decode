@@ -307,6 +307,118 @@ class TestRefresh:
                 r2 = await client.get("/api/stats")
                 assert r2.json()["total_sessions"] >= 1
 
+    async def test_refresh_merges_subagent_chat_into_parent_when_opted_in(self):
+        """include_subagent_chats=True: a Task-tool sub-agent transcript
+        under <session>/subagents/agent-*.jsonl is merged into the PARENT
+        session — not indexed as a session of its own, and without
+        corrupting the parent's own title/cwd/message metadata."""
+        parent_id = "aaaaaaaa-1111-1111-1111-111111111111"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            db_path = tmp_path / "test.db"
+
+            projects_dir = tmp_path / "root" / "projects" / "-test-project"
+            projects_dir.mkdir(parents=True)
+
+            parent_file = projects_dir / f"{parent_id}.jsonl"
+            parent_file.write_text(
+                "\n".join(
+                    [
+                        '{"type":"custom-title","customTitle":"Parent chat",'
+                        f'"sessionId":"{parent_id}"}}',
+                        '{"parentUuid":null,"isSidechain":false,"type":"user",'
+                        '"message":{"role":"user","content":"Please check status"},'
+                        '"uuid":"main-0001","timestamp":"2026-01-02T10:00:00.000Z",'
+                        f'"isMeta":false,"cwd":"/repo","sessionId":"{parent_id}",'
+                        '"gitBranch":"main"}',
+                        '{"parentUuid":"main-0001","isSidechain":false,'
+                        '"message":{"model":"claude-sonnet-4-6","id":"msg_m1",'
+                        '"type":"message","role":"assistant","content":['
+                        '{"type":"text","text":"I\'ll delegate this."},'
+                        '{"type":"tool_use","id":"toolu_task1","name":"Task",'
+                        '"input":{"prompt":"check status"}}],'
+                        '"stop_reason":"tool_use","usage":{}},"requestId":"req_m1",'
+                        '"type":"assistant","uuid":"main-0002",'
+                        '"timestamp":"2026-01-02T10:00:02.000Z","cwd":"/repo",'
+                        f'"sessionId":"{parent_id}","gitBranch":"main"}}',
+                        "",
+                    ]
+                )
+            )
+
+            subagents_dir = projects_dir / parent_id / "subagents"
+            subagents_dir.mkdir(parents=True)
+            (subagents_dir / "agent-task1.jsonl").write_text(
+                "\n".join(
+                    [
+                        '{"parentUuid":null,"isSidechain":true,"type":"user",'
+                        '"message":{"role":"user","content":"check status"},'
+                        '"uuid":"side-0001","timestamp":"2026-01-02T10:00:03.000Z",'
+                        f'"isMeta":false,"cwd":"/repo","sessionId":"{parent_id}",'
+                        '"gitBranch":"main"}',
+                        '{"parentUuid":"side-0001","isSidechain":true,'
+                        '"message":{"model":"claude-haiku-4-5","id":"msg_s1",'
+                        '"type":"message","role":"assistant","content":['
+                        '{"type":"text","text":"All good."}],'
+                        '"stop_reason":"end_turn","usage":{}},"requestId":"req_s1",'
+                        '"type":"assistant","uuid":"side-0002",'
+                        '"timestamp":"2026-01-02T10:00:04.000Z","cwd":"/repo",'
+                        f'"sessionId":"{parent_id}","gitBranch":"main"}}',
+                        "",
+                    ]
+                )
+            )
+            (subagents_dir / "agent-task1.meta.json").write_text(
+                '{"toolUseId": "toolu_task1"}'
+            )
+
+            async with Database(db_path) as db:
+                await db.init_schema()
+
+            config = AppConfig(
+                data_paths=[str(tmp_path / "root")],
+                include_subagent_chats=True,
+                # Isolate from the real ~/.codex/sessions default — otherwise
+                # this machine's actual Codex history would be scanned too,
+                # inflating total_sessions unrelated to this test.
+                codex_data_paths=[],
+            )
+            app = _make_app(db_path, config)
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                r = await client.post("/api/refresh")
+                assert r.status_code == 200
+
+                # Never indexed as its own session — merged into the parent.
+                stats = (await client.get("/api/stats")).json()
+                assert stats["total_sessions"] == 1
+
+                projects = (await client.get("/api/projects")).json()
+                assert len(projects) == 1
+                assert projects[0]["session_count"] == 1
+
+                detail = (await client.get(f"/api/sessions/{parent_id}")).json()
+                # Parent metadata must survive untouched, not be overwritten
+                # by whatever parse_session scraped from the subagent file
+                # alone (which would have no custom-title record at all).
+                assert detail["title"] == "Parent chat"
+                assert detail["cwd"] == "/repo"
+
+                ids = {m["id"] for m in detail["messages"]}
+                assert {"main-0001", "main-0002", "side-0001", "side-0002"} <= ids
+
+                side_root = next(
+                    m for m in detail["messages"] if m["id"] == "side-0001"
+                )
+                assert side_root["source_tool_assistant_uuid"] == "main-0002"
+
+                # Re-scanning must not duplicate the merged messages.
+                r2 = await client.post("/api/refresh")
+                assert r2.status_code == 200
+                detail2 = (await client.get(f"/api/sessions/{parent_id}")).json()
+                assert len(detail2["messages"]) == len(detail["messages"])
+
 
 # ---------------------------------------------------------------------------
 # Reveal

@@ -196,6 +196,11 @@ class Database:
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA synchronous=NORMAL")
         await self._conn.execute("PRAGMA busy_timeout=5000")
+        # A fresh connection is opened per request against a ~728 MB messages
+        # table; a larger page cache + mmap avoids re-reading pages with
+        # SQLite's tiny default cache.
+        await self._conn.execute("PRAGMA cache_size = -65536")
+        await self._conn.execute("PRAGMA mmap_size = 268435456")
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -1032,6 +1037,117 @@ class Database:
             )
 
         await self._conn.commit()
+
+    async def merge_messages(self, messages: list[Message]) -> None:
+        """Merge *messages* into a session that already has OTHER messages indexed.
+
+        ``upsert_messages`` deletes ``messages_fts`` / ``message_blocks`` rows
+        scoped to ``session_id`` before reinserting — correct when *messages*
+        is the complete, freshly re-parsed set for a session file, but
+        destructive if it's a partial set: it would wipe the FTS/block-fact
+        rows for every sibling message NOT included in the call.
+
+        Used for sub-agent (Task tool) transcript ingest
+        (``include_subagent_chats``): those messages share the PARENT
+        session's id (see ``parser._session_id_from_content``) but only cover
+        a handful of sidechain messages, while the parent's own messages are
+        already indexed separately. This variant scopes every delete to the
+        individual message id instead of the session id, so calling it
+        repeatedly with a partial set never disturbs sibling rows.
+        """
+        assert self._conn is not None
+        if not messages:
+            return
+
+        await self._conn.executemany(
+            """
+            INSERT OR REPLACE INTO messages
+                (id, session_id, parent_id, role, content_json, timestamp, model,
+                 is_sidechain, is_meta, cwd, git_branch, source_tool_assistant_uuid,
+                 usage_json, input_tokens, output_tokens, cache_creation_tokens,
+                 cache_read_tokens)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    m.id,
+                    m.session_id,
+                    m.parent_id,
+                    m.role,
+                    _serialize_content_blocks(m.content_blocks),
+                    _dt_to_str(m.timestamp),
+                    m.model,
+                    1 if m.is_sidechain else 0,
+                    1 if m.is_meta else 0,
+                    m.cwd,
+                    m.git_branch,
+                    m.source_tool_assistant_uuid,
+                    m.usage.model_dump_json() if m.usage else None,
+                    m.usage.input_tokens if m.usage else None,
+                    m.usage.output_tokens if m.usage else None,
+                    m.usage.cache_creation_input_tokens if m.usage else None,
+                    m.usage.cache_read_input_tokens if m.usage else None,
+                )
+                for m in messages
+            ],
+        )
+
+        for m in messages:
+            await self._conn.execute(
+                "DELETE FROM messages_fts WHERE message_id = ?", (m.id,)
+            )
+            text = _extract_text_for_fts(m.content_blocks)
+            if text.strip():
+                await self._conn.execute(
+                    "INSERT INTO messages_fts (content, session_id, message_id, role) "
+                    "VALUES (?, ?, ?, ?)",
+                    (text, m.session_id, m.id, m.role),
+                )
+
+            await self._conn.execute(
+                "DELETE FROM message_blocks WHERE message_id = ?", (m.id,)
+            )
+            block_rows = _block_facts(m.id, m.session_id, m.content_blocks)
+            if block_rows:
+                await self._conn.executemany(
+                    "INSERT OR REPLACE INTO message_blocks (message_id, session_id, "
+                    "block_index, btype, tool_name, file_path, result_chars, tool_use_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    block_rows,
+                )
+
+        await self._conn.commit()
+
+    async def find_message_by_tool_use_id(
+        self, session_id: str, tool_use_id: str
+    ) -> Optional[str]:
+        """Return the id of the assistant message containing a ``tool_use``
+        block with the given id, scoped to *session_id*, or None.
+
+        Used to link a sub-agent transcript back to the parent assistant
+        message that spawned it (the Task tool_use call) — see the
+        ``include_subagent_chats`` ingest path in server.py.
+
+        Deliberately reads ``messages.content_json`` directly rather than
+        ``message_blocks.tool_use_id``: that column only records the id a
+        ``tool_result`` block is responding to, never a ``tool_use`` block's
+        own id, so it cannot answer "which message contains tool_use block
+        X" without a schema change and a full-corpus backfill of every
+        pre-existing message — which would leave every subagent transcript
+        already on disk before this feature shipped unlinkable.
+        """
+        assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT id, content_json FROM messages "
+            "WHERE session_id = ? AND role = 'assistant'",
+            (session_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        for row in rows:
+            for block in _deserialize_content_blocks(row["content_json"]):
+                if isinstance(block, ToolUseBlock) and block.id == tool_use_id:
+                    return row["id"]
+        return None
 
     async def get_session_detail_json_bytes(self, session_id: str) -> Optional[bytes]:
         """Build the SessionDetail JSON response without going through Pydantic.

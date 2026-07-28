@@ -169,6 +169,54 @@ class TestBuildMessageTree:
         timestamps = [node.message.timestamp for node in tree if node.message.timestamp]
         assert timestamps == sorted(timestamps)
 
+    def test_sidechain_falls_back_to_source_tool_assistant_uuid(self):
+        """A merged sub-agent transcript (include_subagent_chats): its local
+        root message's parent_id lives in the PARENT session's own file, so
+        it never resolves against this node map. It should nest under the
+        node matching source_tool_assistant_uuid instead of becoming a root.
+        """
+        from clau_decode.models import Message
+        from clau_decode.parser import build_message_tree
+
+        parent_assistant = Message(
+            id="main-0002",
+            session_id="s1",
+            parent_id="main-0001",
+            role="assistant",
+        )
+        subagent_root = Message(
+            id="side-0001",
+            session_id="s1",
+            parent_id="unresolvable-parent-uuid-in-another-file",
+            role="user",
+            is_sidechain=True,
+            source_tool_assistant_uuid="main-0002",
+        )
+        tree = build_message_tree([parent_assistant, subagent_root])
+
+        root_ids = {node.message.id for node in tree}
+        assert "side-0001" not in root_ids
+        assert root_ids == {"main-0002"}
+        parent_node = next(n for n in tree if n.message.id == "main-0002")
+        assert [c.message.id for c in parent_node.children] == ["side-0001"]
+
+    def test_sidechain_orphan_root_when_neither_resolves(self):
+        """If parent_id AND source_tool_assistant_uuid both fail to resolve,
+        the message still falls back to being an orphan root (no crash)."""
+        from clau_decode.models import Message
+        from clau_decode.parser import build_message_tree
+
+        orphan = Message(
+            id="side-0001",
+            session_id="s1",
+            parent_id="unresolvable",
+            role="user",
+            is_sidechain=True,
+            source_tool_assistant_uuid="also-unresolvable",
+        )
+        tree = build_message_tree([orphan])
+        assert [node.message.id for node in tree] == ["side-0001"]
+
 
 class TestHelpers:
     def test_unmangle_project_id(self):

@@ -166,11 +166,17 @@ class CodexAdapter(ProviderAdapter):
 
     # -- Discovery (async generator) ------------------------------------------
 
-    async def discover(self, roots: list[Path]) -> AsyncIterator[tuple[Project, Path]]:
+    async def discover(
+        self, roots: list[Path], include_subagents: bool = False
+    ) -> AsyncIterator[tuple[Project, Path]]:
         """Yield ``(Project, session_file_path)`` pairs found under *roots*.
 
         Reads only the first non-empty line of each file to extract the cwd;
         no full parse is performed during discovery.
+
+        ``include_subagents`` is accepted for interface parity with
+        ``ProviderAdapter.discover`` but ignored — Codex rollouts have no
+        sub-agent transcript concept.
         """
         for root in roots:
             if not root.exists():
