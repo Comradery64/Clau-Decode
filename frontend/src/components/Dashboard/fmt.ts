@@ -21,6 +21,7 @@ export const MODEL_COLORS: Record<string, string> = {
   sonnet: "#b8956a",
   opus: "#9b8ec4",
   haiku: "#6bb5a6",
+  fable: "#c079b0",
 };
 
 export function modelColor(m: string): string {
