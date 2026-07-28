@@ -14,7 +14,8 @@ _LITELLM_URL = (
     "model_prices_and_context_window.json"
 )
 
-# API pricing as of May 2026 (USD per million tokens).
+# API pricing as of 2026-07-19 (USD per million tokens), covering the
+# Claude Fable 5 / Opus 4.8 / Sonnet 5 lineup.
 # Keys are model name prefixes for flexible matching.
 _HARDCODED_RATES: dict[str, "ModelPricing"] = {}
 
@@ -39,11 +40,30 @@ class ModelPricing:
 
 
 _HARDCODED_RATES = {
+    "claude-fable-5": ModelPricing(
+        input_per_mtok=Decimal("10.00"),
+        output_per_mtok=Decimal("50.00"),
+        cache_write_per_mtok=Decimal("12.50"),
+        cache_read_per_mtok=Decimal("1.00"),
+    ),
+    "claude-opus-4-8": ModelPricing(
+        input_per_mtok=Decimal("5.00"),
+        output_per_mtok=Decimal("25.00"),
+        cache_write_per_mtok=Decimal("6.25"),
+        cache_read_per_mtok=Decimal("0.50"),
+    ),
     "claude-opus-4-7": ModelPricing(
-        input_per_mtok=Decimal("15.00"),
-        output_per_mtok=Decimal("75.00"),
-        cache_write_per_mtok=Decimal("18.75"),
-        cache_read_per_mtok=Decimal("1.50"),
+        input_per_mtok=Decimal("5.00"),
+        output_per_mtok=Decimal("25.00"),
+        cache_write_per_mtok=Decimal("6.25"),
+        cache_read_per_mtok=Decimal("0.50"),
+    ),
+    # Standard rates; intro pricing $2/$10 per 1M applied through 2026-08-31.
+    "claude-sonnet-5": ModelPricing(
+        input_per_mtok=Decimal("3.00"),
+        output_per_mtok=Decimal("15.00"),
+        cache_write_per_mtok=Decimal("3.75"),
+        cache_read_per_mtok=Decimal("0.30"),
     ),
     "claude-sonnet-4-6": ModelPricing(
         input_per_mtok=Decimal("3.00"),
@@ -52,10 +72,10 @@ _HARDCODED_RATES = {
         cache_read_per_mtok=Decimal("0.30"),
     ),
     "claude-haiku-4-5": ModelPricing(
-        input_per_mtok=Decimal("0.80"),
-        output_per_mtok=Decimal("4.00"),
-        cache_write_per_mtok=Decimal("1.00"),
-        cache_read_per_mtok=Decimal("0.08"),
+        input_per_mtok=Decimal("1.00"),
+        output_per_mtok=Decimal("5.00"),
+        cache_write_per_mtok=Decimal("1.25"),
+        cache_read_per_mtok=Decimal("0.10"),
     ),
     "claude-3-5-sonnet": ModelPricing(
         input_per_mtok=Decimal("3.00"),

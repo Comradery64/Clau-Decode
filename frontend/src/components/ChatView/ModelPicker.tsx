@@ -16,9 +16,10 @@ interface ModelOption {
 
 export const MODEL_OPTIONS: ModelOption[] = [
   { value: "default", label: "Auto", description: "Let the CLI pick the best model." },
-  { value: "claude-opus-4-7", label: "Opus", description: "Highest capability, highest cost." },
-  { value: "claude-sonnet-4-6", label: "Sonnet", description: "Balanced speed and capability." },
+  { value: "claude-opus-4-8", label: "Opus", description: "Highest capability." },
+  { value: "claude-sonnet-5", label: "Sonnet", description: "Balanced speed and capability." },
   { value: "claude-haiku-4-5", label: "Haiku", description: "Fastest and cheapest." },
+  { value: "claude-fable-5", label: "Fable", description: "Most capable; premium cost." },
 ];
 
 // Codex model menu (passed to `codex --model <m>`). "Auto" omits the flag so
