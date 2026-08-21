@@ -35,7 +35,24 @@ _SUBSCRIPTION_BLOCKED_ENV: Final = frozenset(
     {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
 )
 
+# Session-identity vars the `claude` CLI sets on itself so a nested/child
+# invocation can detect it's not a top-level session (e.g. it disables
+# transcript saving). If clau-decode's own server process was launched from
+# inside a Claude Code session, these leak into ``os.environ`` and — because
+# spawn_env otherwise starts from a raw copy of it — get inherited by every
+# native PTY clau-decode spawns, making an unrelated top-level `claude`
+# session falsely believe it's a child of another one. Every PTY clau-decode
+# spawns is its own top-level session, so these must never survive the copy.
+_SESSION_IDENTITY_BLOCKED_ENV: Final = frozenset({"CLAUDE_CODE_CHILD_SESSION"})
+
 _AUTH_PROBE_TIMEOUT_S: Final = 5.0
+
+
+def _strip_session_identity_env(env: dict[str, str]) -> dict[str, str]:
+    """Remove Claude-Code session-identity markers that must never be inherited."""
+    for key in _SESSION_IDENTITY_BLOCKED_ENV:
+        env.pop(key, None)
+    return env
 
 
 def _subscription_env() -> dict[str, str]:
@@ -45,7 +62,10 @@ def _subscription_env() -> dict[str, str]:
     outside tests should prefer ``spawn_env(bin_name)`` so the strip is
     gated by the binary's actual auth method.
     """
-    return {k: v for k, v in os.environ.items() if k not in _SUBSCRIPTION_BLOCKED_ENV}
+    env = {
+        k: v for k, v in os.environ.items() if k not in _SUBSCRIPTION_BLOCKED_ENV
+    }
+    return _strip_session_identity_env(env)
 
 
 async def _bin_auth_method(bin_name: str) -> str:
@@ -95,4 +115,4 @@ async def spawn_env(bin_name: str) -> dict[str, str]:
     auth_method = await _bin_auth_method(bin_name)
     if auth_method == "claude.ai":
         return _subscription_env()
-    return dict(os.environ)
+    return _strip_session_identity_env(dict(os.environ))
