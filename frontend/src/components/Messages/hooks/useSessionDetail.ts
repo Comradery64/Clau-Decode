@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { EphemeralMessage, SessionDetail } from "../../../api/types";
 import { api } from "../../../api/client";
 import { getCached, setCached, invalidateCached, fetchSession } from "../../../api/sessionCache";
@@ -75,11 +75,19 @@ export function useSessionDetail(sessionId: string) {
     refetchEphemerals(true);
   }, [refetchEphemerals]);
 
-  // Listen for live-reload refresh events
+  // Listen for live-reload refresh events. During streaming the backend's
+  // file watcher fires "refresh" repeatedly in quick succession, so the
+  // resulting getSession() calls can resolve out of order — without a
+  // sequence guard, a stale in-flight response landing after a fresher one
+  // would overwrite it, making a just-sent message flicker away until the
+  // next refresh (usually the turn's completion) restores it.
+  const refreshSeqRef = useRef(0);
   useEffect(() => {
     return on("refresh", () => {
       invalidateCached(sessionId);
+      const seq = ++refreshSeqRef.current;
       api.getSession(sessionId).then((d) => {
+        if (seq !== refreshSeqRef.current) return;
         setCached(sessionId, d);
         // A refresh means the server observed a file-system change and
         // reparsed the session. Always accept the authoritative detail:

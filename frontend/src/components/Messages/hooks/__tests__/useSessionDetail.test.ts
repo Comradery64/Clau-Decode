@@ -200,4 +200,46 @@ describe("useSessionDetail — live refresh reconciliation", () => {
       });
     });
   });
+
+  it("ignores a stale refresh response that resolves after a newer one", async () => {
+    // Simulates the streaming case: two "refresh" events fire back to back
+    // (fast file-watcher churn), but their getSession() calls resolve out of
+    // order — the older request's response arrives last. The stale response
+    // must not clobber the fresher state.
+    const stale = makeDetailWithText("sess-race", "Untitled", "partial");
+    const fresh = {
+      ...makeDetailWithText("sess-race", "Untitled", "final answer"),
+      updated_at: "2026-06-05T03:45:02.000Z",
+    };
+
+    let resolveStale!: (d: SessionDetail) => void;
+    let resolveFresh!: (d: SessionDetail) => void;
+    const getSession = vi.spyOn(api, "getSession")
+      .mockResolvedValueOnce(makeDetail("sess-race"))
+      .mockImplementationOnce(() => new Promise((r) => { resolveStale = r; }))
+      .mockImplementationOnce(() => new Promise((r) => { resolveFresh = r; }));
+    vi.spyOn(api, "ptyEphemerals").mockResolvedValue([]);
+
+    const { result } = renderHook(() => useSessionDetail("sess-race"));
+    await waitFor(() => expect(getSession).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      emit("refresh", undefined); // triggers the "stale" fetch
+      emit("refresh", undefined); // triggers the "fresh" fetch
+    });
+    await waitFor(() => expect(getSession).toHaveBeenCalledTimes(3));
+
+    // Fresh request's fetch resolves first, then the older/stale one lands late.
+    await act(async () => {
+      resolveFresh(fresh);
+    });
+    await act(async () => {
+      resolveStale(stale);
+    });
+
+    expect(result.current.detail?.messages[1]?.content_blocks[0]).toMatchObject({
+      type: "text",
+      text: "final answer",
+    });
+  });
 });
