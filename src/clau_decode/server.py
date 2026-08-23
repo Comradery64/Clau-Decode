@@ -659,6 +659,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             await db.reset_truncated_titles()
             await db.migrate_project_id_v2()
             await db.migrate_materialize_v1()
+            await db.migrate_fts_map_v1()
             # No long-lived readers are open yet at startup, so this is the
             # cheapest moment to TRUNCATE any WAL bloat left by a prior run.
             await db.checkpoint()

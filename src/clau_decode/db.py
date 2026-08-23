@@ -23,6 +23,8 @@ Schema:
               is_sidechain, is_meta, cwd, git_branch, source_tool_assistant_uuid,
               usage_json TEXT)
   messages_fts  (FTS5 virtual: content, session_id UNINDEXED, message_id UNINDEXED, role UNINDEXED)
+  messages_fts_map  (message_id TEXT PK, fts_rowid, session_id) — rowid sidecar so
+              deletes scoped to a session/message are index seeks, not FTS full scans
 
 SOLID notes:
   - Dependency Inversion: callers depend on this interface, not on aiosqlite directly
@@ -298,6 +300,25 @@ class Database:
                 role UNINDEXED
             );
 
+            -- Rowid sidecar for messages_fts. FTS5 tables cannot carry
+            -- secondary indexes, so `DELETE FROM messages_fts WHERE
+            -- session_id = ?` (or message_id) degrades to a full scan of the
+            -- whole FTS table — ~100 MB of reads per call on a mature index,
+            -- and the re-index path calls it on every JSONL append. This map
+            -- turns every such delete into a rowid lookup. Kept in lockstep
+            -- with messages_fts by _fts_insert / _fts_delete_* only; never
+            -- write the FTS table directly.
+            CREATE TABLE IF NOT EXISTS messages_fts_map (
+                message_id TEXT PRIMARY KEY,
+                fts_rowid INTEGER NOT NULL,
+                session_id TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_fts_map_session
+                ON messages_fts_map (session_id);
+            -- Makes MAX(fts_rowid) — the rowid allocator — an index seek.
+            CREATE INDEX IF NOT EXISTS idx_fts_map_rowid
+                ON messages_fts_map (fts_rowid);
+
             -- Speeds up the last_message_role correlated subquery on get_sessions.
             -- Without this, each session row triggered a full messages-table scan.
             CREATE INDEX IF NOT EXISTS idx_messages_session_timestamp
@@ -537,6 +558,37 @@ class Database:
             return  # already migrated
         await self._conn.execute(
             "INSERT OR REPLACE INTO _meta (key, value) VALUES ('project_id_v2', '1')"
+        )
+        await self._conn.commit()
+
+    async def migrate_fts_map_v1(self) -> None:
+        """One-time backfill of ``messages_fts_map`` for pre-existing indexes.
+
+        Costs exactly one scan of ``messages_fts`` — the same scan the write
+        path used to pay on *every* re-index. Idempotent via a ``_meta`` flag.
+        """
+        assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT value FROM _meta WHERE key = 'fts_map_v1'"
+        ) as cursor:
+            if await cursor.fetchone() is not None:
+                return
+
+        # INSERT OR REPLACE, not plain INSERT: a message_id duplicated across
+        # FTS rows (possible on an index written before the map existed) would
+        # otherwise abort on the primary key. Last row wins; the losers are
+        # dropped below so the FTS table matches the map exactly.
+        await self._conn.execute(
+            "INSERT OR REPLACE INTO messages_fts_map "
+            "(message_id, fts_rowid, session_id) "
+            "SELECT message_id, rowid, session_id FROM messages_fts"
+        )
+        await self._conn.execute(
+            "DELETE FROM messages_fts WHERE rowid NOT IN "
+            "(SELECT fts_rowid FROM messages_fts_map)"
+        )
+        await self._conn.execute(
+            "INSERT OR REPLACE INTO _meta (key, value) VALUES ('fts_map_v1', '1')"
         )
         await self._conn.commit()
 
@@ -958,6 +1010,97 @@ class Database:
     # Messages
     # -----------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # messages_fts write helpers
+    #
+    # All writes to messages_fts go through these three so the rowid sidecar
+    # (messages_fts_map) can never drift. Callers must not INSERT/DELETE the
+    # FTS table directly — doing so orphans map rows and silently breaks the
+    # indexed deletes below. None of these commit; the caller owns the txn.
+    # ------------------------------------------------------------------
+
+    async def _fts_next_rowid(self) -> int:
+        """Return the first rowid of a free range above every live FTS row.
+
+        Allocating from ``MAX + 1`` is what makes explicit rowids safe: no live
+        row can sit in the range handed out, so an insert can never clobber
+        one. Freed rowids *are* reused (a delete + reinsert in the same
+        transaction typically lands on the same numbers) — that's fine, and
+        cheaper than persisting a monotonic counter. Served by
+        idx_fts_map_rowid. The messages_fts fallback only fires on a DB whose
+        map is empty but whose FTS table is not (a half-migrated index), where
+        one scan is the correct price for not corrupting it.
+        """
+        assert self._conn is not None
+        async with self._conn.execute(
+            "SELECT COALESCE(MAX(fts_rowid), 0) FROM messages_fts_map"
+        ) as cursor:
+            row = await cursor.fetchone()
+        high = row[0] if row else 0
+        if not high:
+            async with self._conn.execute(
+                "SELECT COALESCE(MAX(rowid), 0) FROM messages_fts"
+            ) as cursor:
+                row = await cursor.fetchone()
+            high = row[0] if row else 0
+        return high + 1
+
+    async def _fts_delete_session(self, session_id: str) -> None:
+        """Drop every FTS row for *session_id* via idx_fts_map_session."""
+        assert self._conn is not None
+        await self._conn.execute(
+            "DELETE FROM messages_fts WHERE rowid IN "
+            "(SELECT fts_rowid FROM messages_fts_map WHERE session_id = ?)",
+            (session_id,),
+        )
+        await self._conn.execute(
+            "DELETE FROM messages_fts_map WHERE session_id = ?", (session_id,)
+        )
+
+    async def _fts_delete_messages(self, message_ids: list[str]) -> None:
+        """Drop the FTS rows for *message_ids* via the map's primary key."""
+        assert self._conn is not None
+        if not message_ids:
+            return
+        await self._conn.executemany(
+            "DELETE FROM messages_fts WHERE rowid IN "
+            "(SELECT fts_rowid FROM messages_fts_map WHERE message_id = ?)",
+            [(mid,) for mid in message_ids],
+        )
+        await self._conn.executemany(
+            "DELETE FROM messages_fts_map WHERE message_id = ?",
+            [(mid,) for mid in message_ids],
+        )
+
+    async def _fts_insert(self, rows: list[tuple[str, str, str, str]]) -> None:
+        """Insert (content, session_id, message_id, role) rows + their map rows.
+
+        Rowids are allocated explicitly rather than left to FTS5 so a single
+        executemany can populate both tables — executemany exposes no
+        per-row lastrowid.
+
+        Deduped by message_id, last wins, mirroring the ``INSERT OR REPLACE``
+        the ``messages`` table uses: a resumed or repaired JSONL can repeat a
+        message uuid, and two FTS rows sharing one map row (primary key on
+        message_id) would orphan the loser and break the map == FTS invariant
+        the indexed deletes rely on.
+        """
+        assert self._conn is not None
+        if not rows:
+            return
+        rows = list({row[2]: row for row in rows}.values())
+        start = await self._fts_next_rowid()
+        await self._conn.executemany(
+            "INSERT INTO messages_fts (rowid, content, session_id, message_id, role) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [(start + i, *row) for i, row in enumerate(rows)],
+        )
+        await self._conn.executemany(
+            "INSERT OR REPLACE INTO messages_fts_map "
+            "(message_id, fts_rowid, session_id) VALUES (?, ?, ?)",
+            [(row[2], start + i, row[1]) for i, row in enumerate(rows)],
+        )
+
     async def upsert_messages(self, messages: list[Message]) -> None:
         """Bulk upsert messages and rebuild FTS index entries."""
         assert self._conn is not None
@@ -1002,9 +1145,7 @@ class Database:
         )
 
         # Rebuild FTS for this session: delete existing, re-insert
-        await self._conn.execute(
-            "DELETE FROM messages_fts WHERE session_id = ?", (session_id,)
-        )
+        await self._fts_delete_session(session_id)
 
         fts_rows = []
         for m in messages:
@@ -1012,11 +1153,7 @@ class Database:
             if text.strip():
                 fts_rows.append((text, m.session_id, m.id, m.role))
 
-        if fts_rows:
-            await self._conn.executemany(
-                "INSERT INTO messages_fts (content, session_id, message_id, role) VALUES (?, ?, ?, ?)",
-                fts_rows,
-            )
+        await self._fts_insert(fts_rows)
 
         # Rebuild materialized block facts for this session (same delete +
         # re-insert pattern as FTS, so a re-parse replaces stale rows).
@@ -1092,29 +1229,33 @@ class Database:
             ],
         )
 
+        # Batched, not per-message: the FTS delete used to run once per message
+        # and each one full-scanned messages_fts, so a single sub-agent ingest
+        # read (message count x FTS size) bytes off disk.
+        await self._fts_delete_messages([m.id for m in messages])
+        fts_rows = []
         for m in messages:
-            await self._conn.execute(
-                "DELETE FROM messages_fts WHERE message_id = ?", (m.id,)
-            )
             text = _extract_text_for_fts(m.content_blocks)
             if text.strip():
-                await self._conn.execute(
-                    "INSERT INTO messages_fts (content, session_id, message_id, role) "
-                    "VALUES (?, ?, ?, ?)",
-                    (text, m.session_id, m.id, m.role),
-                )
+                fts_rows.append((text, m.session_id, m.id, m.role))
+        await self._fts_insert(fts_rows)
 
-            await self._conn.execute(
-                "DELETE FROM message_blocks WHERE message_id = ?", (m.id,)
+        await self._conn.executemany(
+            "DELETE FROM message_blocks WHERE message_id = ?",
+            [(m.id,) for m in messages],
+        )
+        block_rows = [
+            row
+            for m in messages
+            for row in _block_facts(m.id, m.session_id, m.content_blocks)
+        ]
+        if block_rows:
+            await self._conn.executemany(
+                "INSERT OR REPLACE INTO message_blocks (message_id, session_id, "
+                "block_index, btype, tool_name, file_path, result_chars, tool_use_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                block_rows,
             )
-            block_rows = _block_facts(m.id, m.session_id, m.content_blocks)
-            if block_rows:
-                await self._conn.executemany(
-                    "INSERT OR REPLACE INTO message_blocks (message_id, session_id, "
-                    "block_index, btype, tool_name, file_path, result_chars, tool_use_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    block_rows,
-                )
 
         await self._conn.commit()
 
@@ -1335,14 +1476,7 @@ class Database:
             "SELECT session_id FROM messages WHERE id = ?", (message_id,)
         ) as cursor:
             row = await cursor.fetchone()
-        async with self._conn.execute(
-            "SELECT rowid FROM messages_fts WHERE message_id = ?", (message_id,)
-        ) as cursor:
-            fts_rows = await cursor.fetchall()
-        for fts_row in fts_rows:
-            await self._conn.execute(
-                "DELETE FROM messages_fts WHERE rowid = ?", (fts_row[0],)
-            )
+        await self._fts_delete_messages([message_id])
         await self._conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
         if row:
             session_id = row["session_id"]
@@ -1361,9 +1495,7 @@ class Database:
     async def delete_session_messages(self, session_id: str) -> None:
         """Delete all messages (and their FTS entries) for a session."""
         assert self._conn is not None
-        await self._conn.execute(
-            "DELETE FROM messages_fts WHERE session_id = ?", (session_id,)
-        )
+        await self._fts_delete_session(session_id)
         await self._conn.execute(
             "DELETE FROM messages WHERE session_id = ?", (session_id,)
         )
@@ -1387,9 +1519,7 @@ class Database:
             exists = await cursor.fetchone() is not None
 
         # Delete child rows in dependency order before the parent session row.
-        await self._conn.execute(
-            "DELETE FROM messages_fts WHERE session_id = ?", (session_id,)
-        )
+        await self._fts_delete_session(session_id)
         await self._conn.execute(
             "DELETE FROM messages WHERE session_id = ?", (session_id,)
         )
@@ -1421,23 +1551,15 @@ class Database:
             "UPDATE messages SET content_json = ? WHERE id = ?",
             (content_json, message_id),
         )
-        async with self._conn.execute(
-            "SELECT rowid FROM messages_fts WHERE message_id = ?", (message_id,)
-        ) as cursor:
-            fts_rows = await cursor.fetchall()
-        for fts_row in fts_rows:
-            await self._conn.execute(
-                "DELETE FROM messages_fts WHERE rowid = ?", (fts_row[0],)
-            )
+        await self._fts_delete_messages([message_id])
         fts_text = _extract_text_for_fts(new_blocks)
         async with self._conn.execute(
             "SELECT session_id, role FROM messages WHERE id = ?", (message_id,)
         ) as cursor:
             row = await cursor.fetchone()
         if row and fts_text.strip():
-            await self._conn.execute(
-                "INSERT INTO messages_fts (content, session_id, message_id, role) VALUES (?,?,?,?)",
-                (fts_text, row["session_id"], message_id, row["role"]),
+            await self._fts_insert(
+                [(fts_text, row["session_id"], message_id, row["role"])]
             )
         await self._conn.commit()
 

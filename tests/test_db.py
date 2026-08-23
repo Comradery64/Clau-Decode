@@ -746,3 +746,152 @@ class TestProviderMigration:
         sessions = await db.get_sessions()
         assert len(sessions) == 1
         assert sessions[0].provider == "claude"
+
+
+async def _fts_rowids(db) -> set[int]:
+    async with db._conn.execute("SELECT rowid FROM messages_fts") as cur:
+        return {r[0] for r in await cur.fetchall()}
+
+
+async def _map_rowids(db) -> set[int]:
+    async with db._conn.execute("SELECT fts_rowid FROM messages_fts_map") as cur:
+        return {r[0] for r in await cur.fetchall()}
+
+
+class TestFtsRowidMap:
+    """messages_fts_map exists purely so session/message-scoped FTS deletes are
+    rowid seeks instead of full scans of the FTS table (which has no secondary
+    indexes). If the two tables ever drift, deletes silently start missing rows
+    and stale hits linger in search — so every write path must keep them equal."""
+
+    async def test_map_matches_fts_across_every_write_path(
+        self, db, sample_project, sample_session, sample_messages
+    ):
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+
+        await db.upsert_messages(sample_messages)
+        assert await _fts_rowids(db) == await _map_rowids(db) != set()
+
+        # Re-upsert (the hot path: every JSONL append re-indexes the file).
+        await db.upsert_messages(sample_messages)
+        assert await _fts_rowids(db) == await _map_rowids(db)
+
+        await db.merge_messages(
+            [
+                Message(
+                    id="side-0001",
+                    session_id=sample_session.id,
+                    parent_id=None,
+                    role="assistant",
+                    content_blocks=[TextBlock(text="Sub-agent reply")],
+                    is_sidechain=True,
+                )
+            ]
+        )
+        assert await _fts_rowids(db) == await _map_rowids(db)
+
+        await db.update_message_content(
+            "msg-0001", [TextBlock(text="Edited content zzyzx")]
+        )
+        assert await _fts_rowids(db) == await _map_rowids(db)
+        assert [h.message_id for h in await db.search("zzyzx")] == ["msg-0001"]
+
+        await db.delete_message("msg-0001")
+        assert await _fts_rowids(db) == await _map_rowids(db)
+        assert await db.search("zzyzx") == []
+
+        await db.delete_session_messages(sample_session.id)
+        assert await _fts_rowids(db) == await _map_rowids(db) == set()
+
+    async def test_allocated_rowids_never_collide_with_a_live_row(
+        self, db, sample_project, sample_session, sample_messages
+    ):
+        """Explicit rowids are only safe because they come from MAX + 1. If a
+        second session's insert landed on rowids the first session still owns,
+        the insert would either fail or overwrite live search content."""
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+        held = await _fts_rowids(db)
+
+        other = sample_session.model_copy(
+            update={"id": "bbbbbbbb-0000-0000-0000-000000000002"}
+        )
+        await db.upsert_session(other)
+        await db.upsert_messages(
+            [
+                Message(
+                    id="msg-other-1",
+                    session_id=other.id,
+                    parent_id=None,
+                    role="user",
+                    content_blocks=[TextBlock(text="Second session content")],
+                )
+            ]
+        )
+        new = await _fts_rowids(db) - held
+        assert new and not (new & held)
+        assert await _fts_rowids(db) == await _map_rowids(db)
+
+        # The first session's rows survived intact.
+        assert [h.session_id for h in await db.search("Hi! How can I help")] == [
+            sample_session.id
+        ]
+
+    async def test_duplicate_message_ids_in_one_batch_stay_in_sync(
+        self, db, sample_project, sample_session, sample_messages
+    ):
+        """A resumed/repaired JSONL can repeat a message uuid. messages dedupes
+        via INSERT OR REPLACE; the FTS pair must dedupe the same way or the map
+        (keyed on message_id) ends up one row short of the FTS table."""
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        dupe = sample_messages[0].model_copy(
+            update={"content_blocks": [TextBlock(text="Later duplicate wins")]}
+        )
+        await db.upsert_messages([*sample_messages, dupe])
+
+        assert await _fts_rowids(db) == await _map_rowids(db)
+        assert [h.message_id for h in await db.search("Later duplicate wins")] == [
+            "msg-0001"
+        ]
+        assert await db.search("Hello") == []
+
+    async def test_migration_backfills_a_legacy_index(
+        self, db, sample_project, sample_session, sample_messages
+    ):
+        """A DB written before the map existed has FTS rows and no map rows.
+        migrate_fts_map_v1 must adopt them rather than orphan them."""
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+
+        # Rewind to the legacy shape: FTS rows intact, map empty, flag unset.
+        await db._conn.execute("DELETE FROM messages_fts_map")
+        await db._conn.execute("DELETE FROM _meta WHERE key = 'fts_map_v1'")
+        await db._conn.commit()
+        assert await _map_rowids(db) == set()
+
+        await db.migrate_fts_map_v1()
+        assert await _fts_rowids(db) == await _map_rowids(db) != set()
+
+        # The adopted rows are now deletable through the indexed path.
+        await db.delete_session_messages(sample_session.id)
+        assert await _fts_rowids(db) == set()
+        assert await db.search("Hello") == []
+
+    async def test_migration_is_idempotent(self, db, sample_messages):
+        await db.migrate_fts_map_v1()
+        await db.migrate_fts_map_v1()
+
+    async def test_session_scoped_delete_is_an_index_seek(self, db):
+        """Regression guard on the whole point of this table: if the planner
+        stops using idx_fts_map_session, the delete is a full FTS scan again."""
+        async with db._conn.execute(
+            "EXPLAIN QUERY PLAN DELETE FROM messages_fts WHERE rowid IN "
+            "(SELECT fts_rowid FROM messages_fts_map WHERE session_id = ?)",
+            ("any",),
+        ) as cur:
+            plan = " ".join(str(r["detail"]) for r in await cur.fetchall())
+        assert "idx_fts_map_session" in plan
