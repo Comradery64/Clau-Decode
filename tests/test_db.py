@@ -768,3 +768,87 @@ class TestIncrementalUpsert:
             "SELECT output_tokens FROM messages WHERE id='msg-0002'"
         ) as cur:
             assert (await cur.fetchone())[0] == 20
+
+    async def _fts_rowid(self, db, message_id):
+        async with db._conn.execute(
+            "SELECT rowid FROM messages_fts WHERE message_id=?", (message_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row["rowid"] if row else None
+
+    async def test_fts_rowid_stays_aligned_with_messages_rowid(
+        self, db, sample_session, sample_messages
+    ):
+        """messages_fts.rowid must equal messages.rowid so upsert_messages
+        can delete/insert FTS rows by rowid (indexed) instead of scanning the
+        UNINDEXED message_id column across the whole corpus."""
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+        rows = await self._rows(db, sample_session.id)
+        assert await self._fts_rowid(db, "msg-0001") == rows["msg-0001"][0]
+        assert await self._fts_rowid(db, "msg-0002") == rows["msg-0002"][0]
+
+        edited = list(sample_messages)
+        edited[1] = edited[1].model_copy(
+            update={"content_blocks": [TextBlock(text="Edited reply about penguins")]}
+        )
+        await db.upsert_messages(edited)
+        rows = await self._rows(db, sample_session.id)
+        assert await self._fts_rowid(db, "msg-0002") == rows["msg-0002"][0]
+
+    async def test_migrate_fts_rowid_v1_realigns_stale_rows(
+        self, db, sample_session, sample_messages
+    ):
+        """Simulates a pre-fix DB where messages_fts.rowid drifted from
+        messages.rowid (the exact bug this migration repairs)."""
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+
+        await db._conn.execute("DELETE FROM messages_fts")
+        await db._conn.execute(
+            "INSERT INTO messages_fts (rowid, content, session_id, message_id, role) "
+            "VALUES (9001, 'Hello there penguins', ?, 'msg-0001', 'user')",
+            (sample_session.id,),
+        )
+        await db._conn.execute("DELETE FROM _meta WHERE key = 'fts_rowid_v1'")
+        await db._conn.commit()
+
+        await db.migrate_fts_rowid_v1()
+
+        rows = await self._rows(db, sample_session.id)
+        assert await self._fts_rowid(db, "msg-0001") == rows["msg-0001"][0]
+
+        # Migration is idempotent — re-running it is a no-op.
+        await db.migrate_fts_rowid_v1()
+        assert await self._fts_rowid(db, "msg-0001") == rows["msg-0001"][0]
+
+    async def test_migrate_fts_rowid_v1_dedupes_pre_existing_duplicates(
+        self, db, sample_session, sample_messages
+    ):
+        """A pre-existing bug left some messages with two FTS rows for the
+        same message_id — realigning both to the same target rowid would
+        collide, so the migration must dedupe down to one row first."""
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+        rows = await self._rows(db, sample_session.id)
+
+        await db._conn.execute(
+            "INSERT INTO messages_fts (rowid, content, session_id, message_id, role) "
+            "VALUES (999999, 'Hello there penguins', ?, 'msg-0001', 'user')",
+            (sample_session.id,),
+        )
+        await db._conn.execute("DELETE FROM _meta WHERE key = 'fts_rowid_v1'")
+        await db._conn.commit()
+
+        async with db._conn.execute(
+            "SELECT COUNT(*) FROM messages_fts WHERE message_id = 'msg-0001'"
+        ) as cur:
+            assert (await cur.fetchone())[0] == 2  # duplicate present
+
+        await db.migrate_fts_rowid_v1()
+
+        async with db._conn.execute(
+            "SELECT COUNT(*) FROM messages_fts WHERE message_id = 'msg-0001'"
+        ) as cur:
+            assert (await cur.fetchone())[0] == 1  # deduped to one row
+        assert await self._fts_rowid(db, "msg-0001") == rows["msg-0001"][0]
