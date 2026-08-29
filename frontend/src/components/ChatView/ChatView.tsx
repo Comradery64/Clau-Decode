@@ -16,7 +16,6 @@ import { ChatInputBar } from "./ChatInputBar";
 import type { SubmitMeta } from "./ChatInput";
 import { NativeTerminalView, type NativePtyNotice } from "./NativeTerminalView";
 import { useExpandPreserveAnchor } from "./hooks/useExpandPreserveAnchor";
-import { useScrollPositionMemory } from "./hooks/useScrollPositionMemory";
 import { useRecaps } from "./hooks/useRecaps";
 import { useSessionOwnership } from "./hooks/useSessionOwnership";
 import { OwnershipBanner } from "./OwnershipBanner";
@@ -390,8 +389,6 @@ export default function ChatView() {
       containerRef.current = vp;
     }
   });
-
-  useScrollPositionMemory(scrollEl, selectedSessionId);
 
   // Phase-0 PTY ownership (pty-ownership-plan.md). Drives the badge in
   // ConversationHeader and the take-over banner above ChatInputBar.
