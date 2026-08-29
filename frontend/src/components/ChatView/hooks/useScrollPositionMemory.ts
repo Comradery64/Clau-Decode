@@ -2,8 +2,6 @@ import { useEffect, useRef } from "react";
 import { useAppStore } from "../../../store";
 import { SCROLL } from "../../../config/ui";
 
-const USER_SCROLL_INTENT_MS = 750;
-
 // "Near bottom" (within ~one viewport) is the loose test used to decide whether
 // a session-switch should restore an old read position or just let the snap
 // hook land at the current bottom.
@@ -38,7 +36,13 @@ export function useScrollPositionMemory(
   const scrollPositions = useRef(new Map<string, { top: number; height: number }>());
   const appliedForceBottomRequest = useRef(0);
   const forceBottomActiveUntil = useRef(0);
-  const lastUserScrollIntentAt = useRef(0);
+  // useSearchScroll clears pendingScrollMessageId (see its effect) before it
+  // calls scrollTo(), so by the time that scroll actually starts animating,
+  // this hook's own effect has already re-run with pendingScrollMessageId
+  // back to null — a plain closure check on the prop would stop guarding
+  // before the smooth-scroll animation (and its data-highlight mutation)
+  // finish. This ref outlives that effect re-run, so the guard survives it.
+  const searchScrollActiveUntil = useRef(0);
   const pendingScrollMessageId = useAppStore((s) => s.pendingScrollMessageId);
 
   useEffect(() => {
@@ -52,6 +56,10 @@ export function useScrollPositionMemory(
         height: el.scrollHeight,
       });
     };
+
+    if (pendingScrollMessageId) {
+      searchScrollActiveUntil.current = Date.now() + 1000;
+    }
 
     // Skip restoration when a search-scroll is pending — useSearchScroll will
     // handle the navigation instead, and restoring here would cause a flicker.
@@ -74,6 +82,10 @@ export function useScrollPositionMemory(
     let pendingRaf = 0;
     const restorePinned = () => {
       pendingRaf = 0;
+      // A search-driven scroll (or its data-highlight mutation) is in
+      // flight — let it land instead of yanking the reader back to their
+      // pre-search bottom position.
+      if (Date.now() <= searchScrollActiveUntil.current) return;
       if (Date.now() <= forceBottomActiveUntil.current) {
         forceBottom();
         return;
@@ -92,19 +104,57 @@ export function useScrollPositionMemory(
       if (pendingRaf) return;
       pendingRaf = requestAnimationFrame(restorePinned);
     };
-    const markUserScrollIntent = () => {
-      lastUserScrollIntentAt.current = Date.now();
+
+    // Was a scrollTop change caused by the user, vs. some non-user reset (e.g.
+    // a scrollbar library re-render zeroing scrollTop)? Both produce an
+    // identical `scroll` event, so this can't be told apart from the scroll
+    // signal alone (see the sibling test asserting a non-user reset DOES get
+    // restored) — it has to come from input.
+    //
+    // Armed by real input, listened for on `window` in the capture phase, not
+    // just on `el`: OverlayScrollbars renders its scrollbar track/thumb as a
+    // sibling of the viewport, so a scrollbar-thumb drag's `pointerdown`
+    // never reaches `el` — the previous el-scoped listener missed it
+    // entirely, treating a deliberate drag as a non-user reset and snapping
+    // back mid-drag.
+    //
+    // Every `scroll` event that lands while intent is armed re-arms it, so a
+    // trackpad's inertial/momentum scrolling — which keeps emitting `scroll`
+    // long after the one real `wheel` event that started it — stays "user"
+    // for the gesture's full duration instead of going stale after a fixed
+    // window and getting yanked back mid-flick.
+    const SCROLL_INTENT_DECAY_MS = 200;
+    let scrollIntentActive = false;
+    let decayTimer: ReturnType<typeof setTimeout> | undefined;
+    const armScrollIntent = () => {
+      scrollIntentActive = true;
+      if (decayTimer !== undefined) clearTimeout(decayTimer);
+      decayTimer = setTimeout(() => {
+        scrollIntentActive = false;
+      }, SCROLL_INTENT_DECAY_MS);
     };
+
     const onScroll = () => {
+      if (scrollIntentActive) armScrollIntent(); // momentum: keep it warm
+
+      if (Date.now() <= searchScrollActiveUntil.current) {
+        // Track position through the search-driven scroll so comparisons
+        // right after the guard window closes are against where it landed,
+        // not the stale pre-search bottom.
+        scrollPositions.current.set(sessionId, {
+          top: el.scrollTop,
+          height: el.scrollHeight,
+        });
+        return;
+      }
+
       const last = scrollPositions.current.get(sessionId);
       const previousWasNearBottom = last
         ? isNearBottom(last.top, last.height, el.clientHeight)
         : false;
       const currentIsNearBottom = isNearBottom(el.scrollTop, el.scrollHeight, el.clientHeight);
-      const recentUserScroll =
-        Date.now() - lastUserScrollIntentAt.current <= USER_SCROLL_INTENT_MS;
 
-      if (previousWasNearBottom && !currentIsNearBottom && !recentUserScroll) {
+      if (previousWasNearBottom && !currentIsNearBottom && !scrollIntentActive) {
         scheduleRestore();
         return;
       }
@@ -115,10 +165,11 @@ export function useScrollPositionMemory(
       });
     };
     el.addEventListener("scroll", onScroll, { passive: true });
-    el.addEventListener("wheel", markUserScrollIntent, { passive: true });
-    el.addEventListener("touchmove", markUserScrollIntent, { passive: true });
-    el.addEventListener("pointerdown", markUserScrollIntent, { passive: true });
-    el.addEventListener("keydown", markUserScrollIntent);
+    window.addEventListener("wheel", armScrollIntent, { passive: true, capture: true });
+    window.addEventListener("touchstart", armScrollIntent, { passive: true, capture: true });
+    window.addEventListener("touchmove", armScrollIntent, { passive: true, capture: true });
+    window.addEventListener("pointerdown", armScrollIntent, { capture: true });
+    window.addEventListener("keydown", armScrollIntent, { capture: true });
 
     const ro = new ResizeObserver(() => {
       scheduleRestore();
@@ -137,11 +188,13 @@ export function useScrollPositionMemory(
 
     return () => {
       el.removeEventListener("scroll", onScroll);
-      el.removeEventListener("wheel", markUserScrollIntent);
-      el.removeEventListener("touchmove", markUserScrollIntent);
-      el.removeEventListener("pointerdown", markUserScrollIntent);
-      el.removeEventListener("keydown", markUserScrollIntent);
+      window.removeEventListener("wheel", armScrollIntent, { capture: true });
+      window.removeEventListener("touchstart", armScrollIntent, { capture: true });
+      window.removeEventListener("touchmove", armScrollIntent, { capture: true });
+      window.removeEventListener("pointerdown", armScrollIntent, { capture: true });
+      window.removeEventListener("keydown", armScrollIntent, { capture: true });
       if (pendingRaf) cancelAnimationFrame(pendingRaf);
+      if (decayTimer !== undefined) clearTimeout(decayTimer);
       ro.disconnect();
       mo.disconnect();
     };
