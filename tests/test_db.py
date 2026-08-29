@@ -226,6 +226,35 @@ class TestSearch:
         hits_wrong = await db.search("Hello", project_id="wrong-project")
         assert hits_wrong == []
 
+    async def test_search_offset_pages_through_older_matches(
+        self, db, sample_project, sample_session
+    ):
+        """A page fetched with `limit` + `offset` must reach matches older
+        than the first `limit` most-recent rows, not just re-truncate to the
+        newest ones (the bug behind "search only goes back a couple days")."""
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        messages = [
+            Message(
+                id=f"msg-page-{i:04d}",
+                session_id=sample_session.id,
+                parent_id=None,
+                role="user",
+                content_blocks=[TextBlock(text=f"needle occurrence {i}")],
+                timestamp=datetime(2026, 1, 1, 10, 0, i, tzinfo=timezone.utc),
+            )
+            for i in range(5)
+        ]
+        await db.upsert_messages(messages)
+
+        page1 = await db.search("needle", limit=2, offset=0)
+        page2 = await db.search("needle", limit=2, offset=2)
+        page3 = await db.search("needle", limit=2, offset=4)
+
+        assert [h.message_id for h in page1] == ["msg-page-0004", "msg-page-0003"]
+        assert [h.message_id for h in page2] == ["msg-page-0002", "msg-page-0001"]
+        assert [h.message_id for h in page3] == ["msg-page-0000"]
+
 
 class TestStats:
     async def test_stats_counts(

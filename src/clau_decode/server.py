@@ -973,9 +973,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         q: str = Query(..., min_length=1),
         project: str | None = Query(None),
         limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
     ):
         async with Database(db_path) as db:
-            return await db.search(q, project_id=project, limit=limit)
+            return await db.search(q, project_id=project, limit=limit, offset=offset)
 
     @app.get("/api/stats")
     async def get_stats():

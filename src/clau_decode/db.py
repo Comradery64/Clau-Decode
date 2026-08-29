@@ -1598,8 +1598,15 @@ class Database:
         query: str,
         project_id: Optional[str] = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[SearchHit]:
         assert self._conn is not None
+
+        # Each sub-query (messages/ephemeral) is sorted by timestamp DESC
+        # independently, then merged and re-sorted below. To page correctly
+        # past `offset`, each sub-query must fetch enough rows to cover the
+        # requested page, not just `limit` from its own start.
+        fetch_size = offset + limit
 
         # FTS5 treats `-`, `"`, `:`, etc. as operators. Coerce user input to
         # space-separated word tokens so queries like "eye-candy" or "a:b" are
@@ -1637,7 +1644,7 @@ class Database:
                 ORDER BY m.timestamp DESC
                 LIMIT ?
             """
-            msg_params: tuple = (match_query, project_id, limit)
+            msg_params: tuple = (match_query, project_id, fetch_size)
         else:
             msg_sql = """
                 SELECT
@@ -1655,7 +1662,7 @@ class Database:
                 ORDER BY m.timestamp DESC
                 LIMIT ?
             """
-            msg_params = (match_query, limit)
+            msg_params = (match_query, fetch_size)
 
         async with self._conn.execute(msg_sql, msg_params) as cursor:
             msg_rows = await cursor.fetchall()
@@ -1697,7 +1704,7 @@ class Database:
                 ORDER BY e.timestamp DESC
                 LIMIT ?
             """
-            eph_params: tuple = (match_query, project_id, limit)
+            eph_params: tuple = (match_query, project_id, fetch_size)
         else:
             eph_sql = """
                 SELECT
@@ -1717,7 +1724,7 @@ class Database:
                 ORDER BY e.timestamp DESC
                 LIMIT ?
             """
-            eph_params = (match_query, limit)
+            eph_params = (match_query, fetch_size)
 
         async with self._conn.execute(eph_sql, eph_params) as cursor:
             eph_rows = await cursor.fetchall()
@@ -1740,7 +1747,7 @@ class Database:
 
         # Merge: sort all hits by timestamp DESC (None timestamps sort last).
         hits.sort(key=lambda h: h.timestamp or datetime.min, reverse=True)
-        return hits[:limit]
+        return hits[offset : offset + limit]
 
     # -----------------------------------------------------------------------
     # Stats
