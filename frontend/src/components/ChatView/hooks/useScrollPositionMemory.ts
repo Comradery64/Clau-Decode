@@ -42,7 +42,14 @@ export function useScrollPositionMemory(
   // back to null — a plain closure check on the prop would stop guarding
   // before the smooth-scroll animation (and its data-highlight mutation)
   // finish. This ref outlives that effect re-run, so the guard survives it.
+  // It only needs to cover the brief click-to-scroll-start gap, NOT the
+  // whole SEARCH_HIGHLIGHT_MS window — a fixed duration measured from click
+  // time can't reliably outlast useSearchScroll's OWN timer, which starts
+  // whenever its effect happens to run, not at a shared t=0. The rest of the
+  // window is covered by isSearchHighlightActive() below, which checks the
+  // actual DOM state useSearchScroll manages instead of guessing at timing.
   const searchScrollActiveUntil = useRef(0);
+  const isSearchHighlightActive = () => !!document.querySelector('[data-highlight="1"]');
   const pendingScrollMessageId = useAppStore((s) => s.pendingScrollMessageId);
 
   useEffect(() => {
@@ -58,7 +65,7 @@ export function useScrollPositionMemory(
     };
 
     if (pendingScrollMessageId) {
-      searchScrollActiveUntil.current = Date.now() + 1000;
+      searchScrollActiveUntil.current = Date.now() + 500;
     }
 
     // Skip restoration when a search-scroll is pending — useSearchScroll will
@@ -85,7 +92,7 @@ export function useScrollPositionMemory(
       // A search-driven scroll (or its data-highlight mutation) is in
       // flight — let it land instead of yanking the reader back to their
       // pre-search bottom position.
-      if (Date.now() <= searchScrollActiveUntil.current) return;
+      if (Date.now() <= searchScrollActiveUntil.current || isSearchHighlightActive()) return;
       if (Date.now() <= forceBottomActiveUntil.current) {
         forceBottom();
         return;
@@ -137,7 +144,7 @@ export function useScrollPositionMemory(
     const onScroll = () => {
       if (scrollIntentActive) armScrollIntent(); // momentum: keep it warm
 
-      if (Date.now() <= searchScrollActiveUntil.current) {
+      if (Date.now() <= searchScrollActiveUntil.current || isSearchHighlightActive()) {
         // Track position through the search-driven scroll so comparisons
         // right after the guard window closes are against where it landed,
         // not the stale pre-search bottom.

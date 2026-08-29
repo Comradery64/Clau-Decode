@@ -208,34 +208,65 @@ describe("useScrollPositionMemory", () => {
     // with pendingScrollMessageId back to null — indistinguishable from a
     // non-user scrollbar reset, which forces a restore back to bottom. The
     // reader should land on the search result, not get yanked back down.
+    //
+    // A second regression on top of that: useSearchScroll also removes its
+    // data-highlight attribute after SCROLL.SEARCH_HIGHLIGHT_MS, which is
+    // itself a mutation the MutationObserver reacts to. A fixed-duration
+    // guard measured from click time can't reliably outlast that timer,
+    // since useSearchScroll's setTimeout starts whenever ITS effect happens
+    // to run, not at the same t=0 — caught live, where the reader held the
+    // search-result position for ~1.8s, then got yanked to the bottom right
+    // as the highlight faded, past a guard sized to "SEARCH_HIGHLIGHT_MS +
+    // 200". The real fix checks the DOM state useSearchScroll manages
+    // (whether a `[data-highlight="1"]` element still exists) instead of
+    // guessing at timing — so this test advances well past the short
+    // click-to-scroll-start timer and relies solely on that DOM check.
+    vi.useFakeTimers();
     const el = document.createElement("div");
-    Object.defineProperty(el, "scrollHeight", { value: 2000, configurable: true });
-    Object.defineProperty(el, "clientHeight", { value: 300, configurable: true });
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    try {
+      Object.defineProperty(el, "scrollHeight", { value: 2000, configurable: true });
+      Object.defineProperty(el, "clientHeight", { value: 300, configurable: true });
 
-    const { rerender } = render(<Harness el={el} forceBottomRequest={0} />);
-    // Parked at the bottom.
-    el.scrollTop = 1700;
-    fireEvent.scroll(el);
+      const { rerender } = render(<Harness el={el} forceBottomRequest={0} />);
+      // Parked at the bottom.
+      el.scrollTop = 1700;
+      fireEvent.scroll(el);
 
-    // useSearchScroll's effect begins: pendingScrollMessageId goes non-null...
-    act(() => {
-      useAppStore.setState({ pendingScrollMessageId: "msg-1" });
-    });
-    rerender(<Harness el={el} forceBottomRequest={0} />);
-    // ...then is cleared synchronously, before scrollTo() and the
-    // data-highlight mutation run.
-    act(() => {
-      useAppStore.setState({ pendingScrollMessageId: null });
-    });
-    rerender(<Harness el={el} forceBottomRequest={0} />);
+      // useSearchScroll's effect begins: pendingScrollMessageId goes non-null...
+      act(() => {
+        useAppStore.setState({ pendingScrollMessageId: "msg-1" });
+      });
+      rerender(<Harness el={el} forceBottomRequest={0} />);
+      // ...then is cleared synchronously, before scrollTo() and the
+      // data-highlight mutation run.
+      act(() => {
+        useAppStore.setState({ pendingScrollMessageId: null });
+      });
+      rerender(<Harness el={el} forceBottomRequest={0} />);
+      target.setAttribute("data-highlight", "1");
 
-    // The search-driven scroll lands far from the bottom.
-    el.scrollTop = 200;
-    fireEvent.scroll(el);
-    // The highlight attribute mutation fires on the target message.
-    mutationCallbacks.forEach((callback) => callback());
+      // The search-driven scroll lands far from the bottom.
+      el.scrollTop = 200;
+      fireEvent.scroll(el);
 
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-    expect(el.scrollTop).toBe(200);
+      // Past the short click-to-scroll-start timer, but the highlight is
+      // still up — a mutation firing here must not restore.
+      vi.advanceTimersByTime(600);
+      mutationCallbacks.forEach((callback) => callback());
+      vi.advanceTimersByTime(20);
+      expect(el.scrollTop).toBe(200);
+
+      // The highlight is removed (useSearchScroll's own cleanup) and the
+      // mutation this causes must not restore either.
+      target.removeAttribute("data-highlight");
+      mutationCallbacks.forEach((callback) => callback());
+      vi.advanceTimersByTime(20);
+      expect(el.scrollTop).toBe(200);
+    } finally {
+      document.body.removeChild(target);
+      vi.useRealTimers();
+    }
   });
 });
