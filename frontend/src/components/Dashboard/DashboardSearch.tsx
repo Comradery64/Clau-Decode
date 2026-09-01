@@ -10,12 +10,16 @@ import { navigateTo } from "../../router";
 import { renderSnippet } from "../../utils/renderSnippet";
 import { ScrollContainer } from "../ScrollContainer";
 
+const SEARCH_PAGE_SIZE = 50;
+
 export function DashboardSearch() {
   const setPendingScrollMessageId = useAppStore((s) => s.setPendingScrollMessageId);
   const archived = useArchivedSet();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [open, setOpen] = useState(false);
   const debouncedQuery = useDebounce(query, 300);
@@ -35,20 +39,25 @@ export function DashboardSearch() {
   useEffect(() => {
     if (debouncedQuery.length < 2) {
       setResults([]);
+      setHasMore(false);
       return;
     }
     let cancelled = false;
     setLoading(true);
     api
-      .search(debouncedQuery)
+      .search(debouncedQuery, undefined, SEARCH_PAGE_SIZE)
       .then((data) => {
         if (!cancelled) {
           setResults(data);
+          setHasMore(data.length === SEARCH_PAGE_SIZE);
           setActiveIndex(0);
         }
       })
       .catch(() => {
-        if (!cancelled) setResults([]);
+        if (!cancelled) {
+          setResults([]);
+          setHasMore(false);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -57,6 +66,19 @@ export function DashboardSearch() {
       cancelled = true;
     };
   }, [debouncedQuery]);
+
+  const handleLoadMore = useCallback(() => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    api
+      .search(debouncedQuery, undefined, SEARCH_PAGE_SIZE, results.length)
+      .then((data) => {
+        setResults((prev) => [...prev, ...data]);
+        setHasMore(data.length === SEARCH_PAGE_SIZE);
+      })
+      .catch(() => setHasMore(false))
+      .finally(() => setLoadingMore(false));
+  }, [debouncedQuery, results.length, loadingMore]);
 
   useEffect(() => {
     const list = listRef.current;
@@ -226,6 +248,25 @@ export function DashboardSearch() {
                   </li>
                 ))}
               </ul>
+              {hasMore && (
+                <button
+                  onClick={handleLoadMore}
+                  disabled={loadingMore}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    padding: "10px 14px",
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--text-tertiary)",
+                    fontSize: "12px",
+                    fontFamily: "inherit",
+                    cursor: loadingMore ? "default" : "pointer",
+                  }}
+                >
+                  {loadingMore ? "Loading…" : "Load more"}
+                </button>
+              )}
             </ScrollContainer>
           )}
 
