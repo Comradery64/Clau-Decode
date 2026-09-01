@@ -10,6 +10,8 @@ import { useArchivedSet } from "../../utils/sessionMeta";
 import { renderSnippet } from "../../utils/renderSnippet";
 import { ScrollContainer } from "../ScrollContainer";
 
+const SEARCH_PAGE_SIZE = 50;
+
 export default function SearchOverlay() {
   const closeSearch = useAppStore((s) => s.closeSearch);
   const setPendingScrollMessageId = useAppStore((s) => s.setPendingScrollMessageId);
@@ -17,6 +19,8 @@ export default function SearchOverlay() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const archived = useArchivedSet();
 
@@ -65,20 +69,25 @@ export default function SearchOverlay() {
   useEffect(() => {
     if (debouncedQuery.length < 2) {
       setResults([]);
+      setHasMore(false);
       return;
     }
     let cancelled = false;
     setLoading(true);
     api
-      .search(debouncedQuery)
+      .search(debouncedQuery, undefined, SEARCH_PAGE_SIZE)
       .then((data) => {
         if (!cancelled) {
           setResults(data);
+          setHasMore(data.length === SEARCH_PAGE_SIZE);
           setActiveIndex(0);
         }
       })
       .catch(() => {
-        if (!cancelled) setResults([]);
+        if (!cancelled) {
+          setResults([]);
+          setHasMore(false);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -87,6 +96,19 @@ export default function SearchOverlay() {
       cancelled = true;
     };
   }, [debouncedQuery]);
+
+  const handleLoadMore = useCallback(() => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    api
+      .search(debouncedQuery, undefined, SEARCH_PAGE_SIZE, results.length)
+      .then((data) => {
+        setResults((prev) => [...prev, ...data]);
+        setHasMore(data.length === SEARCH_PAGE_SIZE);
+      })
+      .catch(() => setHasMore(false))
+      .finally(() => setLoadingMore(false));
+  }, [debouncedQuery, results.length, loadingMore]);
 
   const handleSelect = useCallback(
     (hit: SearchHit) => {
@@ -321,6 +343,25 @@ export default function SearchOverlay() {
               </li>
             ))}
           </ul>
+          {hasMore && (
+            <button
+              onClick={handleLoadMore}
+              disabled={loadingMore}
+              style={{
+                display: "block",
+                width: "100%",
+                padding: "10px 16px",
+                border: "none",
+                background: "transparent",
+                color: "var(--text-tertiary)",
+                fontSize: "12px",
+                fontFamily: "var(--font-ui)",
+                cursor: loadingMore ? "default" : "pointer",
+              }}
+            >
+              {loadingMore ? "Loading…" : "Load more"}
+            </button>
+          )}
           </ScrollContainer>
         )}
 

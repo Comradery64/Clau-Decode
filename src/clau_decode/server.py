@@ -551,6 +551,7 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             await db.reset_truncated_titles()
             await db.migrate_project_id_v2()
             await db.migrate_materialize_v1()
+            await db.migrate_fts_rowid_v1()
             # No long-lived readers are open yet at startup, so this is the
             # cheapest moment to TRUNCATE any WAL bloat left by a prior run.
             await db.checkpoint()
@@ -972,9 +973,10 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
         q: str = Query(..., min_length=1),
         project: str | None = Query(None),
         limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
     ):
         async with Database(db_path) as db:
-            return await db.search(q, project_id=project, limit=limit)
+            return await db.search(q, project_id=project, limit=limit, offset=offset)
 
     @app.get("/api/stats")
     async def get_stats():

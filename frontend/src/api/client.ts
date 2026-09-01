@@ -142,8 +142,8 @@ export const api = {
   getAllSessions: () => get<Session[]>("/api/sessions"),
   getSession: (sessionId: string) =>
     get<SessionDetail>(`/api/sessions/${encodeURIComponent(sessionId)}`),
-  search: (q: string, projectId?: string, limit = 50) => {
-    const params = new URLSearchParams({ q, limit: String(limit) });
+  search: (q: string, projectId?: string, limit = 50, offset = 0) => {
+    const params = new URLSearchParams({ q, limit: String(limit), offset: String(offset) });
     if (projectId) params.set("project", projectId);
     return get<SearchHit[]>(`/api/search?${params}`);
   },

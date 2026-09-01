@@ -10,8 +10,7 @@ import { timestampMs } from "../../utils/timestamps";
 import { useAppStore } from "../../store";
 import { MessageListContainerCtx } from "../ChatView/MessageListContainerContext";
 import { useSessionDetail, isSessionActive } from "./hooks/useSessionDetail";
-import { useSnapToBottom } from "./hooks/useSnapToBottom";
-import { useSearchScroll } from "./hooks/useSearchScroll";
+import { useScrollController } from "./hooks/useScrollController";
 import { formatRelative } from "../../utils/formatRelative";
 import { LoadingAnimation } from "../ui/LoadingAnimation";
 
@@ -332,8 +331,15 @@ export default function MessageList({
   const msgToAnchorRef = useRef(new Map<string, string>());
 
   const { detail, ephemerals } = useSessionDetail(sessionId);
-  useSnapToBottom(containerRef, detail, sessionId, pendingScrollMessageId, optimisticActive);
-  useSearchScroll(containerRef, detail, sessionId, msgToAnchorRef, pendingScrollMessageId, setPendingScrollMessageId);
+  useScrollController(
+    containerRef,
+    sessionId,
+    detail,
+    msgToAnchorRef,
+    pendingScrollMessageId,
+    setPendingScrollMessageId,
+    optimisticActive,
+  );
 
   // Compute isActive defensively so the hooks below run with a stable
   // value even when ``detail`` is still loading. Hooks must run in the
