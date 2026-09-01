@@ -240,6 +240,14 @@ export interface HostInfo {
   version: string;
 }
 
+// Backend-cached PyPI version check (see update_check.py) backing the
+// About panel's "update available" banner.
+export interface UpdateCheck {
+  current_version: string;
+  latest_version: string | null;
+  update_available: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Recap
 // ---------------------------------------------------------------------------

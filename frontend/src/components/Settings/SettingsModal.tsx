@@ -1,5 +1,5 @@
 import { useState, useEffect, type ReactNode } from "react";
-import type { AppConfig, HostInfo } from "../../api/types";
+import type { AppConfig, HostInfo, UpdateCheck } from "../../api/types";
 import { api, getCachedConfig, getConfigCached } from "../../api/client";
 import { useAppStore } from "../../store";
 import { PathEditor } from "./PathEditor";
@@ -50,6 +50,9 @@ export default function SettingsModal() {
   // The version is the backend's single source of truth (clau_decode.__version__)
   // surfaced via /api/host-info — there is no version string in the frontend.
   const [hostInfo, setHostInfo] = useState<HostInfo | null>(null);
+  // Best-effort PyPI check (see api.getUpdateCheck) — null while loading or
+  // if the check failed; the banner just doesn't render either way.
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
 
   useEffect(() => {
     if (config) return;
@@ -63,6 +66,7 @@ export default function SettingsModal() {
   useEffect(() => {
     if (category !== "about" || hostInfo) return;
     api.getHostInfo().then(setHostInfo).catch(() => {});
+    api.getUpdateCheck().then(setUpdateCheck).catch(() => {});
   }, [category, hostInfo]);
 
   function save(updated: AppConfig) {
@@ -398,7 +402,9 @@ export default function SettingsModal() {
                   </div>
                 )}
 
-                {category === "about" && <AboutPanel hostInfo={hostInfo} />}
+                {category === "about" && (
+                  <AboutPanel hostInfo={hostInfo} updateCheck={updateCheck} />
+                )}
               </div>
             )}
           </ScrollContainer>
@@ -428,7 +434,13 @@ function AboutLink({ href, children }: { href: string; children: ReactNode }) {
 // Apple "About This Mac"–style panel: centered app mark, name, version, a short
 // description, and links. The version comes straight from /api/host-info (the
 // backend's single source of truth), so nothing here ever needs hand-editing.
-function AboutPanel({ hostInfo }: { hostInfo: HostInfo | null }) {
+function AboutPanel({
+  hostInfo,
+  updateCheck,
+}: {
+  hostInfo: HostInfo | null;
+  updateCheck: UpdateCheck | null;
+}) {
   const platform = hostInfo ? (PLATFORM_LABELS[hostInfo.platform] ?? hostInfo.platform) : null;
   const dot = <span style={{ color: "var(--border-default)" }}>·</span>;
   return (
@@ -462,6 +474,28 @@ function AboutPanel({ hostInfo }: { hostInfo: HostInfo | null }) {
         <div style={{ fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>
           {platform}
         </div>
+      )}
+
+      {updateCheck?.update_available && (
+        <a
+          href={`${ABOUT_REPO}/blob/main/CHANGELOG.md`}
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            display: "block",
+            marginTop: "12px",
+            padding: "6px 12px",
+            borderRadius: "6px",
+            background: "var(--accent-orange-subtle)",
+            color: "var(--accent-orange)",
+            fontSize: "12px",
+            fontWeight: 500,
+            textDecoration: "none",
+          }}
+        >
+          v{updateCheck.latest_version} available — run{" "}
+          <code style={{ fontFamily: "var(--font-mono)" }}>pipx install --force clau-decode</code> to update
+        </a>
       )}
 
       <p
