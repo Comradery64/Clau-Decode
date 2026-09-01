@@ -32,6 +32,11 @@ vi.mock("../../../api/client", () => ({
       client_host: "127.0.0.1",
       version: "9.9.9",
     }),
+    getUpdateCheck: vi.fn().mockResolvedValue({
+      current_version: "9.9.9",
+      latest_version: "9.9.9",
+      update_available: false,
+    }),
   },
   getCachedConfig: vi.fn(() => baseConfig),
   getConfigCached: vi.fn(),
@@ -91,5 +96,25 @@ describe("SettingsModal", () => {
     expect(screen.getByText("Clau-Decode")).toBeInTheDocument();
     expect(screen.getByText("macOS")).toBeInTheDocument();
     expect(api.getHostInfo).toHaveBeenCalled();
+  });
+
+  it("does not show an update banner when already on the latest version", async () => {
+    render(<SettingsModal />);
+    fireEvent.click(screen.getByRole("button", { name: "About" }));
+
+    await screen.findByText("Version 9.9.9");
+    expect(screen.queryByText(/available/)).not.toBeInTheDocument();
+  });
+
+  it("shows an update banner when a newer version is on PyPI", async () => {
+    vi.mocked(api.getUpdateCheck).mockResolvedValueOnce({
+      current_version: "9.9.9",
+      latest_version: "10.0.0",
+      update_available: true,
+    });
+    render(<SettingsModal />);
+    fireEvent.click(screen.getByRole("button", { name: "About" }));
+
+    expect(await screen.findByText(/v10\.0\.0 available/)).toBeInTheDocument();
   });
 });

@@ -33,6 +33,7 @@ import type {
   Session,
   SessionDetail,
   ToolUsageEntry,
+  UpdateCheck,
 } from "./types";
 import { emit } from "../utils/events";
 
@@ -149,6 +150,7 @@ export const api = {
   },
   getDashboard: () => get<DashboardData>("/api/dashboard"),
   getHostInfo: () => get<HostInfo>("/api/host-info"),
+  getUpdateCheck: () => get<UpdateCheck>("/api/update-check"),
   getProviders: () => get<ProviderInfo[]>("/api/providers"),
   getConfig: () => get<AppConfig>("/api/config"),
   updateConfig: (config: AppConfig) => {
