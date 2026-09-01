@@ -66,6 +66,7 @@ from .drivers import availability_for as _driver_availability
 from .drivers import supports_driving as _driver_supports
 from .analytics import fast as analytics_fast
 from .analytics.pricing import CachedPricingStrategy, _HARDCODED_RATES
+from .update_check import fetch_latest_version, is_newer
 from .analytics.service import TokenAnalyticsService as _AnalyticsSvc
 from .analytics.stats import (
     ModelUsageScanner,
@@ -2216,6 +2217,28 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             "platform": sys.platform,
             "client_host": host,
             "version": __version__,
+        }
+
+    UPDATE_CHECK_INTERVAL_S = 6 * 60 * 60  # cache: PyPI-friendly, still same-day fresh
+
+    @app.get("/api/update-check")
+    async def update_check():
+        """Best-effort PyPI version check backing the About panel's update
+        banner. In-process cached so re-opening Settings doesn't hit PyPI on
+        every click; a failed/offline check just reports no update available
+        rather than erroring the UI (see update_check.fetch_latest_version).
+        """
+        cache = _state.get("update_check_cache")
+        now = time.monotonic()
+        if cache is None or now - cache["checked_at"] > UPDATE_CHECK_INTERVAL_S:
+            latest = await fetch_latest_version()
+            cache = {"checked_at": now, "latest": latest}
+            _state["update_check_cache"] = cache
+        latest = cache["latest"]
+        return {
+            "current_version": __version__,
+            "latest_version": latest,
+            "update_available": bool(latest) and is_newer(latest, __version__),
         }
 
     @app.get("/api/fs/list")
