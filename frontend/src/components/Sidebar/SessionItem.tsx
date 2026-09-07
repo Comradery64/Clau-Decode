@@ -53,9 +53,16 @@ interface SessionItemProps {
    * Kept as a prop so SessionItem stays presentational and unit-testable.
    */
   runnerStatus?: RunnerStatus;
+  /**
+   * Selection-mode click handler with shift-range support. Only the caller
+   * knows the current visible session order (flat sort vs. project groups),
+   * so range computation lives there — this just reports id + shiftKey.
+   * Omitted callers (e.g. the starred section) fall back to a plain toggle.
+   */
+  onToggleSelect?: (id: string, shiftKey: boolean) => void;
 }
 
-export function SessionItem({ session, isActive, onClick, runnerStatus }: SessionItemProps) {
+export function SessionItem({ session, isActive, onClick, runnerStatus, onToggleSelect }: SessionItemProps) {
   const [hovered, setHovered] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null);
@@ -343,9 +350,14 @@ export function SessionItem({ session, isActive, onClick, runnerStatus }: Sessio
     }
   };
 
-  const handleClick = () => {
+  const handleSelectToggle = (shiftKey: boolean) => {
+    if (onToggleSelect) onToggleSelect(session.id, shiftKey);
+    else toggleSessionSelected(session.id);
+  };
+
+  const handleClick = (e: React.MouseEvent) => {
     if (selectionMode) {
-      toggleSessionSelected(session.id);
+      handleSelectToggle(e.shiftKey);
       return;
     }
     if (bellState === "visible") {
@@ -406,13 +418,14 @@ export function SessionItem({ session, isActive, onClick, runnerStatus }: Sessio
               <span style={{ flexShrink: 0, display: "flex", paddingLeft: "12px" }}>
                 <Checkbox
                   checked={isSelected}
-                  onChange={() => toggleSessionSelected(session.id)}
+                  onChange={(_, e) => handleSelectToggle(e.shiftKey)}
                 />
               </span>
             )}
             <button
               type="button"
               onClick={handleClick}
+              onMouseDown={(e) => { if (selectionMode && e.shiftKey) e.preventDefault(); }}
               aria-label={displayTitle}
               style={{
                 display: "flex",

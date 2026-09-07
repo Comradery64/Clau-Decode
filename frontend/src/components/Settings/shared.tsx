@@ -51,7 +51,10 @@ export function Checkbox({
   danger,
 }: {
   checked: boolean;
-  onChange: (v: boolean) => void;
+  // Second arg is the originating click — callers that support shift-click
+  // range selection (e.g. SessionItem) read e.shiftKey off it; everyone else
+  // can ignore it.
+  onChange: (v: boolean, e: React.MouseEvent) => void;
   danger?: boolean;
 }) {
   const tint = danger ? TONE_DANGER : "var(--accent-orange)";
@@ -60,7 +63,7 @@ export function Checkbox({
       type="button"
       role="checkbox"
       aria-checked={checked}
-      onClick={(e) => { e.preventDefault(); onChange(!checked); }}
+      onClick={(e) => { e.preventDefault(); onChange(!checked, e); }}
       style={{
         width: "16px",
         height: "16px",

@@ -49,6 +49,9 @@ interface AppState {
   // Multi-select mode
   selectionMode: boolean;
   selectedSessionIds: Set<string>;
+  // Last plain (non-shift) checkbox click — the fixed endpoint a shift-click
+  // range is measured from, until the next plain click moves it.
+  selectionAnchorId: string | null;
 
   setActiveProvider: (provider: string) => void;
   setProviders: (providers: ProviderInfo[]) => void;
@@ -90,6 +93,7 @@ interface AppState {
   toggleSessionSelected: (id: string) => void;
   clearSelection: () => void;
   setSelectedSessionIds: (ids: string[]) => void;
+  setSelectionAnchorId: (id: string | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -119,6 +123,7 @@ export const useAppStore = create<AppState>((set) => ({
   // Multi-select mode
   selectionMode: false,
   selectedSessionIds: new Set<string>(),
+  selectionAnchorId: null,
 
   setActiveProvider: (provider) => set({ activeProvider: provider }),
   setProviders: (providers) =>
@@ -161,8 +166,10 @@ export const useAppStore = create<AppState>((set) => ({
   setHostInfo: (info) => set({ hostInfo: info }),
 
   // Multi-select actions
-  enterSelectionMode: () => set({ selectionMode: true, selectedSessionIds: new Set<string>() }),
-  exitSelectionMode: () => set({ selectionMode: false, selectedSessionIds: new Set<string>() }),
+  enterSelectionMode: () =>
+    set({ selectionMode: true, selectedSessionIds: new Set<string>(), selectionAnchorId: null }),
+  exitSelectionMode: () =>
+    set({ selectionMode: false, selectedSessionIds: new Set<string>(), selectionAnchorId: null }),
   toggleSessionSelected: (id) =>
     set((s) => {
       const next = new Set(s.selectedSessionIds);
@@ -170,6 +177,7 @@ export const useAppStore = create<AppState>((set) => ({
       else next.add(id);
       return { selectedSessionIds: next };
     }),
-  clearSelection: () => set({ selectedSessionIds: new Set<string>() }),
+  clearSelection: () => set({ selectedSessionIds: new Set<string>(), selectionAnchorId: null }),
   setSelectedSessionIds: (ids) => set({ selectedSessionIds: new Set(ids) }),
+  setSelectionAnchorId: (id) => set({ selectionAnchorId: id }),
 }));
