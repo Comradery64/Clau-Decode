@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from clau_decode._auth_env import _subscription_env, spawn_env
