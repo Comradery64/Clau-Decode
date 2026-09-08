@@ -62,9 +62,7 @@ def _subscription_env() -> dict[str, str]:
     outside tests should prefer ``spawn_env(bin_name)`` so the strip is
     gated by the binary's actual auth method.
     """
-    env = {
-        k: v for k, v in os.environ.items() if k not in _SUBSCRIPTION_BLOCKED_ENV
-    }
+    env = {k: v for k, v in os.environ.items() if k not in _SUBSCRIPTION_BLOCKED_ENV}
     return _strip_session_identity_env(env)
 
 
