@@ -463,11 +463,11 @@ def create_app(config: AppConfig, db_path: Path) -> FastAPI:
             async for project, session_path in adapter.discover(roots):
                 if session_path.stem in _deleted_tombstones:
                     continue
-                current_mtime = session_path.stat().st_mtime
-                stored_mtime = await db.get_session_mtime(session_path.stem)
-                if stored_mtime == current_mtime:
-                    continue
                 try:
+                    current_mtime = session_path.stat().st_mtime
+                    stored_mtime = await db.get_session_mtime(session_path.stem)
+                    if stored_mtime == current_mtime:
+                        continue
                     file_size = session_path.stat().st_size
                     if file_size > MAX_SCAN_SIZE:
                         # Store just the session metadata so it appears in the list;
