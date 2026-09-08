@@ -566,6 +566,9 @@ export default function Sidebar() {
   // Multi-select
   const selectionMode = useAppStore((s) => s.selectionMode);
   const selectedSessionIds = useAppStore((s) => s.selectedSessionIds);
+  const selectionAnchorId = useAppStore((s) => s.selectionAnchorId);
+  const setSelectionAnchorId = useAppStore((s) => s.setSelectionAnchorId);
+  const toggleSessionSelected = useAppStore((s) => s.toggleSessionSelected);
   const enterSelectionMode = useAppStore((s) => s.enterSelectionMode);
   const exitSelectionMode = useAppStore((s) => s.exitSelectionMode);
   const clearSelection = useAppStore((s) => s.clearSelection);
@@ -852,6 +855,28 @@ export default function Sidebar() {
     setSelectedSessionIds(visibleIds);
   }, [sortedFlatSessions, setSelectedSessionIds]);
 
+  // Shift-click range select for the flat/archive list: a plain click moves
+  // the anchor; a shift-click selects everything between the anchor and the
+  // clicked row (inclusive), added to whatever's already selected.
+  const handleToggleSessionSelected = useCallback(
+    (id: string, shiftKey: boolean) => {
+      if (shiftKey && selectionAnchorId) {
+        const ids = sortedFlatSessions.map((s) => s.id);
+        const anchorIdx = ids.indexOf(selectionAnchorId);
+        const targetIdx = ids.indexOf(id);
+        if (anchorIdx !== -1 && targetIdx !== -1) {
+          const [start, end] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
+          const rangeIds = ids.slice(start, end + 1);
+          setSelectedSessionIds([...new Set([...selectedSessionIds, ...rangeIds])]);
+          return;
+        }
+      }
+      toggleSessionSelected(id);
+      setSelectionAnchorId(id);
+    },
+    [selectionAnchorId, sortedFlatSessions, selectedSessionIds, setSelectedSessionIds, toggleSessionSelected, setSelectionAnchorId]
+  );
+
   const toggleProject = (projectId: string) => {
     setExpandedProjects((prev) => {
       const next = new Set(prev);
@@ -1008,6 +1033,7 @@ export default function Sidebar() {
                       isActive={selectedSessionId === session.id}
                       onClick={() => handleSelectSession(session)}
                       runnerStatus={runnerStatuses.get(session.id)}
+                      onToggleSelect={handleToggleSessionSelected}
                     />
                   ))}
                   {!flatLoading && sortedFlatSessions.length === 0 && (

@@ -478,7 +478,7 @@ html[data-provider="codex"] {
   --bg-code-block-header: #1f1f1f;
   --bg-input: #303030;
   --bg-modal: #1a1a1a;
-  --bg-modal-overlay: rgba(0, 0, 0, 0.65);
+  --bg-modal-overlay: rgba(0, 0, 0, 0.45);
   --bg-inline-code: rgba(255, 255, 255, 0.08);
   /* --- Borders --- */
   --border-subtle: rgba(255, 255, 255, 0.06);

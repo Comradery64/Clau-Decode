@@ -175,15 +175,30 @@ export const api = {
     patch(`/api/messages/${messageId}`, { content_blocks }),
 
   // Profiles
+  // These endpoints mutate config.profiles/active_profile_id server-side but
+  // bypass the full-config PUT path, so _cachedConfig drifts out of sync with
+  // the server unless invalidated here. A stale _cachedConfig gets reseeded
+  // into SettingsModal on its next mount, and the next unrelated setting
+  // change (theme, shortcut, ...) replays it via api.updateConfig's full PUT
+  // — silently resurrecting a just-deleted profile. Nulling the cache forces
+  // the next getConfigCached() to refetch the true server state instead.
   getProfiles: () => get<ProfilesResponse>("/api/profiles"),
-  createProfile: (name: string, data_paths?: string[], color?: string) =>
-    post<Profile>("/api/profiles", { name, data_paths: data_paths || ["~/.claude"], color: color || "#b8956a" }),
-  updateProfile: (id: string, updates: Partial<Pick<Profile, "name" | "data_paths" | "color">>) =>
-    put<Profile>(`/api/profiles/${encodeURIComponent(id)}`, updates),
-  deleteProfile: (id: string) =>
-    del<MutationResult>(`/api/profiles/${encodeURIComponent(id)}`),
-  setActiveProfile: (active_profile_id: string | null) =>
-    put<{ active_profile_id: string | null }>("/api/profiles/active", { active_profile_id }),
+  createProfile: (name: string, data_paths?: string[], color?: string) => {
+    _cachedConfig = null;
+    return post<Profile>("/api/profiles", { name, data_paths: data_paths || ["~/.claude"], color: color || "#b8956a" });
+  },
+  updateProfile: (id: string, updates: Partial<Pick<Profile, "name" | "data_paths" | "color">>) => {
+    _cachedConfig = null;
+    return put<Profile>(`/api/profiles/${encodeURIComponent(id)}`, updates);
+  },
+  deleteProfile: (id: string) => {
+    _cachedConfig = null;
+    return del<MutationResult>(`/api/profiles/${encodeURIComponent(id)}`);
+  },
+  setActiveProfile: (active_profile_id: string | null) => {
+    _cachedConfig = null;
+    return put<{ active_profile_id: string | null }>("/api/profiles/active", { active_profile_id });
+  },
 
   // File system browser
   listDir: (path: string, showHidden = false) => {
