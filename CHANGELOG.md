@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-07
+
 ### Added
 
 - **`clau-decode migrate` subcommand** — merge and relocate Claude Code chat history
@@ -17,6 +19,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   copies human configs non-destructively (a differing destination file is never
   overwritten — the incoming copy lands as a `.from-<source>` sidecar). Dry-run by
   default; `--apply` is gated behind `--i-have-a-backup`. Pure standard library.
+- **Shift-click range select for session checkboxes.** In multi-select mode, click
+  one checkbox then shift-click another to select every session between them
+  (added to whatever's already selected) — the same convention as Finder/Gmail.
 
 ### Fixed
 
@@ -28,6 +33,29 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   files are copied verbatim and keep their old mtimes, so an incremental scan skips
   them. Guidance now points at `clau-decode --force-refresh`, which re-parses every
   session file without touching the DB.
+- **A single deleted session file could silently break all scanning.** The
+  background rescan and manual "Refresh" both iterate every configured provider
+  in one pass; a file that vanished between discovery and the following `stat()`
+  call threw unhandled, aborting the whole pass before later providers (e.g.
+  Codex) ever ran. One stale reference meant no session — of any provider — got
+  re-indexed until this was fixed.
+- **Deleting a profile in Settings didn't stick.** Profile create/rename/delete
+  mutate the server's config but never invalidated the browser's cached config
+  snapshot, so reopening Settings (or even the next unrelated settings change)
+  could silently replay the stale snapshot back to the server, resurrecting an
+  already-deleted profile.
+- **Profile management flow.** Fixed unsaved path text bleeding from one profile's
+  "add path" field into another's when switching between them; every action
+  (create/rename/recolor/delete/add path/remove path) now shows a saving state
+  and surfaces errors instead of failing silently; delete now needs a second
+  click within 3s to confirm instead of one accidental click; duplicate paths
+  are rejected; rename has a visible pencil icon; and creating a profile now
+  auto-expands it into the path field instead of leaving it silently pointed at
+  `~/.claude`.
+- **Codex-skin overlays (search, shortcuts, help) rendered as solid black**
+  instead of a dim. The Codex dark skin pairs a near-black page background with
+  a modal-overlay opacity *higher* than the standard dark theme uses on a much
+  lighter background, leaving nothing to show through.
 
 ## [0.3.1.3] - 2026-06-15
 
@@ -210,6 +238,7 @@ Initial public release.
 
 - License changed from MIT to [FSL-1.1-Apache-2.0](LICENSE). All prior unreleased history was developed under MIT; the 0.1.0 release and everything after it ship under FSL-1.1-Apache-2.0, which converts to Apache 2.0 two years after each release.
 
+[0.3.2]: https://github.com/Comradery64/Clau-Decode/compare/v0.3.1.3...v0.3.2
 [0.3.1.2]: https://github.com/Comradery64/Clau-Decode/compare/v0.3.1.1...v0.3.1.2
 [0.3.1.1]: https://github.com/Comradery64/Clau-Decode/compare/v0.3.1...v0.3.1.1
 [0.3.1]: https://github.com/Comradery64/Clau-Decode/compare/v0.3.0...v0.3.1
