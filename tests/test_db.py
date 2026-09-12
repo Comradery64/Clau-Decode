@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from clau_decode.models import Message, Project, Session, TextBlock
+from clau_decode.models import Message, Project, Session, TextBlock, ToolUseBlock
 
 
 @pytest.fixture
@@ -193,6 +193,95 @@ class TestMessages:
         detail = await db.get_session_detail(sample_session.id)
         timestamps = [m.timestamp for m in detail.messages if m.timestamp]
         assert timestamps == sorted(timestamps)
+
+
+class TestMergeMessages:
+    """merge_messages backs sub-agent transcript ingest (include_subagent_chats):
+    it must add messages to a session WITHOUT disturbing that session's other,
+    already-indexed messages — unlike upsert_messages, which does a
+    session-scoped delete + reinsert of FTS/message_blocks rows."""
+
+    async def test_merge_does_not_wipe_existing_messages_fts(
+        self, db, sample_project, sample_session, sample_messages
+    ):
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+
+        subagent_message = Message(
+            id="side-0001",
+            session_id=sample_session.id,
+            parent_id="unresolvable-elsewhere",
+            role="assistant",
+            content_blocks=[TextBlock(text="Sub-agent reply about widgets")],
+            is_sidechain=True,
+            source_tool_assistant_uuid="msg-0002",
+        )
+        await db.merge_messages([subagent_message])
+
+        # Original messages are still searchable — merge_messages must not
+        # have deleted their FTS rows via a session-scoped DELETE.
+        hits = await db.search("Hi! How can I help", project_id=None, limit=10)
+        assert any(h.session_id == sample_session.id for h in hits)
+
+        # And the new message is present too.
+        detail = await db.get_session_detail(sample_session.id)
+        ids = {m.id for m in detail.messages}
+        assert {"msg-0001", "msg-0002", "side-0001"} <= ids
+
+    async def test_merge_is_idempotent(
+        self, db, sample_project, sample_session, sample_messages
+    ):
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        await db.upsert_messages(sample_messages)
+
+        subagent_message = Message(
+            id="side-0001",
+            session_id=sample_session.id,
+            parent_id=None,
+            role="user",
+            content_blocks=[TextBlock(text="repeat me")],
+            is_sidechain=True,
+        )
+        await db.merge_messages([subagent_message])
+        await db.merge_messages([subagent_message])
+
+        detail = await db.get_session_detail(sample_session.id)
+        assert sum(1 for m in detail.messages if m.id == "side-0001") == 1
+
+
+class TestFindMessageByToolUseId:
+    async def test_finds_assistant_message_containing_tool_use_block(
+        self, db, sample_project, sample_session
+    ):
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        assistant_msg = Message(
+            id="main-0002",
+            session_id=sample_session.id,
+            parent_id="main-0001",
+            role="assistant",
+            content_blocks=[
+                ToolUseBlock(id="toolu_agent123", name="Task", input={}),
+            ],
+        )
+        await db.upsert_messages([assistant_msg])
+
+        found = await db.find_message_by_tool_use_id(
+            sample_session.id, "toolu_agent123"
+        )
+        assert found == "main-0002"
+
+    async def test_returns_none_when_tool_use_id_not_found(
+        self, db, sample_project, sample_session
+    ):
+        await db.upsert_project(sample_project)
+        await db.upsert_session(sample_session)
+        found = await db.find_message_by_tool_use_id(
+            sample_session.id, "toolu_does_not_exist"
+        )
+        assert found is None
 
 
 class TestSearch:

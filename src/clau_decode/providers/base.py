@@ -82,7 +82,9 @@ class ProviderAdapter(abc.ABC):
     # -- Discovery (async generator) ------------------------------------------
 
     @abc.abstractmethod
-    async def discover(self, roots: list[Path]) -> AsyncIterator[tuple[Project, Path]]:
+    async def discover(
+        self, roots: list[Path], include_subagents: bool = False
+    ) -> AsyncIterator[tuple[Project, Path]]:
         """Yield ``(Project, session_file_path)`` pairs found under *roots*.
 
         Mirrors the contract of ``scanner.scan_paths``.  Declared as an async
@@ -90,6 +92,8 @@ class ProviderAdapter(abc.ABC):
 
         Args:
             roots: Expanded root directories to walk.
+            include_subagents: Opt-in: also yield sub-agent transcript files.
+                Adapters with no sub-agent concept (e.g. Codex) ignore this.
 
         Yields:
             Two-tuples of ``(Project, Path)`` where ``Path`` points to an

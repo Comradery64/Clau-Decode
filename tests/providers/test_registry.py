@@ -33,7 +33,9 @@ class _FakeAdapter(ProviderAdapter):
     def configured_roots(self, config: AppConfig) -> list[Path]:
         return []
 
-    async def discover(self, roots: list[Path]) -> AsyncIterator[tuple[Project, Path]]:
+    async def discover(
+        self, roots: list[Path], include_subagents: bool = False
+    ) -> AsyncIterator[tuple[Project, Path]]:
         # Empty async generator — yields nothing.
         return
         yield  # make Python treat this as a generator function
