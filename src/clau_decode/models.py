@@ -201,6 +201,12 @@ class AppConfig(BaseModel):
     # Show a small per-provider tag on non-Claude sidebar rows. Off by default
     # — opt-in, since a tag on every chat adds clutter as more CLIs integrate.
     show_provider_tag: bool = False
+    # Ingest Claude Code sub-agent (Task tool) transcripts — stored under
+    # <project-dir>/<session>/subagents/agent-*.jsonl — and merge them into
+    # their parent session as sidechain branches. Off by default: the scanner
+    # already globs *.jsonl non-recursively, so this is a genuinely new data
+    # source, not just a rendering change.
+    include_subagent_chats: bool = False
     claude_default_permission_mode: str = "default"
     chat_send_shortcut: Literal["enter", "modEnter"] = "enter"
     native_pty_font_family: Literal[

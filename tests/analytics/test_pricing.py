@@ -75,8 +75,8 @@ class TestHardcodedPricingStrategy:
         strat = HardcodedPricingStrategy()
         p = strat.get_pricing("claude-haiku-4-5-20251001")
         assert p is not None
-        assert p.input_per_mtok == Decimal("0.80")
-        assert p.output_per_mtok == Decimal("4.00")
+        assert p.input_per_mtok == Decimal("1.00")
+        assert p.output_per_mtok == Decimal("5.00")
 
     def test_knows_opus_47(self):
         from clau_decode.analytics.pricing import HardcodedPricingStrategy
@@ -84,8 +84,27 @@ class TestHardcodedPricingStrategy:
         strat = HardcodedPricingStrategy()
         p = strat.get_pricing("claude-opus-4-7")
         assert p is not None
-        assert p.input_per_mtok == Decimal("15.00")
-        assert p.output_per_mtok == Decimal("75.00")
+        assert p.input_per_mtok == Decimal("5.00")
+        assert p.output_per_mtok == Decimal("25.00")
+
+    def test_knows_current_lineup(self):
+        from clau_decode.analytics.pricing import HardcodedPricingStrategy
+
+        strat = HardcodedPricingStrategy()
+        fable = strat.get_pricing("claude-fable-5")
+        assert fable is not None
+        assert fable.input_per_mtok == Decimal("10.00")
+        assert fable.output_per_mtok == Decimal("50.00")
+
+        opus = strat.get_pricing("claude-opus-4-8")
+        assert opus is not None
+        assert opus.input_per_mtok == Decimal("5.00")
+        assert opus.output_per_mtok == Decimal("25.00")
+
+        sonnet = strat.get_pricing("claude-sonnet-5")
+        assert sonnet is not None
+        assert sonnet.input_per_mtok == Decimal("3.00")
+        assert sonnet.output_per_mtok == Decimal("15.00")
 
     def test_unknown_model_returns_none(self):
         from clau_decode.analytics.pricing import HardcodedPricingStrategy
