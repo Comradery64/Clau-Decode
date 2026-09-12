@@ -30,7 +30,7 @@ export function formatModelName(model: string): string {
   }
 
   // Claude models
-  const tierMatch = lower.match(/claude-(opus|sonnet|haiku|instant)[-_]?/);
+  const tierMatch = lower.match(/claude-(opus|sonnet|haiku|fable|instant)[-_]?/);
   const tier = tierMatch ? tierMatch[1] : null;
   const versionMatch = lower.match(/(\d+)[-_](\d+)$/) ?? lower.match(/(\d+)$/);
   let version = "";
